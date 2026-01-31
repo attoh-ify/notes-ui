@@ -63,7 +63,6 @@ export default function NotesPage() {
 
   async function openAccessPanel(note: Note) {
     try {
-      console.log(note)
       const data = await apiFetch<NoteAccess[]>(`notes/${note.id}/access`, {
         method: "GET"
       });
@@ -72,6 +71,17 @@ export default function NotesPage() {
       setShowAccessModal(true);
     } catch (err: any) {
       setError(err.message || "Failed to get note accesses")
+    }
+  }
+
+  async function handleLogout() {
+    try {
+      await apiFetch(`users/logout`, {
+        method: "POST"
+      })
+      router.push("/login")
+    } catch (err: any) {
+      setError(err.message || "Failed logout")
     }
   }
 
@@ -96,10 +106,26 @@ export default function NotesPage() {
       <h1 style={{ textAlign: "center", color: "#2F855A", marginBottom: 20 }}>
         {email}: My Notes
       </h1>
+      <button
+        style={{
+            padding: "8px 16px",
+            marginBottom: 5,
+            backgroundColor: "#2F855A",
+            color: "white",
+            border: "none",
+            borderRadius: 6,
+            cursor: "pointer",
+            fontSize: 14,
+            fontWeight: 500,
+            marginTop: 5
+        }}
+        onClick={handleLogout}
+    >
+        logout
+    </button>
 
       <ul style={{ listStyle: "none", padding: 0, display: "flex", flexDirection: "column", gap: 15 }}>
         {notes.map((note) => {
-          const path = note.accessRole === "OWNER" || note.accessRole === "EDITOR" || note.accessRole === "SUPER" ? `/notes/${note.id}/edit?email${email}&userId=${encodeURIComponent(userId)}` : `/notes/${note.id}?email${email}&userId=${encodeURIComponent(userId)}`;
           return (
             <li
               key={note.id}
@@ -120,7 +146,7 @@ export default function NotesPage() {
                 {note.accessRole === "VIEWER" && <span style={{ color: "#2F855A" }}>(Read-Only)</span>}
               </div>
               <button
-                onClick={() => router.push(path)}
+                onClick={() => router.push(`/notes/${note.id}?email${email}&userId=${encodeURIComponent(userId)}`)}
                 style={{
                   padding: "6px 12px",
                   backgroundColor: "#2F855A",

@@ -45,7 +45,6 @@ export default function EditPage() {
     async function loadNoteAndJoin() {
       try {
         const noteData = await apiFetch<Note>(`notes/${noteId}`, { method: "GET" });
-        console.log(noteData)
         setNote(noteData);
 
         if (noteData.accessRole === "VIEWER") {
@@ -57,7 +56,6 @@ export default function EditPage() {
           `notes/${noteData.id}/versions/${noteData.currentNoteVersion}`,
           { method: "GET" },
         );
-        console.log(noteVersionData)
         setNoteVersion(noteVersionData);
 
         const joinData = await apiFetch<JoinResponse>(`notes/${noteId}/join/${userId}`, { method: "GET" });
@@ -108,20 +106,16 @@ export default function EditPage() {
   }, [content]);
 
   function handleRemoteOperation(payload: any) {
-    console.log("handling remote operation")
     const { operation, revision, acknowledgeTo } = payload;
-    console.log({ operation, revision, acknowledgeTo });
     const docState = docStateRef.current!;
 
     if (acknowledgeTo === userId) {
-      console.log("I am the sender")
       if (docState.lastSyncedRevision < revision) {
         docState.acknowledgeOperation(operation, revision, (pendingOperation: any) => {
           sendOperationToServer(pendingOperation, docState.lastSyncedRevision);
         });
       }
     } else {
-      console.log("I am the receiver")
       docState.transformPendingOperations(operation, revision);
       docState.lastSyncedRevision = revision;
       const transformed = docState.transformOperationAgainstLocalChanges(operation);
@@ -132,7 +126,6 @@ export default function EditPage() {
         setContent(newDoc);
       }
     }
-    console.log("done handling remote operation")
   }
 
   function applyOp(doc: string, op: any) {
@@ -142,13 +135,10 @@ export default function EditPage() {
     }
 
   async function sendOperationToServer(operation: any, revision: number) {
-    console.log("sending operation to server")
-    console.log({ operation, revision, from: userId })
     await apiFetch(`notes/enqueue/${noteId}`, {
       method: "POST",
-      body: JSON.stringify({ operation, revision, from: userId }),
+      body: JSON.stringify({ operation, revision, from: userId })
     });
-    console.log("done sending operation to server")
   }
 
   function updateCollaboratorCount(count: number) {
@@ -195,7 +185,6 @@ export default function EditPage() {
     }
 
   function handleLocalChange(e: React.InputEvent<HTMLTextAreaElement>) {
-    console.log("handling local change")
     const inputType = (e.nativeEvent as InputEvent).inputType
     const editor = e.currentTarget;
     const currText = editor.value;
@@ -216,7 +205,16 @@ export default function EditPage() {
     }
 
     setContent(currText);
-    console.log("done handling local change")
+  }
+
+  async function saveNote() {
+    try {
+      await apiFetch(`notes/${noteId}/save`, {
+        method: "POST"
+      })
+    } catch (err: any) {
+      setError(err.message || "Failed to save note");
+    }
   }
 
   if (loading) return <p>Loading note...</p>;
@@ -255,6 +253,7 @@ export default function EditPage() {
           <button
               style={{
                   padding: "8px 16px",
+                  marginRight: 5,
                   backgroundColor: "#2F855A",
                   color: "white",
                   border: "none",
@@ -267,6 +266,22 @@ export default function EditPage() {
               onClick={() => router.push(`/notes/${noteId}?email=${email}&userId=${userId}`)}
           >
               Preview Note
+          </button>
+          <button
+              style={{
+                  padding: "8px 16px",
+                  backgroundColor: "#2F855A",
+                  color: "white",
+                  border: "none",
+                  borderRadius: 6,
+                  cursor: "pointer",
+                  fontSize: 14,
+                  fontWeight: 500,
+                  marginTop: 5
+              }}
+              onClick={saveNote}
+          >
+              Save
           </button>
       </div>
       </header>

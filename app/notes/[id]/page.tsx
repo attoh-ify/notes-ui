@@ -78,7 +78,7 @@ export default function ViewNotePage() {
     >
       <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <h1 style={{ margin: 0, fontSize: 28, color: "#2F855A" }}>{note.title}</h1>
-        <button
+        {note.accessRole !== "VIEWER" && <button
           style={{
             padding: "8px 16px",
             backgroundColor: "#2F855A",
@@ -89,11 +89,10 @@ export default function ViewNotePage() {
             fontSize: 14,
             fontWeight: 500,
           }}
-          disabled={note.accessRole === "VIEWER"}
           onClick={editNote}
         >
           Edit Note
-        </button>
+        </button>}
       </header>
 
       <section
