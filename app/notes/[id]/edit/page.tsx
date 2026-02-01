@@ -38,6 +38,7 @@ export default function EditPage() {
   if (!docStateRef.current) {
     docStateRef.current = new DocState((newDoc: string) => {
       setContent(newDoc);
+      console.log(newDoc)
     });
   }
 
@@ -111,12 +112,12 @@ export default function EditPage() {
 
     if (acknowledgeTo === userId) {
       if (docState.lastSyncedRevision < revision) {
-        docState.acknowledgeOperation(operation, revision, (pendingOperation: any) => {
+        docState.acknowledgeOperation(revision, (pendingOperation: any) => {
           sendOperationToServer(pendingOperation, docState.lastSyncedRevision);
         });
       }
     } else {
-      docState.transformPendingOperations(operation, revision);
+      docState.transformPendingOperations(operation);
       docState.lastSyncedRevision = revision;
       const transformed = docState.transformOperationAgainstLocalChanges(operation);
 

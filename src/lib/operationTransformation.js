@@ -1,3 +1,5 @@
+import { TextOperation } from "./textOperation";
+
 export const operations = {
     INS: "INS",
     DEL: "DEL"

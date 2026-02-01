@@ -1,4 +1,5 @@
 import { Deque } from "@/src/lib/deque";
+import { OperationTransformation } from "@/src/lib/operationTransformation";
 
 export class DocState {
     constructor(onDocumentChange) {
@@ -11,7 +12,7 @@ export class DocState {
     document = ""
     prevText = ""
 
-    acknowledgeOperation(operation, newRevision, onPendingOperation) {
+    acknowledgeOperation(newRevision, onPendingOperation) {
         // remove sent operation
         this.sentOperation = null
         this.lastSyncedRevision = newRevision
@@ -42,7 +43,7 @@ export class DocState {
         }
     }
 
-    transformPendingOperations(op2, newRevision) {
+    transformPendingOperations(op2) {
         if (op2 === null) { return }
         this.pendingOperations.modifyWhere((op1) => OperationTransformation.transformOperation(op1, op2))
     }

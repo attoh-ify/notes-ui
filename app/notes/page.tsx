@@ -1,5 +1,6 @@
 "use client";
 
+import CreateNoteModal from "@/components/CreateNoteModal";
 import NoteAccessModal, { NoteAccess } from "@/components/NoteAccessModal";
 import { apiFetch } from "@/src/lib/api";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -28,6 +29,7 @@ export default function NotesPage() {
   const [error, setError] = useState<string | null>(null);
   const [selectedNote, setSelectedNote] = useState<Note | null>(null);
   const [showAccessModal, setShowAccessModal] = useState(false);
+  const [showCreateNoteModal, setShowCreateNoteModal] = useState(false);
   const [notesAccesses, setNotesAccesses] = useState<NoteAccess[]>([]);
 
   useEffect(() => {
@@ -44,22 +46,7 @@ export default function NotesPage() {
       }
     }
     fetchNotes();
-  }, []);
-
-  async function createNote() {
-    try {
-      const data = await apiFetch<Note>("notes", {
-        method: "POST",
-      })
-      if (!userId) {
-        setError("User not authenticated");
-        return;
-      }
-      router.push(`/notes/${data.id}/edit?email${email}&userId=${encodeURIComponent(userId)}`)
-    } catch (err: any) {
-      setError(err.message || "Failed to create Note.")
-    }
-  }
+  }, [email, userId]);
 
   async function openAccessPanel(note: Note) {
     try {
@@ -87,7 +74,7 @@ export default function NotesPage() {
 
   if (loading) return <p>Loading notes...</p>;
   if (error) return <p style={{ color: "red" }}>{error}</p>;
-  if (userId === null) {
+  if (userId === null || email === null) {
     setError("Invalid user");
     return;
   }
@@ -192,8 +179,16 @@ export default function NotesPage() {
           accesses={notesAccesses}
         />
       )}
+      {showCreateNoteModal && (
+        <CreateNoteModal
+          open={showCreateNoteModal}
+          email={email}
+          userId={userId}
+          onClose={() => setShowCreateNoteModal(false)}
+        />
+      )}
       <button
-        onClick={createNote}
+        onClick={() => setShowCreateNoteModal(true)}
         style={{
               marginTop: "10px",
               padding: "6px 12px",
