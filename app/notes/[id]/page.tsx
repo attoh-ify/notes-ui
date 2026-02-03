@@ -14,7 +14,7 @@ export interface NoteVersion {
   createdAt: string;
 }
 
-export default function ViewNotePage() {
+function ViewNoteContent() {
   const { id } = useParams();
   const searchParams = useSearchParams();
   const email = searchParams.get("email");
@@ -128,4 +128,12 @@ export default function ViewNotePage() {
       </main>
     </Suspense>
   );
+}
+
+export default function ViewNotePage() {
+  return (
+    <Suspense fallback={<p>Loading Note...</p>}>
+      <ViewNoteContent />
+    </Suspense>
+  )
 }

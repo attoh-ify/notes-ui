@@ -17,7 +17,7 @@ interface JoinResponse {
   revision: number;
 }
 
-export default function EditPage() {
+function EditContent() {
   const { id: noteId } = useParams();
   const searchParams = useSearchParams();
   const email = searchParams.get("email");
@@ -260,102 +260,108 @@ export default function EditPage() {
   if (!note) return <p>Note not found.</p>;
 
   return (
-    <Suspense fallback={<nav>Global Loading...</nav>}>
-      <main
+    <main
+      style={{
+        maxWidth: 700,
+        margin: "50px auto",
+        padding: 25,
+        backgroundColor: "white",
+        borderRadius: 10,
+        boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+        display: "flex",
+        flexDirection: "column",
+        gap: 20,
+      }}
+    >
+      <header
         style={{
-          maxWidth: 700,
-          margin: "50px auto",
-          padding: 25,
-          backgroundColor: "white",
-          borderRadius: 10,
-          boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
           display: "flex",
-          flexDirection: "column",
-          gap: 20,
+          justifyContent: "space-between",
+          alignItems: "center",
         }}
       >
-        <header
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-          }}
-        >
-          <h1 style={{ margin: 0, fontSize: 28, color: "#2F855A" }}>
-            EDITING: {note.title}
-          </h1>
-          <div style={{ textAlign: "right" }}>
-            <p
-              id="collaborator_count"
-              style={{ fontSize: 12, color: "#718096", margin: 0 }}
-            >
-              {collaboratorText}
-            </p>
-            <button
-              style={{
-                padding: "8px 16px",
-                marginRight: 5,
-                backgroundColor: "#2F855A",
-                color: "white",
-                border: "none",
-                borderRadius: 6,
-                cursor: "pointer",
-                fontSize: 14,
-                fontWeight: 500,
-                marginTop: 5,
-              }}
-              onClick={() =>
-                router.push(`/notes/${noteId}?email=${email}&userId=${userId}`)
-              }
-            >
-              Preview Note
-            </button>
-            <button
-              style={{
-                padding: "8px 16px",
-                backgroundColor: "#2F855A",
-                color: "white",
-                border: "none",
-                borderRadius: 6,
-                cursor: "pointer",
-                fontSize: 14,
-                fontWeight: 500,
-                marginTop: 5,
-              }}
-              onClick={saveNote}
-            >
-              Save
-            </button>
-          </div>
-        </header>
+        <h1 style={{ margin: 0, fontSize: 28, color: "#2F855A" }}>
+          EDITING: {note.title}
+        </h1>
+        <div style={{ textAlign: "right" }}>
+          <p
+            id="collaborator_count"
+            style={{ fontSize: 12, color: "#718096", margin: 0 }}
+          >
+            {collaboratorText}
+          </p>
+          <button
+            style={{
+              padding: "8px 16px",
+              marginRight: 5,
+              backgroundColor: "#2F855A",
+              color: "white",
+              border: "none",
+              borderRadius: 6,
+              cursor: "pointer",
+              fontSize: 14,
+              fontWeight: 500,
+              marginTop: 5,
+            }}
+            onClick={() =>
+              router.push(`/notes/${noteId}?email=${email}&userId=${userId}`)
+            }
+          >
+            Preview Note
+          </button>
+          <button
+            style={{
+              padding: "8px 16px",
+              backgroundColor: "#2F855A",
+              color: "white",
+              border: "none",
+              borderRadius: 6,
+              cursor: "pointer",
+              fontSize: 14,
+              fontWeight: 500,
+              marginTop: 5,
+            }}
+            onClick={saveNote}
+          >
+            Save
+          </button>
+        </div>
+      </header>
 
-        <textarea
-          ref={textareaRef}
-          value={content}
-          onInput={handleLocalChange}
-          onPaste={handlePaste}
-          onChange={(e) => setContent(e.target.value)}
-          placeholder="Start typing..."
-          style={{
-            width: "100%",
-            padding: 15,
-            border: "1px solid #CBD5E0",
-            borderRadius: 6,
-            backgroundColor: "#F7FAFC",
-            fontSize: 14,
-            lineHeight: 1.5,
-            overflow: "hidden",
-            resize: "none",
-            minHeight: 300,
-            color: "black",
-          }}
-          rows={1}
-        />
+      <textarea
+        ref={textareaRef}
+        value={content}
+        onInput={handleLocalChange}
+        onPaste={handlePaste}
+        onChange={(e) => setContent(e.target.value)}
+        placeholder="Start typing..."
+        style={{
+          width: "100%",
+          padding: 15,
+          border: "1px solid #CBD5E0",
+          borderRadius: 6,
+          backgroundColor: "#F7FAFC",
+          fontSize: 14,
+          lineHeight: 1.5,
+          overflow: "hidden",
+          resize: "none",
+          minHeight: 300,
+          color: "black",
+        }}
+        rows={1}
+      />
 
-        <footer style={{ fontSize: 12, color: "#718096" }}>
-          Created at: {new Date(note.createdAt).toLocaleString()}
-        </footer>
-      </main>
-    </Suspense>
+      <footer style={{ fontSize: 12, color: "#718096" }}>
+        Created at: {new Date(note.createdAt).toLocaleString()}
+      </footer>
+    </main>
   );
+}
+
+export default function EditPage() {
+  return (
+    <Suspense fallback={<p>Initializing Editor...</p>}>
+      <EditContent />
+    </Suspense>
+  )
 }

@@ -19,7 +19,7 @@ export interface Note {
   createdAt: string;
 }
 
-export default function NotesPage() {
+function NotesContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const email = searchParams.get("email");
@@ -204,4 +204,12 @@ export default function NotesPage() {
     </main>
     </Suspense>
   );
+}
+
+export default function NotesPage() {
+  return (
+    <Suspense fallback={<p>Loading Notes Dashboard...</p>}>
+      <NotesContent />
+    </Suspense>
+  )
 }
