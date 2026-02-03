@@ -27,13 +27,18 @@ export default function LoginPage() {
         body: JSON.stringify({ email, password }),
       });
 
-      await fetch("/api/auth", {
+      const authResponse = await fetch("/api/auth", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ token: data.token})
-      })
+        body: JSON.stringify({ token: data.token }), // Make sure data.token exists!
+      });
+
+      if (!authResponse.ok) {
+        throw new Error("Failed to set session cookie");
+      }
+      
       setEmail("");
       setPassword("");
       router.push(`/notes?email=${encodeURIComponent(email)}&userId=${encodeURIComponent(data.userId)}`);
