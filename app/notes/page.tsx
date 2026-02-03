@@ -4,7 +4,7 @@ import CreateNoteModal from "@/components/CreateNoteModal";
 import NoteAccessModal, { NoteAccess } from "@/components/NoteAccessModal";
 import { apiFetch } from "@/src/lib/api";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react";
 
 export type NoteVisibility = "PRIVATE" | "PUBLIC";
 export type NoteAccessRole = "OWNER" | "SUPER" | "EDITOR" | "VIEWER";
@@ -80,6 +80,7 @@ export default function NotesPage() {
   }
 
   return (
+    <Suspense fallback={<nav>Global Loading...</nav>}>
     <main
       style={{
         maxWidth: 600,
@@ -133,7 +134,7 @@ export default function NotesPage() {
                 {note.accessRole === "VIEWER" && <span style={{ color: "#2F855A" }}>(Read-Only)</span>}
               </div>
               <button
-                onClick={() => router.push(`/notes/${note.id}?email${email}&userId=${encodeURIComponent(userId)}`)}
+                onClick={() => router.push(`/notes/${note.id}?email=${encodeURIComponent(email)}&userId=${encodeURIComponent(userId)}`)}
                 style={{
                   padding: "6px 12px",
                   backgroundColor: "#2F855A",
@@ -201,5 +202,6 @@ export default function NotesPage() {
             }}
             >+ note</button>
     </main>
+    </Suspense>
   );
 }

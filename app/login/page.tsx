@@ -27,7 +27,7 @@ export default function LoginPage() {
       });
       setEmail("");
       setPassword("");
-      router.push(`/notes?email=${encodeURIComponent(email)}&userId=${data.userId}`);
+      router.push(`/notes?email=${encodeURIComponent(email)}&userId=${encodeURIComponent(data.userId)}`);
     } catch (err: any) {
       setError(err.message || "Login failed");
     } finally {
