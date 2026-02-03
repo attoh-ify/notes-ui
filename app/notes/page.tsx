@@ -66,6 +66,9 @@ function NotesContent() {
       await apiFetch(`users/logout`, {
         method: "POST"
       })
+
+      document.cookie = "access_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 UTC; SameSite=Lax; Secure";
+
       router.push("/login")
     } catch (err: any) {
       setError(err.message || "Failed logout")

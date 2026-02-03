@@ -6,6 +6,7 @@ import { useState } from "react";
 
 interface LoginResponse {
   userId: string;
+  token: string;
 }
 
 export default function LoginPage() {
@@ -27,6 +28,7 @@ export default function LoginPage() {
       });
       setEmail("");
       setPassword("");
+      document.cookie = `access_token=${data.token}; path=/; max-age=3600; SameSite=Lax; Secure`;
       router.push(`/notes?email=${encodeURIComponent(email)}&userId=${encodeURIComponent(data.userId)}`);
     } catch (err: any) {
       setError(err.message || "Login failed");
