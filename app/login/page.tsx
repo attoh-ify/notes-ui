@@ -26,10 +26,18 @@ export default function LoginPage() {
         method: "POST",
         body: JSON.stringify({ email, password }),
       });
+
+      await fetch("/api/auth", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ token: data.token})
+      })
       setEmail("");
       setPassword("");
-      document.cookie = `access_token=${data.token}; path=/; max-age=3600; SameSite=Lax; Secure`;
       router.push(`/notes?email=${encodeURIComponent(email)}&userId=${encodeURIComponent(data.userId)}`);
+      router.refresh()
     } catch (err: any) {
       setError(err.message || "Login failed");
     } finally {
