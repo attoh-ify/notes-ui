@@ -4,7 +4,6 @@ import { API_BASE_URL, apiFetch } from "@/src/lib/api";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState, useRef, Suspense } from "react";
 import { Note } from "../../page";
-import { NoteVersion } from "../page";
 import { Stomp, CompatClient } from "@stomp/stompjs";
 import SockJS from "sockjs-client";
 
@@ -27,7 +26,6 @@ function EditContent() {
   const [content, setContent] = useState<string>("");
   const [collaboratorText, setCollaboratorText] = useState("");
   const [note, setNote] = useState<Note | null>(null);
-  const [noteVersion, setNoteVersion] = useState<NoteVersion | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -55,11 +53,11 @@ function EditContent() {
           return;
         }
 
-        const noteVersionData = await apiFetch<NoteVersion>(
-          `notes/${noteData.id}/versions/${noteData.currentNoteVersion}`,
-          { method: "GET" },
-        );
-        setNoteVersion(noteVersionData);
+        // const noteVersionData = await apiFetch<NoteVersion>(
+        //   `notes/${noteData.id}/versions/${noteData.currentNoteVersion}`,
+        //   { method: "GET" },
+        // );
+        // setNoteVersion(noteVersionData);
 
         const joinData = await apiFetch<JoinResponse>(
           `notes/${noteId}/join/${userId}`,
@@ -68,10 +66,6 @@ function EditContent() {
 
         docStateRef.current!.lastSyncedRevision = joinData.revision;
         docStateRef.current!.setDocumentText(joinData.text || "");
-
-        if (joinData.collaboratorCount < 2) {
-          docStateRef.current!.setDocumentText(noteVersionData.content);
-        }
 
         setContent(docStateRef.current!.document);
         updateCollaboratorCount(joinData.collaboratorCount);
