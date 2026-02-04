@@ -67,7 +67,7 @@ function NotesContent() {
         method: "POST"
       })
 
-      document.cookie = "access_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 UTC; SameSite=Lax; Secure";
+      document.cookie = "access_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 UTC; SameSite=None; Secure";
 
       router.push("/login")
     } catch (err: any) {
