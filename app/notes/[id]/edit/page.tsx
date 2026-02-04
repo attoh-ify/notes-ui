@@ -110,8 +110,8 @@ function EditContent() {
   }, [content]);
 
   function handleRemoteOperation(payload: any) {
-    console.log("Payload: " + payload)
     const { operation, revision, acknowledgeTo } = payload;
+    console.log({ operation, revision, acknowledgeTo })
     const docState = docStateRef.current!;
 
     if (acknowledgeTo === userId) {
