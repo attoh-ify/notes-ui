@@ -65,6 +65,7 @@ function EditContent() {
         );
 
         docStateRef.current!.lastSyncedRevision = joinData.revision;
+        console.log(joinData);
         docStateRef.current!.setDocumentText(joinData.text || "");
 
         setContent(docStateRef.current!.document);
