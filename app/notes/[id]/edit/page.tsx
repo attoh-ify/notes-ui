@@ -110,6 +110,7 @@ function EditContent() {
   }, [content]);
 
   function handleRemoteOperation(payload: any) {
+    console.log("Payload: " + payload)
     const { operation, revision, acknowledgeTo } = payload;
     const docState = docStateRef.current!;
 
