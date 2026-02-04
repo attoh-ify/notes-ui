@@ -2,9 +2,8 @@ import { NextResponse } from "next/server"
 
 export async function POST(request: Request) {
     try {
-        const clonedRequest = request.clone();
-        console.log(request.json())
-        const { token } = await clonedRequest.json()
+        const body = await request.json();
+        const token = await body.token
         console.log("API Auth Route: Setting token cookie for middleware...");
 
         if (!token) {
