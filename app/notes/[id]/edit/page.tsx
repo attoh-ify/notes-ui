@@ -1,7 +1,7 @@
 "use client";
 
 import { API_BASE_URL, apiFetch } from "@/src/lib/api";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState, useRef, Suspense } from "react";
 import { Note } from "../../page";
 import { Stomp, CompatClient } from "@stomp/stompjs";
@@ -9,6 +9,7 @@ import SockJS from "sockjs-client";
 
 import { DocState } from "@/src/lib/docState";
 import { TextOperation } from "@/src/lib/textOperation";
+import { useAuth } from "@/src/context/AuthContext";
 
 interface JoinResponse {
   collaboratorCount: number;
@@ -18,9 +19,7 @@ interface JoinResponse {
 
 function EditContent() {
   const { id: noteId } = useParams();
-  const searchParams = useSearchParams();
-  const email = searchParams.get("email");
-  const userId = searchParams.get("userId");
+  const { user, loadingUser } = useAuth();
   const router = useRouter();
 
   const [content, setContent] = useState<string>("");
@@ -49,7 +48,7 @@ function EditContent() {
         setNote(noteData);
 
         if (noteData.accessRole === "VIEWER") {
-          router.push(`/notes/${noteData.id}?email=${email}&userId=${userId}`);
+          router.push(`/notes/${noteId}`);
           return;
         }
 
@@ -71,8 +70,8 @@ function EditContent() {
       }
     }
 
-    if (noteId && userId) loadNoteAndJoin();
-  }, [noteId, userId]);
+    if (noteId && user!.userId) loadNoteAndJoin();
+  }, [noteId, user]);
 
   useEffect(() => {
     if (!noteId || loading) return;
@@ -108,7 +107,7 @@ function EditContent() {
     console.log({ operation, revision, acknowledgeTo })
     const docState = docStateRef.current!;
 
-    if (acknowledgeTo === userId) {
+    if (acknowledgeTo === user!.userId) {
       if (docState.lastSyncedRevision < revision) {
         docState.acknowledgeOperation(revision, (pendingOperation: any) => {
           sendOperationToServer(pendingOperation, docState.lastSyncedRevision);
@@ -141,7 +140,7 @@ function EditContent() {
   async function sendOperationToServer(operation: any, revision: number) {
     await apiFetch(`notes/enqueue/${noteId}`, {
       method: "POST",
-      body: JSON.stringify({ operation, revision, from: userId }),
+      body: JSON.stringify({ operation, revision, from: user!.userId }),
     });
   }
 
@@ -244,10 +243,16 @@ function EditContent() {
     }
   }
 
-  if (loading) return <p>Loading note...</p>;
-  if (error) return <p style={{ color: "red" }}>{error}</p>;
+  if (loadingUser) return <div className="container-wide">Checking session...</div>;
 
-  if (!note) return <p>Note not found.</p>;
+  if (!user) {
+    router.push("login");
+    return null;
+  }
+
+  if (loading) return <div className="container-wide">Loading note...</div>;
+  if (error) return <div className="container-wide" style={{ color: "red" }}>{error}</div>;
+  if (!note) return <div className="container-wide">Note not found.</div>;
 
   return (
     <main className="container-wide" style={{ maxWidth: "1000px" }}>
@@ -259,7 +264,7 @@ function EditContent() {
         <div style={{ textAlign: "right" }}>
           <p style={{ fontSize: "0.875rem", color: "var(--textmuted)", marginBottom: "8px" }}>{collaboratorText || "Working alone"}</p>
           <div style={{ display: "flex", gap: "8px" }}>
-            <button className="btn-secondary" onClick={() => router.push(`/notes/${noteId}?email=${email}&userId=${userId}`)}>Preview</button>
+            <button className="btn-secondary" onClick={() => router.push(`/notes/${noteId}`)}>Preview</button>
             <button className="btn-primary" onClick={saveNote}>Save</button>
           </div>
         </div>

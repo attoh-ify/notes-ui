@@ -1,5 +1,6 @@
 "use client";
 
+import { useAuth } from "@/src/context/AuthContext";
 import { apiFetch } from "@/src/lib/api";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -10,6 +11,7 @@ interface LoginResponse {
 }
 
 export default function LoginPage() {
+  const { setUser } = useAuth();
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -32,16 +34,17 @@ export default function LoginPage() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ token: data.token }), // Make sure data.token exists!
+        body: JSON.stringify({ token: data.token }),
       });
 
       if (!authResponse.ok) {
         throw new Error("Failed to set session cookie");
       }
       
+      setUser({ userId: data.userId, email })
       setEmail("");
       setPassword("");
-      router.push(`/notes?email=${encodeURIComponent(email)}&userId=${encodeURIComponent(data.userId)}`);
+      router.push("/notes");
       router.refresh()
     } catch (err: any) {
       setError(err.message || "Login failed");

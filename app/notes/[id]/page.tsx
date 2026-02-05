@@ -1,9 +1,10 @@
 "use client";
 
 import { apiFetch } from "@/src/lib/api";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState, Suspense } from "react";
 import { Note } from "../page";
+import { useAuth } from "@/src/context/AuthContext";
 
 export interface NoteVersion {
   id: string;
@@ -15,10 +16,8 @@ export interface NoteVersion {
 }
 
 function ViewNoteContent() {
-  const { id } = useParams();
-  const searchParams = useSearchParams();
-  const email = searchParams.get("email");
-  const userId = searchParams.get("userId");
+  const { id: noteId } = useParams();
+  const { user, loadingUser } = useAuth();
   const [note, setNote] = useState<Note | null>(null);
   const [noteVersion, setNoteVersion] = useState<NoteVersion | null>(null);
   const [loading, setLoading] = useState(true);
@@ -26,9 +25,9 @@ function ViewNoteContent() {
   const router = useRouter();
 
   useEffect(() => {
-    async function fetchNotes() {
+    async function fetchNote() {
       try {
-        const noteData = await apiFetch<Note>(`notes/${id}`, { method: "GET" });
+        const noteData = await apiFetch<Note>(`notes/${noteId}`, { method: "GET" });
         setNote(noteData);
 
         const noteVersionData = await apiFetch<NoteVersion>(
@@ -43,26 +42,19 @@ function ViewNoteContent() {
       }
     }
 
-    if (id) fetchNotes();
-  }, [id]);
+    if (noteId) fetchNote();
+  }, [noteId, user]);
 
-  async function editNote() {
-    try {
-      if (userId === null) {
-        setError("Invalid user");
-        return;
-      }
-      router.push(
-        `/notes/${note?.id}/edit?email${email}&userId=${encodeURIComponent(userId)}`,
-      );
-    } catch (err: any) {
-      setError(err.message || "Something went wrong!");
-    }
+  if (loadingUser) return <div className="container-wide">Checking session...</div>;
+
+  if (!user) {
+    router.push("login");
+    return null;
   }
 
-  if (loading) return <p>Loading note...</p>;
-  if (error) return <p style={{ color: "red" }}>{error}</p>;
-  if (!note) return <p>Note not found.</p>;
+  if (loading) return <div className="container-wide">Loading note...</div>;
+  if (error) return <div className="container-wide" style={{ color: "red" }}>{error}</div>;
+  if (!note) return <div className="container-wide">Note not found.</div>;
 
   return (
     <Suspense fallback={<nav>Global Loading...</nav>}>
@@ -73,7 +65,7 @@ function ViewNoteContent() {
             <h1 style={{ fontSize: "1.75rem", margin: 0 }}>{note.title}</h1>
           </div>
           {note.accessRole !== "VIEWER" && (
-            <button className="btn-primary" onClick={editNote}>
+            <button className="btn-primary" onClick={() => router.push(`/notes/${noteId}`)}>
               Edit Note
             </button>
           )}

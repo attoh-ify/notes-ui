@@ -2,8 +2,9 @@
 
 import CreateNoteModal from "@/components/CreateNoteModal";
 import NoteAccessModal, { NoteAccess } from "@/components/NoteAccessModal";
+import { useAuth } from "@/src/context/AuthContext";
 import { apiFetch } from "@/src/lib/api";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useEffect, useState, Suspense } from "react";
 
 export type NoteVisibility = "PRIVATE" | "PUBLIC";
@@ -21,9 +22,7 @@ export interface Note {
 
 function NotesContent() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const email = searchParams.get("email");
-  const userId = searchParams.get("userId");
+  const { user, loadingUser } = useAuth();
   const [notes, setNotes] = useState<Note[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -46,7 +45,7 @@ function NotesContent() {
       }
     }
     fetchNotes();
-  }, [email, userId]);
+  }, [user]);
 
   async function openAccessPanel(note: Note) {
     try {
@@ -79,12 +78,13 @@ function NotesContent() {
     setNotes((prev) => prev.filter((note) => note.id !== noteId));
   }
 
+  if (loadingUser) return <p>Checking session...</p>;
+
+  if (!user) return <p>Please log in</p>;
+
   if (loading) return <p>Loading notes...</p>;
+  
   if (error) return <p style={{ color: "red" }}>{error}</p>;
-  if (userId === null || email === null) {
-    setError("Invalid user");
-    return;
-  }
 
   return (
     <Suspense fallback={<nav>Global Loading...</nav>}>
@@ -92,7 +92,7 @@ function NotesContent() {
       <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2rem" }}>
         <div>
           <div className="text-xl font-bold tracking-tighter text-[#2F855A]">NOTES</div>
-          <p style={{ color: "var(--text-muted)", fontSize: "1.5rem", fontWeight: "600" }}>{email}</p>
+          <p style={{ color: "var(--text-muted)", fontSize: "1.5rem", fontWeight: "600" }}>{user.email}</p>
         </div>
 
         <div style={{ display: "flex", gap: "10px" }}>
@@ -123,7 +123,7 @@ function NotesContent() {
             </div>
 
             <div style={{ display: "flex", gap: "8px" }}>
-              <button className="btn-secondary" onClick={() => router.push(`/notes/${note.id}?email=${encodeURIComponent(email)}&userId=${encodeURIComponent(userId)}`)}>Open</button>
+              <button className="btn-secondary" onClick={() => router.push(`/notes/${note.id}`)}>Open</button>
               {note.accessRole !== "VIEWER" && (
                 <button className="btn-secondary" onClick={() => openAccessPanel(note)}>control</button>
               )}
@@ -152,8 +152,8 @@ function NotesContent() {
       {showCreateNoteModal && (
         <CreateNoteModal
           open={showCreateNoteModal}
-          email={email}
-          userId={userId}
+          email={user.email}
+          userId={user.userId}
           onClose={() => setShowCreateNoteModal(false)}
         />
       )}
