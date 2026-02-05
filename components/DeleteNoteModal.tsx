@@ -1,45 +1,34 @@
 "use client";
 
-import { Note } from "@/app/notes/page";
 import { apiFetch } from "@/src/lib/api";
-import { useRouter } from "next/navigation";
-import { useState } from "react";
 
-interface CreateNoteModalProps {
+interface DeleteNoteModalProps {
   open: boolean;
-  email: string,
-  userId: string;
+  noteId: string;
+  title: string;
   onClose: () => void;
+  onDelete: () => void;
 }
 
-export default function CreateNoteModal({
+export default function DeleteNoteModal({
   open,
-  email,
-  userId,
+  noteId,
+  title,
   onClose,
-}: CreateNoteModalProps) {
-  const router = useRouter();
-  const [title, setTitle] = useState("");
+  onDelete,
+}: DeleteNoteModalProps) {
 
   if (!open) return null;
 
-  async function onCreate() {
+  async function handleDeleteNote(noteId: string) {
     try {
-      const data = await apiFetch<Note>("notes", {
-        method: "POST",
-        body: JSON.stringify({
-            title
-        })
-      });
-      if (!userId || !email) {
-        throw("User not authenticated");
-      }
-      router.push(
-        `/notes/${data.id}/edit?email${email}&userId=${encodeURIComponent(userId)}`,
-      );
+      await apiFetch(`notes/${noteId}`, {
+        method: "DELETE"
+      })
       onClose();
+      onDelete();
     } catch (err: any) {
-      throw(err.message || "Failed to create Note.");
+      throw(err.message || "Failed to delete note")
     }
   }
 
@@ -83,7 +72,7 @@ export default function CreateNoteModal({
                 color: "#718096",
               }}
             >
-              Create new note
+              Delete Note
             </p>
           </div>
 
@@ -101,20 +90,21 @@ export default function CreateNoteModal({
           </button>
         </div>
 
-        <input
-          value={title}
-          placeholder="Title..."
-          className="input-field"
-          onChange={(e) => setTitle(e.target.value)}
-        />
+        <div
+          style={{ }}
+        >
+          Are you sure you want to delete <p style={{}}>{title}</p>
+        </div>
 
         <div
           style={{
             display: "flex",
             justifyContent: "flex-end",
+            gap: "1rem"
           }}
         >
-          <button onClick={onCreate} className="btn-primary">create</button>
+          <button onClick={() => handleDeleteNote(noteId)} className="btn-delete">delete</button>
+          <button onClick={onClose} className="btn-secondary">cancel</button>
         </div>
       </div>
     </div>

@@ -66,43 +66,14 @@ function ViewNoteContent() {
 
   return (
     <Suspense fallback={<nav>Global Loading...</nav>}>
-      <main
-        style={{
-          maxWidth: 700,
-          margin: "50px auto",
-          padding: 25,
-          backgroundColor: "white",
-          borderRadius: 10,
-          boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
-          display: "flex",
-          flexDirection: "column",
-          gap: 20,
-        }}
-      >
-        <header
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-          }}
-        >
-          <h1 style={{ margin: 0, fontSize: 28, color: "#2F855A" }}>
-            {note.title}
-          </h1>
+      <main  className="container-wide" style={{ maxWidth: "1000px" }}>
+        <header style={{ borderBottom: "1px solid var(--border)", paddingBottom: "1rem", marginBottom: "1.5rem", display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
+          <div>
+            <span style={{ fontSize: "0.75rem", color: "var(--primary)", fontWeight: "bold", textTransform: "uppercase" }}>Preview Note</span>
+            <h1 style={{ fontSize: "1.75rem", margin: 0 }}>{note.title}</h1>
+          </div>
           {note.accessRole !== "VIEWER" && (
-            <button
-              style={{
-                padding: "8px 16px",
-                backgroundColor: "#2F855A",
-                color: "white",
-                border: "none",
-                borderRadius: 6,
-                cursor: "pointer",
-                fontSize: 14,
-                fontWeight: 500,
-              }}
-              onClick={editNote}
-            >
+            <button className="btn-primary" onClick={editNote}>
               Edit Note
             </button>
           )}
@@ -110,19 +81,20 @@ function ViewNoteContent() {
 
         <section
           style={{
-            padding: 15,
-            border: "1px solid #CBD5E0",
-            borderRadius: 6,
-            minHeight: 150,
-            backgroundColor: "#F7FAFC",
-            whiteSpace: "pre-wrap",
-            color: "black",
+            minHeight: "500px",
+            fontFamily: "monospace",
+            fontSize: "1rem",
+            lineHeight: "1.6",
+            padding: "2rem",
+            backgroundColor: "fcfcfc",
+            resize: "none",
+            border: "1px solid var(--border)"
           }}
         >
           {noteVersion?.content}
         </section>
 
-        <footer style={{ fontSize: 12, color: "#718096" }}>
+        <footer style={{ marginTop: "1rem", fontSize: "0.75rem", color: "var(--text-muted)"}}>
           Created at: {new Date(note.createdAt).toLocaleString()}
         </footer>
       </main>

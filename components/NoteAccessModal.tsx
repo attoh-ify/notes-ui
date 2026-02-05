@@ -3,6 +3,7 @@
 import { NoteAccessRole, NoteVisibility } from "@/app/notes/page";
 import { apiFetch } from "@/src/lib/api";
 import { useState } from "react";
+import DeleteNoteModal from "./DeleteNoteModal";
 
 export interface NoteAccess {
   id: string;
@@ -13,6 +14,7 @@ export interface NoteAccess {
 interface NoteAccessModalProps {
   open: boolean;
   onClose: () => void;
+  onDelete: () => void;
 
   noteId: string;
   role: NoteAccessRole;
@@ -25,6 +27,7 @@ interface NoteAccessModalProps {
 export default function NoteAccessModal({
   open,
   onClose,
+  onDelete,
   noteId,
   role,
   noteTitle,
@@ -36,6 +39,7 @@ export default function NoteAccessModal({
   const [currentVisibility, setCurrentVisibility] =
     useState<NoteVisibility>(visibility);
   const [newRole, setNewRole] = useState<NoteAccessRole>("VIEWER");
+  const [showDeleteNoteModal, setShowDeleteNoteModal] = useState(false);
 
   if (!open) return null;
 
@@ -66,6 +70,11 @@ export default function NoteAccessModal({
     } catch (err: any) {
       alert(err.message || "Failed to add note access");
     }
+  }
+
+  async function handleDeleteNote() {
+    onClose();
+    onDelete();
   }
 
   async function handleDeleteNoteAccess(noteAccessId: string) {
@@ -118,32 +127,21 @@ export default function NoteAccessModal({
         zIndex: 1000,
       }}
     >
-      <div
-        style={{
-          backgroundColor: "#fff",
-          width: 460,
-          maxHeight: "85vh",
-          borderRadius: 12,
-          padding: 20,
-          boxShadow: "0 20px 40px rgba(0,0,0,0.2)",
-          display: "flex",
-          flexDirection: "column",
-          gap: 20,
-        }}
-      >
+      <main className="container-center">
         <div
           style={{
             display: "flex",
             justifyContent: "space-between",
             alignItems: "flex-start",
+            marginBottom: "10px"
           }}
         >
           <div>
-            <h2 style={{ margin: 0 }}>{noteTitle}</h2>
+            <h2 style={{ margin: 0, fontWeight: "600", fontSize: "1.2rem" }}>{noteTitle}</h2>
             <p
               style={{
                 margin: "4px 0 0",
-                fontSize: 13,
+                fontSize: "1rem",
                 color: "#718096",
               }}
             >
@@ -153,13 +151,7 @@ export default function NoteAccessModal({
 
           <button
             onClick={onClose}
-            style={{
-              background: "transparent",
-              border: "none",
-              fontSize: 18,
-              cursor: "pointer",
-              color: "#4A5568",
-            }}
+            style={{ background: "transparent", border: "none", fontSize: 18, cursor: "pointer", color: "#4A5568", fontWeight: "600" }}
           >
             ✕
           </button>
@@ -172,6 +164,7 @@ export default function NoteAccessModal({
             borderRadius: 8,
             padding: 14,
             color: "black",
+            marginBottom: "10px"
           }}
         >
           <h4
@@ -217,6 +210,7 @@ export default function NoteAccessModal({
             backgroundColor: "#F7FAFC",
             borderRadius: 8,
             padding: 14,
+            marginBottom: "10px"
           }}
         >
           <h4
@@ -308,6 +302,7 @@ export default function NoteAccessModal({
               backgroundColor: "#F7FAFC",
               borderRadius: 8,
               padding: 14,
+              marginBottom: "10px"
             }}
           >
             <h4
@@ -373,27 +368,48 @@ export default function NoteAccessModal({
           </section>
         )}
 
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "flex-end",
-          }}
-        >
-          <button
-            onClick={onClose}
+        {/* Delete note */}
+        {(role === "OWNER") && (
+          <section
             style={{
-              padding: "6px 14px",
-              borderRadius: 6,
-              border: "1px solid #CBD5E0",
-              backgroundColor: "#EDF2F7",
-              cursor: "pointer",
-              color: "red",
+              backgroundColor: "#F7FAFC",
+              borderRadius: 8,
+              padding: 14,
+              marginBottom: "10px"
             }}
           >
-            Done
-          </button>
-        </div>
-      </div>
+            <h4
+              style={{
+                margin: "0 0 10px",
+                fontSize: 14,
+                fontWeight: 600,
+                color: "#2D3748",
+              }}
+            >
+              Delete Note
+            </h4>
+
+            <div
+              style={{
+                display: "flex",
+                gap: 8,
+              }}
+            >
+              <button onClick={() => setShowDeleteNoteModal(true)} className="btn-delete">Delete</button>
+            </div>
+          </section>
+        )}
+      </main>
+
+      {showDeleteNoteModal && (
+        <DeleteNoteModal
+          open={showDeleteNoteModal}
+          noteId={noteId}
+          title={noteTitle}
+          onClose={() => setShowDeleteNoteModal(false)}
+          onDelete={handleDeleteNote}
+        />
+      )}
     </div>
   );
 }

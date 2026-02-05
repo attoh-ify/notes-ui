@@ -71,8 +71,12 @@ function NotesContent() {
 
       router.push("/login")
     } catch (err: any) {
-      setError(err.message || "Failed logout")
+      setError(err.message || "Failed to logout")
     }
+  }
+
+  async function handleDeleteNote(noteId: string) {
+    setNotes((prev) => prev.filter((note) => note.id !== noteId));
   }
 
   if (loading) return <p>Loading notes...</p>;
@@ -84,98 +88,59 @@ function NotesContent() {
 
   return (
     <Suspense fallback={<nav>Global Loading...</nav>}>
-    <main
-      style={{
-        maxWidth: 600,
-        margin: "50px auto",
-        padding: 20,
-        backgroundColor: "white",
-        borderRadius: 8,
-        boxShadow: "0 0 10px rgba(0,0,0,0.1)",
-      }}
-    >
-      <h1 style={{ textAlign: "center", color: "#2F855A", marginBottom: 20 }}>
-        {email}: My Notes
-      </h1>
-      <button
-        style={{
-            padding: "8px 16px",
-            marginBottom: 5,
-            backgroundColor: "#2F855A",
-            color: "white",
-            border: "none",
-            borderRadius: 6,
-            cursor: "pointer",
-            fontSize: 14,
-            fontWeight: 500,
-            marginTop: 5
-        }}
-        onClick={handleLogout}
-    >
-        logout
-    </button>
+    <main className="container-wide">
+      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2rem" }}>
+        <div>
+          <div className="text-xl font-bold tracking-tighter text-[#2F855A]">NOTES</div>
+          <p style={{ color: "var(--text-muted)", fontSize: "1.5rem", fontWeight: "600" }}>{email}</p>
+        </div>
 
-      <ul style={{ listStyle: "none", padding: 0, display: "flex", flexDirection: "column", gap: 15 }}>
-        {notes.map((note) => {
-          return (
-            <li
-              key={note.id}
-              style={{
-                padding: 15,
-                border: "1px solid #CBD5E0",
-                borderRadius: 6,
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-              }}
-            >
-              <div>
-                <strong>{note.title}</strong>{" "}
-                {note.accessRole === "OWNER" && <span style={{ color: "#2F855A" }}>(Owner)</span>}
-                {note.accessRole === "SUPER" && <span style={{ color: "#2F855A" }}>(Super)</span>}
-                {note.accessRole === "EDITOR" && <span style={{ color: "#2F855A" }}>(Shared, Edit)</span>}
-                {note.accessRole === "VIEWER" && <span style={{ color: "#2F855A" }}>(Read-Only)</span>}
-              </div>
-              <button
-                onClick={() => router.push(`/notes/${note.id}?email=${encodeURIComponent(email)}&userId=${encodeURIComponent(userId)}`)}
-                style={{
-                  padding: "6px 12px",
-                  backgroundColor: "#2F855A",
-                  color: "white",
-                  border: "none",
-                  borderRadius: 4,
-                  cursor: "pointer",
-                  fontSize: 14,
-                }}
-              >
-                Open
-              </button>
-                {
-                  note.accessRole !== "VIEWER" && (
-                    <button
-                    onClick={() => openAccessPanel(note)}
-                    style={{
-                      padding: "6px 12px",
-                      backgroundColor: "#2F855A",
-                      color: "white",
-                      border: "none",
-                      borderRadius: 4,
-                      cursor: "pointer",
-                      fontSize: 14,
-                    }}
-                    >
-                Access
-              </button>
-              )
-            }
-            </li>
-          );
-        })}
-      </ul>
+        <div style={{ display: "flex", gap: "10px" }}>
+          <button className="btn-secondary" onClick={handleLogout}>logout</button>
+        </div>
+      </header>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: "12px", marginBottom: "12px" }}>
+        {notes.map((note) => (
+          <div key={note.id}
+            style={{ 
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              padding: "1rem",
+              border: "1px solid var(--border)",
+              borderRadius: "8px",
+              transition: "transform 0.1s"
+            }}
+          >
+            <div>
+              <span style={{ fontWeight: "600", display: "block", fontSize: "1.2rem" }}>
+                {note.title}
+              </span>
+              <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", textTransform: "uppercase" }}>
+                {note.accessRole}
+              </span>
+            </div>
+
+            <div style={{ display: "flex", gap: "8px" }}>
+              <button className="btn-secondary" onClick={() => router.push(`/notes/${note.id}?email=${encodeURIComponent(email)}&userId=${encodeURIComponent(userId)}`)}>Open</button>
+              {note.accessRole !== "VIEWER" && (
+                <button className="btn-secondary" onClick={() => openAccessPanel(note)}>control</button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "flex-end"}}>
+        <button className="btn-primary" onClick={() => setShowCreateNoteModal(true)}>+ New Note</button>
+      </div>
+
       {selectedNote && (
         <NoteAccessModal
           open={showAccessModal}
           onClose={() => setShowAccessModal(false)}
+          onDelete={() => handleDeleteNote(selectedNote.id)}
           noteId={selectedNote.id}
           role={selectedNote.accessRole}
           noteTitle={selectedNote.title}
@@ -183,6 +148,7 @@ function NotesContent() {
           accesses={notesAccesses}
         />
       )}
+
       {showCreateNoteModal && (
         <CreateNoteModal
           open={showCreateNoteModal}
@@ -191,19 +157,6 @@ function NotesContent() {
           onClose={() => setShowCreateNoteModal(false)}
         />
       )}
-      <button
-        onClick={() => setShowCreateNoteModal(true)}
-        style={{
-              marginTop: "10px",
-              padding: "6px 12px",
-              backgroundColor: "#2F855A",
-              color: "white",
-              border: "none",
-              borderRadius: 4,
-              cursor: "pointer",
-              fontSize: 14,
-            }}
-            >+ note</button>
     </main>
     </Suspense>
   );

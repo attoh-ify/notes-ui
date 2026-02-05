@@ -53,14 +53,8 @@ function EditContent() {
           return;
         }
 
-        // const noteVersionData = await apiFetch<NoteVersion>(
-        //   `notes/${noteData.id}/versions/${noteData.currentNoteVersion}`,
-        //   { method: "GET" },
-        // );
-        // setNoteVersion(noteVersionData);
-
         const joinData = await apiFetch<JoinResponse>(
-          `notes/${noteId}/join/${userId}`,
+          `notes/${noteId}/join`,
           { method: "GET" },
         );
 
@@ -256,75 +250,23 @@ function EditContent() {
   if (!note) return <p>Note not found.</p>;
 
   return (
-    <main
-      style={{
-        maxWidth: 700,
-        margin: "50px auto",
-        padding: 25,
-        backgroundColor: "white",
-        borderRadius: 10,
-        boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
-        display: "flex",
-        flexDirection: "column",
-        gap: 20,
-      }}
-    >
-      <header
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
-        <h1 style={{ margin: 0, fontSize: 28, color: "#2F855A" }}>
-          EDITING: {note.title}
-        </h1>
+    <main className="container-wide" style={{ maxWidth: "1000px" }}>
+      <header style={{ borderBottom: "1px solid var(--border)", paddingBottom: "1rem", marginBottom: "1.5rem", display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
+        <div>
+          <span style={{ fontSize: "0.75rem", color: "var(--primary)", fontWeight: "bold", textTransform: "uppercase" }}>Editing Note</span>
+          <h1 style={{ fontSize: "1.75rem", margin: 0 }}>{note.title}</h1>
+        </div>
         <div style={{ textAlign: "right" }}>
-          <p
-            id="collaborator_count"
-            style={{ fontSize: 12, color: "#718096", margin: 0 }}
-          >
-            {collaboratorText}
-          </p>
-          <button
-            style={{
-              padding: "8px 16px",
-              marginRight: 5,
-              backgroundColor: "#2F855A",
-              color: "white",
-              border: "none",
-              borderRadius: 6,
-              cursor: "pointer",
-              fontSize: 14,
-              fontWeight: 500,
-              marginTop: 5,
-            }}
-            onClick={() =>
-              router.push(`/notes/${noteId}?email=${email}&userId=${userId}`)
-            }
-          >
-            Preview Note
-          </button>
-          <button
-            style={{
-              padding: "8px 16px",
-              backgroundColor: "#2F855A",
-              color: "white",
-              border: "none",
-              borderRadius: 6,
-              cursor: "pointer",
-              fontSize: 14,
-              fontWeight: 500,
-              marginTop: 5,
-            }}
-            onClick={saveNote}
-          >
-            Save
-          </button>
+          <p style={{ fontSize: "0.875rem", color: "var(--textmuted)", marginBottom: "8px" }}>{collaboratorText || "Working alone"}</p>
+          <div style={{ display: "flex", gap: "8px" }}>
+            <button className="btn-secondary" onClick={() => router.push(`/notes/${noteId}?email=${email}&userId=${userId}`)}>Preview</button>
+            <button className="btn-primary" onClick={saveNote}>Save</button>
+          </div>
         </div>
       </header>
 
       <textarea
+        className="input-field"
         ref={textareaRef}
         value={content}
         onInput={handleLocalChange}
@@ -332,22 +274,18 @@ function EditContent() {
         onChange={(e) => setContent(e.target.value)}
         placeholder="Start typing..."
         style={{
-          width: "100%",
-          padding: 15,
-          border: "1px solid #CBD5E0",
-          borderRadius: 6,
-          backgroundColor: "#F7FAFC",
-          fontSize: 14,
-          lineHeight: 1.5,
-          overflow: "hidden",
+          minHeight: "500px",
+          fontFamily: "monospace",
+          fontSize: "1rem",
+          lineHeight: "1.6",
+          padding: "2rem",
+          backgroundColor: "fcfcfc",
           resize: "none",
-          minHeight: 300,
-          color: "black",
+          border: "1px solid var(--border)"
         }}
-        rows={1}
       />
 
-      <footer style={{ fontSize: 12, color: "#718096" }}>
+      <footer style={{ marginTop: "1rem", fontSize: "0.75rem", color: "var(--text-muted)"}}>
         Created at: {new Date(note.createdAt).toLocaleString()}
       </footer>
     </main>
