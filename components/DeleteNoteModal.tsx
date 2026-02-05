@@ -91,9 +91,9 @@ export default function DeleteNoteModal({
         </div>
 
         <div
-          style={{ }}
+          style={{ color: "black" }}
         >
-          Are you sure you want to delete <p style={{}}>{title}</p>
+          Are you sure you want to delete <p style={{ color: "var(--text-muted)", textDecoration: "underline" }}>{title}</p>
         </div>
 
         <div
