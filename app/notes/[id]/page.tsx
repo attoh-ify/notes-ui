@@ -65,8 +65,8 @@ function ViewNoteContent() {
             <h1 style={{ fontSize: "1.75rem", margin: 0 }}>{note.title}</h1>
           </div>
           {note.accessRole !== "VIEWER" && (
-            <button className="btn-primary" onClick={() => router.push(`/notes/${noteId}`)}>
-              Edit Note
+            <button className="btn-primary" onClick={() => router.push(`/notes/${noteId}/edit`)}>
+              Edit
             </button>
           )}
         </header>

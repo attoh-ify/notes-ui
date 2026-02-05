@@ -78,13 +78,15 @@ function NotesContent() {
     setNotes((prev) => prev.filter((note) => note.id !== noteId));
   }
 
-  if (loadingUser) return <p>Checking session...</p>;
+  if (loadingUser) return <div className="container-wide">Checking session...</div>;
 
-  if (!user) return <p>Please log in</p>;
+  if (!user) {
+    router.push("login");
+    return null;
+  }
 
-  if (loading) return <p>Loading notes...</p>;
-  
-  if (error) return <p style={{ color: "red" }}>{error}</p>;
+  if (loading) return <div className="container-wide">Loading notes...</div>;
+  if (error) return <div className="container-wide" style={{ color: "red" }}>{error}</div>;
 
   return (
     <Suspense fallback={<nav>Global Loading...</nav>}>
@@ -142,6 +144,7 @@ function NotesContent() {
           onClose={() => setShowAccessModal(false)}
           onDelete={() => handleDeleteNote(selectedNote.id)}
           noteId={selectedNote.id}
+          email={user.email}
           role={selectedNote.accessRole}
           noteTitle={selectedNote.title}
           visibility={selectedNote.visibility}

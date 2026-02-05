@@ -17,6 +17,7 @@ interface NoteAccessModalProps {
   onDelete: () => void;
 
   noteId: string;
+  email: string;
   role: NoteAccessRole;
   noteTitle: string;
   visibility: NoteVisibility;
@@ -29,6 +30,7 @@ export default function NoteAccessModal({
   onClose,
   onDelete,
   noteId,
+  email,
   role,
   noteTitle,
   visibility,
@@ -252,7 +254,7 @@ export default function NoteAccessModal({
                   {access.email}
                 </span>
 
-                {(role === "OWNER" || role === "SUPER") && (
+                {(access.email !== email) && (role === "OWNER" || role === "SUPER") && (
                   <>
                     <select
                       defaultValue={access.role}
