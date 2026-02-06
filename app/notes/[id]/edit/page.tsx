@@ -17,6 +17,12 @@ interface JoinResponse {
   revision: number;
 }
 
+interface OperationQueueOutPayload {
+  acknowledgeTo: string;
+  operation: TextOperation;
+  revision: number;
+}
+
 function EditContent() {
   const { id: noteId } = useParams();
   const { user, loadingUser } = useAuth();
@@ -52,10 +58,9 @@ function EditContent() {
           return;
         }
 
-        const joinData = await apiFetch<JoinResponse>(
-          `notes/${noteId}/join`,
-          { method: "GET" },
-        );
+        const joinData = await apiFetch<JoinResponse>(`notes/${noteId}/join`, {
+          method: "GET",
+        });
 
         docStateRef.current!.lastSyncedRevision = joinData.revision;
         console.log(joinData);
@@ -102,15 +107,17 @@ function EditContent() {
     }
   }, [content]);
 
-  function handleRemoteOperation(payload: any) {
+  function handleRemoteOperation(payload: OperationQueueOutPayload) {
     const { operation, revision, acknowledgeTo } = payload;
-    console.log({ operation, revision, acknowledgeTo })
+    console.log({ operation, revision, acknowledgeTo });
     const docState = docStateRef.current!;
 
     if (acknowledgeTo === user!.userId) {
       if (docState.lastSyncedRevision < revision) {
-        docState.acknowledgeOperation(revision, (pendingOperation: any) => {
-          sendOperationToServer(pendingOperation, docState.lastSyncedRevision);
+        docState.acknowledgeOperation(revision, (pendingOperation: TextOperation | null) => {
+          if (pendingOperation) {
+            sendOperationToServer(pendingOperation, docState.lastSyncedRevision);
+          }
         });
       }
     } else {
@@ -119,7 +126,19 @@ function EditContent() {
       const transformed =
         docState.transformOperationAgainstLocalChanges(operation);
 
-      if (transformed) {
+      if (transformed === null) {
+        // Operation canceled - do nothing
+        console.log("[REMOTE] Operation canceled out by local changes");
+      } else if (Array.isArray(transformed)) {
+        // Operation split into multiple ops (from transformDI)
+        let newDoc = docState.document;
+        for (const op of transformed) {
+          newDoc = applyOp(newDoc, op);
+        }
+        docState.setDocumentText(newDoc);
+        setContent(newDoc);
+      } else {
+        // Single operation - normal case
         const newDoc = applyOp(docState.document, transformed);
         docState.setDocumentText(newDoc);
         setContent(newDoc);
@@ -127,7 +146,7 @@ function EditContent() {
     }
   }
 
-  function applyOp(doc: string, op: any) {
+  function applyOp(doc: string, op: TextOperation): string {
     if (op.opName === "INS")
       return doc.slice(0, op.position) + op.operand + doc.slice(op.position);
     if (op.opName === "DEL")
@@ -137,7 +156,7 @@ function EditContent() {
     return doc;
   }
 
-  async function sendOperationToServer(operation: any, revision: number) {
+  async function sendOperationToServer(operation: TextOperation, revision: number): Promise<void> {
     await apiFetch(`notes/enqueue/${noteId}`, {
       method: "POST",
       body: JSON.stringify({ operation, revision, from: user!.userId }),
@@ -156,6 +175,8 @@ function EditContent() {
   }
 
   function handlePaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    e.preventDefault();
+
     const start = e.currentTarget.selectionStart;
     const end = e.currentTarget.selectionEnd;
     const pastedText = e.clipboardData.getData("text");
@@ -164,7 +185,7 @@ function EditContent() {
       const substr = docStateRef.current!.document.substring(start, end);
       sendDeleteOperation(start, substr);
     }
-    sendInsertOperation(start + 1, pastedText);
+    sendInsertOperation(start, pastedText);
   }
 
   function sendInsertOperation(start: number, substring: string) {
@@ -172,14 +193,15 @@ function EditContent() {
       new TextOperation(
         "INS",
         substring,
-        start - 1,
+        start,
         docStateRef.current!.lastSyncedRevision,
+        user!.userId,
       ),
 
       (currDoc: string) =>
         currDoc.slice(0, start - 1) + substring + currDoc.slice(start - 1),
 
-      async (operation: any, revision: number) => {
+      async (operation: TextOperation, revision: number) => {
         await sendOperationToServer(operation, revision);
       },
     );
@@ -192,18 +214,19 @@ function EditContent() {
         substring,
         start,
         docStateRef.current!.lastSyncedRevision,
+        user!.userId,
       ),
 
       (currDoc: string) =>
         currDoc.slice(0, start) + currDoc.slice(start + substring.length),
 
-      async (operation: any, revision: number) => {
+      async (operation: TextOperation, revision: number) => {
         await sendOperationToServer(operation, revision);
       },
     );
   }
 
-  function handleLocalChange(e: React.InputEvent<HTMLTextAreaElement>) {
+  function handleLocalChange(e: React.FormEvent<HTMLTextAreaElement>) {
     const inputType = (e.nativeEvent as InputEvent).inputType;
     const editor = e.currentTarget;
     const currText = editor.value;
@@ -243,7 +266,8 @@ function EditContent() {
     }
   }
 
-  if (loadingUser) return <div className="container-wide">Checking session...</div>;
+  if (loadingUser)
+    return <div className="container-wide">Checking session...</div>;
 
   if (!user) {
     router.push("login");
@@ -251,21 +275,59 @@ function EditContent() {
   }
 
   if (loading) return <div className="container-wide">Loading note...</div>;
-  if (error) return <div className="container-wide" style={{ color: "red" }}>{error}</div>;
+  if (error)
+    return (
+      <div className="container-wide" style={{ color: "red" }}>
+        {error}
+      </div>
+    );
   if (!note) return <div className="container-wide">Note not found.</div>;
 
   return (
     <main className="container-wide" style={{ maxWidth: "1000px" }}>
-      <header style={{ borderBottom: "1px solid var(--border)", paddingBottom: "1rem", marginBottom: "1.5rem", display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
+      <header
+        style={{
+          borderBottom: "1px solid var(--border)",
+          paddingBottom: "1rem",
+          marginBottom: "1.5rem",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "flex-end",
+        }}
+      >
         <div>
-          <span style={{ fontSize: "0.75rem", color: "var(--primary)", fontWeight: "bold", textTransform: "uppercase" }}>Editing Note</span>
+          <span
+            style={{
+              fontSize: "0.75rem",
+              color: "var(--primary)",
+              fontWeight: "bold",
+              textTransform: "uppercase",
+            }}
+          >
+            Editing Note
+          </span>
           <h1 style={{ fontSize: "1.75rem", margin: 0 }}>{note.title}</h1>
         </div>
         <div style={{ textAlign: "right" }}>
-          <p style={{ fontSize: "0.875rem", color: "var(--textmuted)", marginBottom: "8px" }}>{collaboratorText || "Working alone"}</p>
+          <p
+            style={{
+              fontSize: "0.875rem",
+              color: "var(--textmuted)",
+              marginBottom: "8px",
+            }}
+          >
+            {collaboratorText || "Working alone"}
+          </p>
           <div style={{ display: "flex", gap: "8px" }}>
-            <button className="btn-secondary" onClick={() => router.push(`/notes/${noteId}`)}>Preview</button>
-            <button className="btn-primary" onClick={saveNote}>Save</button>
+            <button
+              className="btn-secondary"
+              onClick={() => router.push(`/notes/${noteId}`)}
+            >
+              Preview
+            </button>
+            <button className="btn-primary" onClick={saveNote}>
+              Save
+            </button>
           </div>
         </div>
       </header>
@@ -286,11 +348,17 @@ function EditContent() {
           padding: "2rem",
           backgroundColor: "fcfcfc",
           resize: "none",
-          border: "1px solid var(--border)"
+          border: "1px solid var(--border)",
         }}
       />
 
-      <footer style={{ marginTop: "1rem", fontSize: "0.75rem", color: "var(--text-muted)"}}>
+      <footer
+        style={{
+          marginTop: "1rem",
+          fontSize: "0.75rem",
+          color: "var(--text-muted)",
+        }}
+      >
         Created at: {new Date(note.createdAt).toLocaleString()}
       </footer>
     </main>
@@ -302,5 +370,5 @@ export default function EditPage() {
     <Suspense fallback={<p>Initializing Editor...</p>}>
       <EditContent />
     </Suspense>
-  )
+  );
 }
