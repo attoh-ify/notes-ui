@@ -10,6 +10,9 @@ import SockJS from "sockjs-client";
 import { DocState } from "@/src/lib/docState";
 import { TextOperation } from "@/src/lib/textOperation";
 import { useAuth } from "@/src/context/AuthContext";
+import type Quill from "quill";
+import "quill/dist/quill.snow.css";
+import Delta from "quill-delta";
 
 interface JoinResponse {
   collaboratorCount: number;
@@ -28,25 +31,73 @@ function EditContent() {
   const { user, loadingUser } = useAuth();
   const router = useRouter();
 
-  const [content, setContent] = useState<string>("");
   const [collaboratorText, setCollaboratorText] = useState("");
   const [note, setNote] = useState<Note | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [editorLoaded, setEditorLoaded] = useState(false);
 
   const docStateRef = useRef<DocState | null>(null);
   const stompClientRef = useRef<CompatClient | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const editorRef = useRef<HTMLDivElement>(null);
+  const quillRef = useRef<Quill | null>(null);
 
   if (!docStateRef.current) {
     docStateRef.current = new DocState((newDoc: string) => {
-      setContent(newDoc);
-      console.log(newDoc);
+      console.log("newDoc: " + newDoc);
     });
   }
 
   useEffect(() => {
+    if (!loading && editorRef.current && !quillRef.current) {
+      const initQuill = async () => {
+        const { default: QuillModule } = await import("quill");
+
+        quillRef.current = new QuillModule(editorRef.current!, {
+          theme: "snow",
+          modules: {
+            toolbar: [],
+          },
+          placeholder: "Start typing...",
+        });
+
+        if (docStateRef.current?.document) {
+          quillRef.current.setText(docStateRef.current.document, "api");
+        }
+
+        quillRef.current.on("text-change", (delta, oldDelta, source) => {
+          if (source !== "user") return;
+
+          let currentPos = 0;
+
+          delta.ops.forEach((op) => {
+            if (typeof op.retain === "number") {
+              currentPos += op.retain;
+            } else if (typeof op.insert === "string") {
+              sendInsertOperation(currentPos, op.insert);
+              currentPos += op.insert.length;
+            } else if (op.delete) {
+              const deletedString = docStateRef.current!.document.substring(
+                currentPos,
+                currentPos + op.delete,
+              );
+
+              sendDeleteOperation(currentPos, deletedString);
+            }
+          });
+        });
+
+        setEditorLoaded(true);
+      };
+
+      initQuill();
+    }
+  }, [loading]);
+
+  useEffect(() => {
     async function loadNoteAndJoin() {
+      if (!noteId || !user) return;
+
       try {
         const noteData = await apiFetch<Note>(`notes/${noteId}`, {
           method: "GET",
@@ -63,10 +114,8 @@ function EditContent() {
         });
 
         docStateRef.current!.lastSyncedRevision = joinData.revision;
-        console.log(joinData);
         docStateRef.current!.setDocumentText(joinData.text || "");
 
-        setContent(docStateRef.current!.document);
         updateCollaboratorCount(joinData.collaboratorCount);
       } catch (err: any) {
         setError(err.message || "Failed to load note");
@@ -75,7 +124,9 @@ function EditContent() {
       }
     }
 
-    if (noteId && user!.userId) loadNoteAndJoin();
+    if (noteId && user) {
+      loadNoteAndJoin();
+    }
   }, [noteId, user]);
 
   useEffect(() => {
@@ -89,7 +140,9 @@ function EditContent() {
     client.connect({}, () => {
       client.subscribe(`/topic/note/${noteId}`, (message) => {
         const { type, payload } = JSON.parse(message.body);
-        if (type === "OPERATION") handleRemoteOperation(payload);
+        if (type === "OPERATION") {
+          handleRemoteOperation(payload);
+        }
         if (type === "COLLABORATOR_COUNT")
           updateCollaboratorCount(payload.count);
       });
@@ -100,13 +153,6 @@ function EditContent() {
     };
   }, [noteId, loading]);
 
-  useEffect(() => {
-    if (textareaRef.current) {
-      textareaRef.current.style.height = "auto";
-      textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
-    }
-  }, [content]);
-
   function handleRemoteOperation(payload: OperationQueueOutPayload) {
     const { operation, revision, acknowledgeTo } = payload;
     console.log({ operation, revision, acknowledgeTo });
@@ -114,11 +160,17 @@ function EditContent() {
 
     if (acknowledgeTo === user!.userId) {
       if (docState.lastSyncedRevision < revision) {
-        docState.acknowledgeOperation(revision, (pendingOperation: TextOperation | null) => {
-          if (pendingOperation) {
-            sendOperationToServer(pendingOperation, docState.lastSyncedRevision);
-          }
-        });
+        docState.acknowledgeOperation(
+          revision,
+          (pendingOperation: TextOperation | null) => {
+            if (pendingOperation) {
+              sendOperationToServer(
+                pendingOperation,
+                docState.lastSyncedRevision,
+              );
+            }
+          },
+        );
       }
     } else {
       docState.transformPendingOperations(operation);
@@ -127,23 +179,34 @@ function EditContent() {
         docState.transformOperationAgainstLocalChanges(operation);
 
       if (transformed === null) {
-        // Operation canceled - do nothing
         console.log("[REMOTE] Operation canceled out by local changes");
       } else if (Array.isArray(transformed)) {
-        // Operation split into multiple ops (from transformDI)
         let newDoc = docState.document;
         for (const op of transformed) {
           newDoc = applyOp(newDoc, op);
+          applyRemoteChangeToQuill(op);
         }
         docState.setDocumentText(newDoc);
-        setContent(newDoc);
       } else {
-        // Single operation - normal case
         const newDoc = applyOp(docState.document, transformed);
+        applyRemoteChangeToQuill(transformed);
         docState.setDocumentText(newDoc);
-        setContent(newDoc);
       }
     }
+  }
+
+  function applyRemoteChangeToQuill(op: TextOperation) {
+    if (!quillRef.current) return;
+
+    const delta = new Delta();
+
+    if (op.opName === "INS") {
+      delta.retain(op.position).insert(op.operand);
+    } else if (op.opName === "DEL") {
+      delta.retain(op.position).delete(op.operand.length);
+    }
+
+    quillRef.current.updateContents(delta, "api");
   }
 
   function applyOp(doc: string, op: TextOperation): string {
@@ -156,7 +219,10 @@ function EditContent() {
     return doc;
   }
 
-  async function sendOperationToServer(operation: TextOperation, revision: number): Promise<void> {
+  async function sendOperationToServer(
+    operation: TextOperation,
+    revision: number,
+  ): Promise<void> {
     await apiFetch(`notes/enqueue/${noteId}`, {
       method: "POST",
       body: JSON.stringify({ operation, revision, from: user!.userId }),
@@ -174,32 +240,18 @@ function EditContent() {
     }
   }
 
-  function handlePaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
-    e.preventDefault();
-
-    const start = e.currentTarget.selectionStart;
-    const end = e.currentTarget.selectionEnd;
-    const pastedText = e.clipboardData.getData("text");
-
-    if (start != end) {
-      const substr = docStateRef.current!.document.substring(start, end);
-      sendDeleteOperation(start, substr);
-    }
-    sendInsertOperation(start, pastedText);
-  }
-
-  function sendInsertOperation(start: number, substring: string) {
+  function sendInsertOperation(position: number, operand: string) {
     docStateRef.current!.queueOperation(
       new TextOperation(
         "INS",
-        substring,
-        start,
+        operand,
+        position,
         docStateRef.current!.lastSyncedRevision,
         user!.userId,
       ),
 
       (currDoc: string) =>
-        currDoc.slice(0, start - 1) + substring + currDoc.slice(start - 1),
+        currDoc.slice(0, position) + operand + currDoc.slice(position),
 
       async (operation: TextOperation, revision: number) => {
         await sendOperationToServer(operation, revision);
@@ -207,53 +259,23 @@ function EditContent() {
     );
   }
 
-  function sendDeleteOperation(start: number, substring: string) {
+  function sendDeleteOperation(position: number, operand: string) {
     docStateRef.current!.queueOperation(
       new TextOperation(
         "DEL",
-        substring,
-        start,
+        operand,
+        position,
         docStateRef.current!.lastSyncedRevision,
         user!.userId,
       ),
 
       (currDoc: string) =>
-        currDoc.slice(0, start) + currDoc.slice(start + substring.length),
+        currDoc.slice(0, position) + currDoc.slice(position + operand.length),
 
       async (operation: TextOperation, revision: number) => {
         await sendOperationToServer(operation, revision);
       },
     );
-  }
-
-  function handleLocalChange(e: React.FormEvent<HTMLTextAreaElement>) {
-    const inputType = (e.nativeEvent as InputEvent).inputType;
-    const editor = e.currentTarget;
-    const currText = editor.value;
-    const prevText = docStateRef.current!.document;
-    const pos = editor.selectionStart;
-
-    if (
-      inputType === "insertText" ||
-      inputType === "insertCompositionText" ||
-      inputType === "insertLineBreak"
-    ) {
-      if (
-        currText.length <= prevText.length &&
-        inputType !== "insertLineBreak"
-      ) {
-        const charsToDelete = prevText.length - currText.length;
-        const substr = prevText.substring(pos - 1, pos + charsToDelete);
-        sendDeleteOperation(pos - 1, substr);
-      }
-      sendInsertOperation(pos, currText.substring(pos - 1, pos));
-    } else if (inputType?.startsWith("delete")) {
-      const charsDeleted = prevText.length - currText.length;
-      const deletedStr = prevText.substring(pos, pos + charsDeleted);
-      sendDeleteOperation(pos, deletedStr);
-    }
-
-    setContent(currText);
   }
 
   async function saveNote() {
@@ -332,14 +354,7 @@ function EditContent() {
         </div>
       </header>
 
-      <textarea
-        className="input-field"
-        ref={textareaRef}
-        value={content}
-        onInput={handleLocalChange}
-        onPaste={handlePaste}
-        onChange={(e) => setContent(e.target.value)}
-        placeholder="Start typing..."
+      <div
         style={{
           minHeight: "500px",
           fontFamily: "monospace",
@@ -350,6 +365,7 @@ function EditContent() {
           resize: "none",
           border: "1px solid var(--border)",
         }}
+        ref={editorRef}
       />
 
       <footer

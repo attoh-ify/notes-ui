@@ -1,5 +1,4 @@
 import { TextOperation } from "./textOperation";
-import { OperationType } from "./textOperation";
 
 export class OperationTransformation {
     static transformOperation(op1: TextOperation, op2: TextOperation) {

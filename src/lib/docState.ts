@@ -83,46 +83,41 @@ export class DocState {
   ): TextOperation | TextOperation[] | null {
     let transformed: TextOperation | TextOperation[] | null = op1;
 
-    // Transform against sent operation
     if (this.sentOperation !== null) {
       transformed = OperationTransformation.transformOperation(
         op1,
         this.sentOperation,
       );
-
-      // Handle case where transform returns null or array
-      if (transformed === null) {
-        return null;
-      }
-
-      // If it's an array, we need to transform each element
-      if (Array.isArray(transformed)) {
-        // For now, just take the first one or handle appropriately
-        // This is a design decision - you may need to handle this differently
-        if (transformed.length === 0) return null;
-        transformed = transformed[0];
-      }
     }
 
-    // Transform against all pending operations
+    if (transformed === null) {
+      return null;
+    }
+
+    let results: TextOperation[] = Array.isArray(transformed)
+      ? transformed
+      : [transformed];
+
     this.pendingOperations.forEach((op2: TextOperation) => {
-      if (transformed && !Array.isArray(transformed)) {
-        const result = OperationTransformation.transformOperation(
-          transformed,
-          op2,
-        );
+      const newResult: TextOperation[] = [];
+
+      for (const op of results) {
+        const result = OperationTransformation.transformOperation(op, op2);
 
         if (result === null) {
-          transformed = null;
+          continue;
         } else if (Array.isArray(result)) {
-          // Handle array result - taking first element
-          transformed = result.length > 0 ? result[0] : null;
+          newResult.push(...result);
         } else {
-          transformed = result;
+          newResult.push(result);
         }
       }
+
+      results = newResult;
     });
 
-    return transformed;
+    if (results.length === 0) return null;
+    if (results.length === 1) return results[0];
+    return results;
   }
 }
