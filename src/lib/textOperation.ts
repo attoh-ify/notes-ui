@@ -1,7 +1,6 @@
 export type OperationType = "INS" | "DEL";
 
 export class TextOperation {
-
     constructor(
         public opName: OperationType,
         public operand: string, 

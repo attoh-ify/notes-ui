@@ -35,7 +35,6 @@ function EditContent() {
   const [note, setNote] = useState<Note | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [editorLoaded, setEditorLoaded] = useState(false);
 
   const docStateRef = useRef<DocState | null>(null);
   const stompClientRef = useRef<CompatClient | null>(null);
@@ -87,7 +86,6 @@ function EditContent() {
           });
         });
 
-        setEditorLoaded(true);
       };
 
       initQuill();
