@@ -15,8 +15,8 @@ import "quill/dist/quill.snow.css";
 import Delta from "quill-delta";
 
 interface JoinResponse {
-  collaboratorCount: number;
-  text: string;
+  collaborators: string[];
+  delta: Delta;
   revision: number;
 }
 
@@ -85,7 +85,6 @@ function EditContent() {
             }
           });
         });
-
       };
 
       initQuill();
@@ -114,7 +113,7 @@ function EditContent() {
         docStateRef.current!.lastSyncedRevision = joinData.revision;
         docStateRef.current!.setDocumentText(joinData.text || "");
 
-        updateCollaboratorCount(joinData.collaboratorCount);
+        updateCollaboratorCount(joinData.collaborators);
       } catch (err: any) {
         setError(err.message || "Failed to load note");
       } finally {
@@ -227,12 +226,16 @@ function EditContent() {
     });
   }
 
-  function updateCollaboratorCount(count: number) {
-    const others = count - 1;
-    if (others === 1) {
+  function updateCollaboratorCount(collaborators: string[]) {
+    if (collaborators.length === 1) {
       setCollaboratorText("You +1 collaborator");
-    } else if (others > 1) {
-      setCollaboratorText(`You +${others} collaborators`);
+    } else if (collaborators.length > 1) {
+      let text = "";
+      for (let i = 0; i < collaborators.length; i++) {
+        if (collaborators[i] === user!.email) continue;
+        text += collaborators[i] + " ";
+      }
+      setCollaboratorText(`Collaborators ${text}`);
     } else {
       setCollaboratorText("");
     }
