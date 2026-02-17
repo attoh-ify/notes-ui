@@ -88,7 +88,7 @@ export class Deque {
    * - `TextOperation[]`: To replace one operation with multiple (splitting).
    */
   modifyWhere(
-    replaceWith: (op: TextOperation) => null | TextOperation | TextOperation[],
+    replaceWith: (op: TextOperation) => TextOperation,
   ): void {
     let ptr = this.front; // Start from oldest to transform in chronological order
 

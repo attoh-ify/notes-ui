@@ -1,16 +1,16 @@
 import { Deque } from "@/src/lib/deque";
-import { OperationTransformation } from "@/src/lib/operationTransformation";
 import { TextOperation } from "./textOperation";
+import Delta from "quill-delta";
 
 export class DocState {
-  public onDocumentChange: (newDoc: string) => void;
+  public onDocumentChange: (newDoc: Delta) => void;
   public sentOperation: TextOperation | null;
   public pendingOperations: Deque;
   public lastSyncedRevision: number = 0;
-  public document: string = "";
-  public prevText: string = "";
+  public document: Delta = new Delta();
+  public prevDoc: Delta = new Delta();
 
-  constructor(onDocumentChange: (newDoc: string) => void) {
+  constructor(onDocumentChange: (newDoc: Delta) => void) {
     this.onDocumentChange = onDocumentChange;
     this.sentOperation = null; // operation sent to server but not yet acknowledged
     this.pendingOperations = new Deque(); // operations not yet sent to server
@@ -31,17 +31,17 @@ export class DocState {
     }
   }
 
-  setDocumentText(text: string): void {
-    this.prevText = this.document;
-    this.document = text;
+  setDocument(doc: Delta): void {
+    this.prevDoc = this.document;
+    this.document = doc;
   }
 
   async queueOperation(
     operation: TextOperation,
-    newDocument: (currDoc: string) => string,
+    newDocument: (currDoc: Delta) => Delta,
     onSend: (operation: TextOperation, revision: number) => Promise<void>,
   ): Promise<void> {
-    this.setDocumentText(newDocument(this.document));
+    this.setDocument(newDocument(this.document));
     console.log(`[DOC] ${this.document}`);
 
     if (this.sentOperation === null) {
@@ -58,66 +58,44 @@ export class DocState {
     }
   }
 
-  transformPendingOperations(op2: TextOperation): void {
-    if (op2 === null) {
+  transformPendingOperations(incomingOp: TextOperation): void {
+    const priority = incomingOp.actorId > (this.sentOperation?.actorId || "");
+    
+    if (incomingOp === null) {
       return;
     }
-    this.pendingOperations.modifyWhere((op1: TextOperation) =>
-      OperationTransformation.transformOperation(op1, op2),
-    );
+
+    this.pendingOperations.modifyWhere((localOp: TextOperation) => {
+      const transformedDelta = incomingOp.delta.transform(localOp.delta, priority);
+      return new TextOperation(transformedDelta, localOp.actorId, localOp.revision);
+    });
   }
 
   transformOperationAgainstSentOperation(
-    op1: TextOperation,
-  ): TextOperation | TextOperation[] | null {
-    if (this.sentOperation === null) return op1;
-    const transformed = OperationTransformation.transformOperation(
-      op1,
-      this.sentOperation,
-    );
-    return transformed;
+    incomingOp: TextOperation,
+  ): TextOperation {
+    const priority = incomingOp.actorId > (this.sentOperation?.actorId || "");
+
+    if (this.sentOperation === null) return incomingOp;
+
+    const transformedDelta = incomingOp.delta.transform(this.sentOperation.delta, priority);
+    return new TextOperation(transformedDelta, this.sentOperation.actorId, this.sentOperation.revision);
   }
 
   transformOperationAgainstLocalChanges(
-    op1: TextOperation,
-  ): TextOperation | TextOperation[] | null {
-    let transformed: TextOperation | TextOperation[] | null = op1;
+    incomingOp: TextOperation,
+  ): TextOperation {
+    let serverDelta = incomingOp.delta;
+    const priority = false;
 
     if (this.sentOperation !== null) {
-      transformed = OperationTransformation.transformOperation(
-        op1,
-        this.sentOperation,
-      );
+      serverDelta = this.sentOperation.delta.transform(serverDelta, !priority)
     }
 
-    if (transformed === null) {
-      return null;
-    }
-
-    let results: TextOperation[] = Array.isArray(transformed)
-      ? transformed
-      : [transformed];
-
-    this.pendingOperations.forEach((op2: TextOperation) => {
-      const newResult: TextOperation[] = [];
-
-      for (const op of results) {
-        const result = OperationTransformation.transformOperation(op, op2);
-
-        if (result === null) {
-          continue;
-        } else if (Array.isArray(result)) {
-          newResult.push(...result);
-        } else {
-          newResult.push(result);
-        }
-      }
-
-      results = newResult;
+    this.pendingOperations.forEach((localOp: TextOperation) => {
+      serverDelta = localOp.delta.transform(serverDelta, !priority)
     });
 
-    if (results.length === 0) return null;
-    if (results.length === 1) return results[0];
-    return results;
+    return new TextOperation(serverDelta, incomingOp.actorId, incomingOp.revision);
   }
 }

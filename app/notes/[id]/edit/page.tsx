@@ -20,12 +20,6 @@ interface JoinResponse {
   revision: number;
 }
 
-interface OperationQueueOutPayload {
-  acknowledgeTo: string;
-  operation: TextOperation;
-  revision: number;
-}
-
 function EditContent() {
   const { id: noteId } = useParams();
   const { user, loadingUser } = useAuth();
@@ -42,7 +36,7 @@ function EditContent() {
   const quillRef = useRef<Quill | null>(null);
 
   if (!docStateRef.current) {
-    docStateRef.current = new DocState((newDoc: string) => {
+    docStateRef.current = new DocState((newDoc: Delta) => {
       console.log("newDoc: " + newDoc);
     });
   }
@@ -61,29 +55,27 @@ function EditContent() {
         });
 
         if (docStateRef.current?.document) {
-          quillRef.current.setText(docStateRef.current.document, "api");
+          quillRef.current.setContents(docStateRef.current.document, "api");
         }
 
         quillRef.current.on("text-change", (delta, oldDelta, source) => {
           if (source !== "user") return;
 
-          let currentPos = 0;
+          const textOperation = new TextOperation(
+            delta,
+            user!.userId,
+            docStateRef.current!.lastSyncedRevision,
+          );
 
-          delta.ops.forEach((op) => {
-            if (typeof op.retain === "number") {
-              currentPos += op.retain;
-            } else if (typeof op.insert === "string") {
-              sendInsertOperation(currentPos, op.insert);
-              currentPos += op.insert.length;
-            } else if (op.delete) {
-              const deletedString = docStateRef.current!.document.substring(
-                currentPos,
-                currentPos + op.delete,
-              );
+          docStateRef.current?.queueOperation(
+            textOperation,
 
-              sendDeleteOperation(currentPos, deletedString);
-            }
-          });
+            (currDoc: Delta) => currDoc.compose(delta),
+
+            async (operation: TextOperation, revision: number) => {
+              await sendOperationToServer(operation, revision);
+            },
+          );
         });
       };
 
@@ -111,7 +103,7 @@ function EditContent() {
         });
 
         docStateRef.current!.lastSyncedRevision = joinData.revision;
-        docStateRef.current!.setDocumentText(joinData.text || "");
+        docStateRef.current!.setDocument(joinData.delta || "");
 
         updateCollaboratorCount(joinData.collaborators);
       } catch (err: any) {
@@ -150,12 +142,11 @@ function EditContent() {
     };
   }, [noteId, loading]);
 
-  function handleRemoteOperation(payload: OperationQueueOutPayload) {
-    const { operation, revision, acknowledgeTo } = payload;
-    console.log({ operation, revision, acknowledgeTo });
+  function handleRemoteOperation(payload: TextOperation) {
+    const { delta, actorId, revision } = payload;
     const docState = docStateRef.current!;
 
-    if (acknowledgeTo === user!.userId) {
+    if (actorId === user!.userId) {
       if (docState.lastSyncedRevision < revision) {
         docState.acknowledgeOperation(
           revision,
@@ -170,50 +161,20 @@ function EditContent() {
         );
       }
     } else {
-      docState.transformPendingOperations(operation);
+      docState.transformPendingOperations(payload);
       docState.lastSyncedRevision = revision;
       const transformed =
-        docState.transformOperationAgainstLocalChanges(operation);
+        docState.transformOperationAgainstLocalChanges(payload);
 
-      if (transformed === null) {
-        console.log("[REMOTE] Operation canceled out by local changes");
-      } else if (Array.isArray(transformed)) {
-        let newDoc = docState.document;
-        for (const op of transformed) {
-          newDoc = applyOp(newDoc, op);
-          applyRemoteChangeToQuill(op);
-        }
-        docState.setDocumentText(newDoc);
-      } else {
-        const newDoc = applyOp(docState.document, transformed);
-        applyRemoteChangeToQuill(transformed);
-        docState.setDocumentText(newDoc);
-      }
+      applyRemoteChangeToQuill(transformed!);
+      docState.setDocument(transformed!.delta);
     }
   }
 
   function applyRemoteChangeToQuill(op: TextOperation) {
     if (!quillRef.current) return;
 
-    const delta = new Delta();
-
-    if (op.opName === "INS") {
-      delta.retain(op.position).insert(op.operand);
-    } else if (op.opName === "DEL") {
-      delta.retain(op.position).delete(op.operand.length);
-    }
-
-    quillRef.current.updateContents(delta, "api");
-  }
-
-  function applyOp(doc: string, op: TextOperation): string {
-    if (op.opName === "INS")
-      return doc.slice(0, op.position) + op.operand + doc.slice(op.position);
-    if (op.opName === "DEL")
-      return (
-        doc.slice(0, op.position) + doc.slice(op.position + op.operand.length)
-      );
-    return doc;
+    quillRef.current.updateContents(op.delta, "api");
   }
 
   async function sendOperationToServer(
@@ -222,7 +183,7 @@ function EditContent() {
   ): Promise<void> {
     await apiFetch(`notes/enqueue/${noteId}`, {
       method: "POST",
-      body: JSON.stringify({ operation, revision, from: user!.userId }),
+      body: JSON.stringify({ delta: operation.delta, revision, actorId: user!.userId }),
     });
   }
 
@@ -239,44 +200,6 @@ function EditContent() {
     } else {
       setCollaboratorText("");
     }
-  }
-
-  function sendInsertOperation(position: number, operand: string) {
-    docStateRef.current!.queueOperation(
-      new TextOperation(
-        "INS",
-        operand,
-        position,
-        docStateRef.current!.lastSyncedRevision,
-        user!.userId,
-      ),
-
-      (currDoc: string) =>
-        currDoc.slice(0, position) + operand + currDoc.slice(position),
-
-      async (operation: TextOperation, revision: number) => {
-        await sendOperationToServer(operation, revision);
-      },
-    );
-  }
-
-  function sendDeleteOperation(position: number, operand: string) {
-    docStateRef.current!.queueOperation(
-      new TextOperation(
-        "DEL",
-        operand,
-        position,
-        docStateRef.current!.lastSyncedRevision,
-        user!.userId,
-      ),
-
-      (currDoc: string) =>
-        currDoc.slice(0, position) + currDoc.slice(position + operand.length),
-
-      async (operation: TextOperation, revision: number) => {
-        await sendOperationToServer(operation, revision);
-      },
-    );
   }
 
   async function saveNote() {
