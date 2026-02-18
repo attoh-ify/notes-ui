@@ -14,24 +14,38 @@ import type Quill from "quill";
 import "quill/dist/quill.snow.css";
 import Delta from "quill-delta";
 
+interface CursorModule {
+  createCursor: (id: string, label: string, color: string) => void;
+  moveCursor: (id: string, range: { index: number; length: number }) => void;
+  removeCursor: (id: string) => void;
+  toggleCursor: (id: string, value: boolean) => void;
+}
+
 interface JoinResponse {
-  collaborators: string[];
+  collaborators: { [email: string]: string };
   delta: Delta;
   revision: number;
+}
+
+interface CursorPayload {
+  actorEmail: string;
+  position: number;
 }
 
 enum messageType {
   COLLABORATOR_JOIN = "COLLABORATOR_JOIN",
   OPERATION = "OPERATION",
-  COLLABORATOR_CURSOR = "COLLABORATOR_CURSOR"
-};
+  COLLABORATOR_CURSOR = "COLLABORATOR_CURSOR",
+}
 
 function EditContent() {
   const { id: noteId } = useParams();
   const { user, loadingUser } = useAuth();
   const router = useRouter();
 
-  const [collaboratorText, setCollaboratorText] = useState("");
+  const [collaborators, setCollaborators] = useState<{
+    [email: string]: string;
+  }>({});
   const [note, setNote] = useState<Note | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -42,30 +56,47 @@ function EditContent() {
   const quillRef = useRef<Quill | null>(null);
 
   if (!docStateRef.current) {
-    docStateRef.current = new DocState((newDoc: Delta) => {
-    });
+    docStateRef.current = new DocState((newDoc: Delta) => {});
   }
 
   useEffect(() => {
     if (!loading && editorRef.current && !quillRef.current) {
       const initQuill = async () => {
         const { default: QuillModule } = await import("quill");
+        const { default: QuillCursors } = await import("quill-cursors");
+
+        QuillModule.register("modules/cursors", QuillCursors);
 
         quillRef.current = new QuillModule(editorRef.current!, {
           theme: "snow",
           modules: {
-            toolbar: ['italic', 'bold'],
+            toolbar: ["italic", "bold"],
+            cursors: true,
           },
           placeholder: "Start typing...",
         });
+
+        const cursorsModule = quillRef.current.getModule("cursors");
+
+        if (!cursorsModule) {
+          console.error("Cursors module failed to load!");
+          return;
+        }
 
         if (docStateRef.current?.document) {
           quillRef.current.setContents(docStateRef.current.document, "api");
         }
 
         quillRef.current.on("text-change", (delta, oldDelta, source) => {
-          console.log(delta.ops)
           if (source !== "user") return;
+
+          const range = quillRef.current?.getSelection();
+
+          if (range) {
+            sendCursorChange(range.index);
+          } else {
+            sendCursorChange(-1);
+          }
 
           const textOperation = new TextOperation(
             delta,
@@ -83,6 +114,19 @@ function EditContent() {
             },
           );
         });
+
+        quillRef.current.on(
+          "selection-change",
+          async (range, oldRange, source) => {
+            if (source !== "user") return;
+
+            if (range) {
+              await sendCursorChange(range.index);
+            } else {
+              await sendCursorChange(-1);
+            }
+          },
+        );
       };
 
       initQuill();
@@ -108,14 +152,12 @@ function EditContent() {
           method: "GET",
         });
 
-        // console.log(joinData);
-
         docStateRef.current!.lastSyncedRevision = joinData.revision;
-        // console.log("joinData.delta.ops: " + joinData.delta.ops)
-        const initialDelta = new Delta(joinData.delta.ops || [])
+        const initialDelta = new Delta(joinData.delta.ops || []);
         docStateRef.current!.setDocument(initialDelta);
 
-        updateCollaboratorCount(joinData.collaborators);
+        setCollaborators(joinData.collaborators);
+        console.log(joinData.collaborators)
       } catch (err: any) {
         setError(err.message || "Failed to load note");
       } finally {
@@ -142,8 +184,13 @@ function EditContent() {
         if (type === messageType.OPERATION) {
           handleRemoteOperation(payload);
         }
-        if (type === messageType.COLLABORATOR_JOIN)
-          updateCollaboratorCount(payload.collaborators);
+        if (type === messageType.COLLABORATOR_JOIN) {
+          setCollaborators(payload.collaborators);
+          console.log(payload.collaborators)
+        }
+        if (type === messageType.COLLABORATOR_CURSOR) {
+          handleCursorChange(payload);
+        }
       });
     });
 
@@ -151,6 +198,21 @@ function EditContent() {
       if (client.active) client.disconnect();
     };
   }, [noteId, loading]);
+
+  async function sendCursorChange(position: number): Promise<void> {
+    await apiFetch(`notes/${noteId}/cursor`, {
+      method: "POST",
+      body: JSON.stringify({ position }),
+    });
+  }
+
+  function handleCursorChange(payload: CursorPayload): void {
+    if (payload.actorEmail === user!.email) return;
+
+    const cursor = quillRef.current!.getModule("cursors") as CursorModule;
+    cursor.createCursor(payload.actorEmail, payload.actorEmail, collaborators[payload.actorEmail]);
+    cursor.moveCursor(payload.actorEmail, { index: payload.position, length: 0 });
+  }
 
   function handleRemoteOperation(payload: TextOperation) {
     const { actorId, revision } = payload;
@@ -162,9 +224,7 @@ function EditContent() {
           revision,
           (pendingOperation: TextOperation | null) => {
             if (pendingOperation) {
-              sendOperationToServer(
-                pendingOperation
-              );
+              sendOperationToServer(pendingOperation);
             }
           },
         );
@@ -187,27 +247,16 @@ function EditContent() {
   }
 
   async function sendOperationToServer(
-    operation: TextOperation
+    operation: TextOperation,
   ): Promise<void> {
     await apiFetch(`notes/enqueue/${noteId}`, {
       method: "POST",
-      body: JSON.stringify({ delta: operation.delta, revision: operation.revision, actorId: user!.userId }),
+      body: JSON.stringify({
+        delta: operation.delta,
+        revision: operation.revision,
+        actorId: user!.userId,
+      }),
     });
-  }
-
-  function updateCollaboratorCount(collaborators: string[]) {
-    if (collaborators.length === 1) {
-      setCollaboratorText("Just you");
-    } else if (collaborators.length > 1) {
-      let text = "";
-      for (let i = 0; i < collaborators.length; i++) {
-        if (collaborators[i] === user!.email) continue;
-        text += collaborators[i] + " ";
-      }
-      setCollaboratorText(`Collaborators ${text}`);
-    } else {
-      setCollaboratorText("");
-    }
   }
 
   async function saveNote() {
@@ -263,16 +312,50 @@ function EditContent() {
           <h1 style={{ fontSize: "1.75rem", margin: 0 }}>{note.title}</h1>
         </div>
         <div style={{ textAlign: "right" }}>
-          <p
+          <div
             style={{
               fontSize: "0.875rem",
-              color: "var(--textmuted)",
               marginBottom: "8px",
+              display: "flex",
+              gap: "5px",
+              justifyContent: "flex-end",
+              flexWrap: "wrap",
             }}
           >
-            {collaboratorText || "Working alone"}
-          </p>
-          <div style={{ display: "flex", gap: "8px" }}>
+            {Object.entries(collaborators).length > 0 ? (
+              <>
+                <span style={{ color: "var(--textmuted)" }}>
+                  Collaborators:
+                </span>
+                {Object.entries(collaborators).map(
+                  ([email, color], index, array) => (
+                    <span
+                      key={email}
+                      style={{ color: color, fontWeight: "600" }}
+                    >
+                      {email === user?.email ? "You" : email}
+                      {index < array.length - 1 && (
+                        <span
+                          style={{
+                            color: color,
+                            marginLeft: "2px",
+                          }}
+                        >
+                          ,
+                        </span>
+                      )}
+                    </span>
+                  ),
+                )}
+              </>
+            ) : (
+              <span style={{ color: "var(--textmuted)" }}>Working alone</span>
+            )}
+          </div>
+
+          <div
+            style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}
+          >
             <button
               className="btn-secondary"
               onClick={() => router.push(`/notes/${noteId}`)}
@@ -293,7 +376,7 @@ function EditContent() {
           fontSize: "1rem",
           lineHeight: "1.6",
           padding: "2rem",
-          backgroundColor: "fcfcfc",
+          backgroundColor: "#fcfcfc",
           resize: "none",
           border: "1px solid var(--border)",
         }}
