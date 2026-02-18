@@ -20,6 +20,12 @@ interface JoinResponse {
   revision: number;
 }
 
+enum messageType {
+  COLLABORATOR_JOIN = "COLLABORATOR_JOIN",
+  OPERATION = "OPERATION",
+  COLLABORATOR_CURSOR = "COLLABORATOR_CURSOR"
+};
+
 function EditContent() {
   const { id: noteId } = useParams();
   const { user, loadingUser } = useAuth();
@@ -37,7 +43,6 @@ function EditContent() {
 
   if (!docStateRef.current) {
     docStateRef.current = new DocState((newDoc: Delta) => {
-      console.log("newDoc: " + newDoc);
     });
   }
 
@@ -49,7 +54,7 @@ function EditContent() {
         quillRef.current = new QuillModule(editorRef.current!, {
           theme: "snow",
           modules: {
-            toolbar: [],
+            toolbar: ['italic', 'bold'],
           },
           placeholder: "Start typing...",
         });
@@ -59,6 +64,7 @@ function EditContent() {
         }
 
         quillRef.current.on("text-change", (delta, oldDelta, source) => {
+          console.log(delta.ops)
           if (source !== "user") return;
 
           const textOperation = new TextOperation(
@@ -72,8 +78,8 @@ function EditContent() {
 
             (currDoc: Delta) => currDoc.compose(delta),
 
-            async (operation: TextOperation, revision: number) => {
-              await sendOperationToServer(operation, revision);
+            async (operation: TextOperation) => {
+              await sendOperationToServer(operation);
             },
           );
         });
@@ -102,8 +108,12 @@ function EditContent() {
           method: "GET",
         });
 
+        // console.log(joinData);
+
         docStateRef.current!.lastSyncedRevision = joinData.revision;
-        docStateRef.current!.setDocument(joinData.delta || "");
+        // console.log("joinData.delta.ops: " + joinData.delta.ops)
+        const initialDelta = new Delta(joinData.delta.ops || [])
+        docStateRef.current!.setDocument(initialDelta);
 
         updateCollaboratorCount(joinData.collaborators);
       } catch (err: any) {
@@ -129,11 +139,11 @@ function EditContent() {
     client.connect({}, () => {
       client.subscribe(`/topic/note/${noteId}`, (message) => {
         const { type, payload } = JSON.parse(message.body);
-        if (type === "OPERATION") {
+        if (type === messageType.OPERATION) {
           handleRemoteOperation(payload);
         }
-        if (type === "COLLABORATOR_COUNT")
-          updateCollaboratorCount(payload.count);
+        if (type === messageType.COLLABORATOR_JOIN)
+          updateCollaboratorCount(payload.collaborators);
       });
     });
 
@@ -143,7 +153,7 @@ function EditContent() {
   }, [noteId, loading]);
 
   function handleRemoteOperation(payload: TextOperation) {
-    const { delta, actorId, revision } = payload;
+    const { actorId, revision } = payload;
     const docState = docStateRef.current!;
 
     if (actorId === user!.userId) {
@@ -153,8 +163,7 @@ function EditContent() {
           (pendingOperation: TextOperation | null) => {
             if (pendingOperation) {
               sendOperationToServer(
-                pendingOperation,
-                docState.lastSyncedRevision,
+                pendingOperation
               );
             }
           },
@@ -167,7 +176,7 @@ function EditContent() {
         docState.transformOperationAgainstLocalChanges(payload);
 
       applyRemoteChangeToQuill(transformed!);
-      docState.setDocument(transformed!.delta);
+      docStateRef.current!.document.compose(transformed.delta);
     }
   }
 
@@ -178,18 +187,17 @@ function EditContent() {
   }
 
   async function sendOperationToServer(
-    operation: TextOperation,
-    revision: number,
+    operation: TextOperation
   ): Promise<void> {
     await apiFetch(`notes/enqueue/${noteId}`, {
       method: "POST",
-      body: JSON.stringify({ delta: operation.delta, revision, actorId: user!.userId }),
+      body: JSON.stringify({ delta: operation.delta, revision: operation.revision, actorId: user!.userId }),
     });
   }
 
   function updateCollaboratorCount(collaborators: string[]) {
     if (collaborators.length === 1) {
-      setCollaboratorText("You +1 collaborator");
+      setCollaboratorText("Just you");
     } else if (collaborators.length > 1) {
       let text = "";
       for (let i = 0; i < collaborators.length; i++) {

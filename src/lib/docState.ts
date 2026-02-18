@@ -38,18 +38,18 @@ export class DocState {
 
   async queueOperation(
     operation: TextOperation,
-    newDocument: (currDoc: Delta) => Delta,
-    onSend: (operation: TextOperation, revision: number) => Promise<void>,
+    composeNewDeltaToDocument: (currDoc: Delta) => Delta,
+    onSend: (operation: TextOperation) => Promise<void>,
   ): Promise<void> {
-    this.setDocument(newDocument(this.document));
-    console.log(`[DOC] ${this.document}`);
+    this.setDocument(composeNewDeltaToDocument(this.document));
+    console.log(`[DOC] ${this.document.ops}`);
 
     if (this.sentOperation === null) {
       this.sentOperation = operation;
       console.log(
         `[SEND] sent operation = ${JSON.stringify(operation)}, lastSyncedRevision = ${operation.revision}`,
       );
-      await onSend(operation, this.lastSyncedRevision);
+      await onSend(operation);
     } else {
       console.log(
         `[ENQ] enqueued operation = ${JSON.stringify(operation)}, lastSyncedRevision = ${this.lastSyncedRevision}`,
