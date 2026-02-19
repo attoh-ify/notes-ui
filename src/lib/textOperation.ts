@@ -1,11 +1,10 @@
-export type OperationType = "INS" | "DEL";
+import Delta from "quill-delta";
+
 
 export class TextOperation {
     constructor(
-        public opName: OperationType,
-        public operand: string, 
-        public position: number,
+        public delta : Delta,
+        public actorId: string,
         public revision: number,
-        public actorId: string
     ) {}
 }
