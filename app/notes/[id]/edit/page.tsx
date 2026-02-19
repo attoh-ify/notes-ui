@@ -322,7 +322,7 @@ function EditContent() {
               flexWrap: "wrap",
             }}
           >
-            {Object.entries(collaborators).length > 0 ? (
+            {Object.entries(collaborators).length > 1 ? (
               <>
                 <span style={{ color: "var(--textmuted)" }}>
                   Collaborators:
