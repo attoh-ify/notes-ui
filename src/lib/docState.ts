@@ -18,6 +18,7 @@ export class DocState {
 
   acknowledgeOperation(
     newRevision: number,
+    userId: string,
     onPendingOperation: (op: TextOperation | null) => void,
   ): void {
     // Remove sent operation
@@ -26,7 +27,14 @@ export class DocState {
 
     // Take out a pending operation
     if (!this.pendingOperations.isEmpty()) {
-      this.sentOperation = this.pendingOperations.dequeueFront();
+      let composedDelta = new Delta();
+      while (!this.pendingOperations.isEmpty()) {
+        const op = this.pendingOperations.dequeueFront();
+        composedDelta = composedDelta.compose(op!.delta);
+      }
+      this.sentOperation = new TextOperation(
+        composedDelta, userId, this.lastSyncedRevision
+      );
       onPendingOperation(this.sentOperation);
     }
   }
@@ -37,12 +45,17 @@ export class DocState {
   }
 
   async queueOperation(
-    operation: TextOperation,
+    delta: Delta,
+    userId: string,
     composeNewDeltaToDocument: (currDoc: Delta) => Delta,
     onSend: (operation: TextOperation) => Promise<void>,
   ): Promise<void> {
     this.setDocument(composeNewDeltaToDocument(this.document));
     console.log(`[DOC] ${this.document.ops}`);
+
+    const operation = new TextOperation(
+      delta, userId, this.lastSyncedRevision
+    )
 
     if (this.sentOperation === null) {
       this.sentOperation = operation;

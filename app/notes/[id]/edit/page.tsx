@@ -104,14 +104,9 @@ function EditContent() {
 
             sendCursorChange(range ? range.index : -1);
 
-            const textOperation = new TextOperation(
+            docStateRef.current?.queueOperation(
               accumulatedDelta,
               user!.userId,
-              docStateRef.current!.lastSyncedRevision,
-            );
-
-            docStateRef.current?.queueOperation(
-              textOperation,
 
               (currDoc: Delta) => currDoc.compose(accumulatedDelta),
 
@@ -234,9 +229,10 @@ function EditContent() {
     if (actorId === user!.userId) {
       docState.acknowledgeOperation(
         revision,
+        user!.userId,
         (pendingOperation: TextOperation | null) => {
           if (pendingOperation) {
-            pendingOperation.revision = revision;
+            // pendingOperation.revision = revision;
             sendOperationToServer(pendingOperation);
           }
         },
