@@ -55,6 +55,7 @@ function EditContent() {
   const editorRef = useRef<HTMLDivElement>(null);
   const quillRef = useRef<Quill | null>(null);
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
+  const pendingDeltaRef = useRef<Delta>(new Delta());
 
   if (!docStateRef.current) {
     docStateRef.current = new DocState((newDoc: Delta) => {});
@@ -91,19 +92,20 @@ function EditContent() {
         quillRef.current.on("text-change", (delta, oldDelta, source) => {
           if (source !== "user") return;
 
+          pendingDeltaRef.current = pendingDeltaRef.current.compose(delta);
+
           if (debounceRef.current) clearTimeout(debounceRef.current);
 
           debounceRef.current = setTimeout(() => {
+            const accumulatedDelta = pendingDeltaRef.current;
+            pendingDeltaRef.current = new Delta();
+
             const range = quillRef.current?.getSelection();
 
-            if (range) {
-              sendCursorChange(range.index);
-            } else {
-              sendCursorChange(-1);
-            }
+            sendCursorChange(range ? range.index : -1);
 
             const textOperation = new TextOperation(
-              delta,
+              accumulatedDelta,
               user!.userId,
               docStateRef.current!.lastSyncedRevision,
             );
