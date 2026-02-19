@@ -54,6 +54,7 @@ function EditContent() {
   const stompClientRef = useRef<CompatClient | null>(null);
   const editorRef = useRef<HTMLDivElement>(null);
   const quillRef = useRef<Quill | null>(null);
+  const debounceRef = useRef<NodeJS.Timeout | null>(null);
 
   if (!docStateRef.current) {
     docStateRef.current = new DocState((newDoc: Delta) => {});
@@ -90,29 +91,33 @@ function EditContent() {
         quillRef.current.on("text-change", (delta, oldDelta, source) => {
           if (source !== "user") return;
 
-          const range = quillRef.current?.getSelection();
+          if (debounceRef.current) clearTimeout(debounceRef.current);
 
-          if (range) {
-            sendCursorChange(range.index);
-          } else {
-            sendCursorChange(-1);
-          }
+          debounceRef.current = setTimeout(() => {
+            const range = quillRef.current?.getSelection();
 
-          const textOperation = new TextOperation(
-            delta,
-            user!.userId,
-            docStateRef.current!.lastSyncedRevision,
-          );
+            if (range) {
+              sendCursorChange(range.index);
+            } else {
+              sendCursorChange(-1);
+            }
 
-          docStateRef.current?.queueOperation(
-            textOperation,
+            const textOperation = new TextOperation(
+              delta,
+              user!.userId,
+              docStateRef.current!.lastSyncedRevision,
+            );
 
-            (currDoc: Delta) => currDoc.compose(delta),
+            docStateRef.current?.queueOperation(
+              textOperation,
 
-            async (operation: TextOperation) => {
-              await sendOperationToServer(operation);
-            },
-          );
+              (currDoc: Delta) => currDoc.compose(delta),
+
+              async (operation: TextOperation) => {
+                await sendOperationToServer(operation);
+              },
+            );
+          }, 1000);
         });
 
         quillRef.current.on(
@@ -157,7 +162,7 @@ function EditContent() {
         docStateRef.current!.setDocument(initialDelta);
 
         setCollaborators(joinData.collaborators);
-        console.log(joinData.collaborators)
+        console.log(joinData.collaborators);
       } catch (err: any) {
         setError(err.message || "Failed to load note");
       } finally {
@@ -176,6 +181,8 @@ function EditContent() {
     const client = Stomp.over(
       () => new SockJS(`${API_BASE_URL}/relay?noteId=${noteId}`),
     );
+    client.debug = () => {};
+
     stompClientRef.current = client;
 
     client.connect({}, () => {
@@ -183,10 +190,11 @@ function EditContent() {
         const { type, payload } = JSON.parse(message.body);
         if (type === messageType.OPERATION) {
           handleRemoteOperation(payload);
+          console.log(payload.delta);
         }
         if (type === messageType.COLLABORATOR_JOIN) {
           setCollaborators(payload.collaborators);
-          console.log(payload.collaborators)
+          console.log(payload.collaborators);
         }
         if (type === messageType.COLLABORATOR_CURSOR) {
           handleCursorChange(payload);
@@ -210,12 +218,19 @@ function EditContent() {
     if (payload.actorEmail === user!.email) return;
 
     const cursor = quillRef.current!.getModule("cursors") as CursorModule;
-    cursor.createCursor(payload.actorEmail, payload.actorEmail, collaborators[payload.actorEmail]);
-    cursor.moveCursor(payload.actorEmail, { index: payload.position, length: 0 });
+    cursor.createCursor(
+      payload.actorEmail,
+      payload.actorEmail,
+      collaborators[payload.actorEmail],
+    );
+    cursor.moveCursor(payload.actorEmail, {
+      index: payload.position,
+      length: 0,
+    });
   }
 
   function handleRemoteOperation(payload: TextOperation) {
-    const { actorId, revision } = payload;
+    const { delta, actorId, revision } = payload;
     const docState = docStateRef.current!;
 
     if (actorId === user!.userId) {
