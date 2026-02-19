@@ -226,22 +226,26 @@ function EditContent() {
     const { actorId, revision } = payload;
     const docState = docStateRef.current!;
 
+    const rehydratedPayload: TextOperation = {
+      ...payload,
+      delta: new Delta(payload.delta.ops || []),
+    };
+
     if (actorId === user!.userId) {
       docState.acknowledgeOperation(
         revision,
         user!.userId,
         (pendingOperation: TextOperation | null) => {
           if (pendingOperation) {
-            // pendingOperation.revision = revision;
             sendOperationToServer(pendingOperation);
           }
         },
       );
     } else {
-      docState.transformPendingOperations(payload);
+      docState.transformPendingOperations(rehydratedPayload);
       const transformedForQuill =
-        docState.transformOperationAgainstLocalChanges(payload);
-      docState.lastSyncedRevision = payload.revision;
+        docState.transformOperationAgainstLocalChanges(rehydratedPayload);
+      docState.lastSyncedRevision = rehydratedPayload.revision;
       applyRemoteChangeToQuill(transformedForQuill);
       docState.document = docState.document.compose(transformedForQuill.delta);
     }
