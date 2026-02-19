@@ -72,7 +72,7 @@ export class DocState {
   }
 
   transformPendingOperations(incomingOp: TextOperation): void {
-    this.lastSyncedRevision = incomingOp.revision;
+    // this.lastSyncedRevision = incomingOp.revision;
 
     if (this.sentOperation !== null) {
       const priority = incomingOp.actorId > this.sentOperation.actorId;

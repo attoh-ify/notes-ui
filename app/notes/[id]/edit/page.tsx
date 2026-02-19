@@ -239,10 +239,9 @@ function EditContent() {
       );
     } else {
       docState.transformPendingOperations(payload);
-
       const transformedForQuill =
         docState.transformOperationAgainstLocalChanges(payload);
-
+      docState.lastSyncedRevision = payload.revision;
       applyRemoteChangeToQuill(transformedForQuill);
       docState.document = docState.document.compose(transformedForQuill.delta);
     }
