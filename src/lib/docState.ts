@@ -59,15 +59,29 @@ export class DocState {
   }
 
   transformPendingOperations(incomingOp: TextOperation): void {
-    const priority = incomingOp.actorId > (this.sentOperation?.actorId || "");
-    
-    if (incomingOp === null) {
-      return;
+    this.lastSyncedRevision = incomingOp.revision;
+
+    if (this.sentOperation !== null) {
+      const priority = incomingOp.actorId > this.sentOperation.actorId;
+      this.sentOperation = new TextOperation(
+        incomingOp.delta.transform(this.sentOperation.delta, priority),
+        this.sentOperation.actorId,
+        this.sentOperation.revision,
+      );
     }
 
     this.pendingOperations.modifyWhere((localOp: TextOperation) => {
-      const transformedDelta = incomingOp.delta.transform(localOp.delta, priority);
-      return new TextOperation(transformedDelta, localOp.actorId, localOp.revision);
+      const priority = incomingOp.actorId > localOp.actorId;
+      const transformedDelta = incomingOp.delta.transform(
+        localOp.delta,
+        priority,
+      );
+
+      return new TextOperation(
+        transformedDelta,
+        localOp.actorId,
+        localOp.revision,
+      );
     });
   }
 
@@ -78,24 +92,36 @@ export class DocState {
 
     if (this.sentOperation === null) return incomingOp;
 
-    const transformedDelta = incomingOp.delta.transform(this.sentOperation.delta, priority);
-    return new TextOperation(transformedDelta, this.sentOperation.actorId, this.sentOperation.revision);
+    const transformedDelta = incomingOp.delta.transform(
+      this.sentOperation.delta,
+      priority,
+    );
+    return new TextOperation(
+      transformedDelta,
+      this.sentOperation.actorId,
+      this.sentOperation.revision,
+    );
   }
 
   transformOperationAgainstLocalChanges(
     incomingOp: TextOperation,
   ): TextOperation {
     let serverDelta = incomingOp.delta;
-    const priority = false;
 
     if (this.sentOperation !== null) {
-      serverDelta = this.sentOperation.delta.transform(serverDelta, !priority)
+      const priority = incomingOp.actorId > this.sentOperation.actorId;
+      serverDelta = this.sentOperation.delta.transform(serverDelta, !priority);
     }
 
     this.pendingOperations.forEach((localOp: TextOperation) => {
-      serverDelta = localOp.delta.transform(serverDelta, !priority)
+      const priority = incomingOp.actorId > localOp.actorId;
+      serverDelta = localOp.delta.transform(serverDelta, !priority);
     });
 
-    return new TextOperation(serverDelta, incomingOp.actorId, incomingOp.revision);
+    return new TextOperation(
+      serverDelta,
+      incomingOp.actorId,
+      incomingOp.revision,
+    );
   }
 }

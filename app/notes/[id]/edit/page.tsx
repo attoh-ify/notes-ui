@@ -113,7 +113,7 @@ function EditContent() {
             docStateRef.current?.queueOperation(
               textOperation,
 
-              (currDoc: Delta) => currDoc.compose(delta),
+              (currDoc: Delta) => currDoc.compose(accumulatedDelta),
 
               async (operation: TextOperation) => {
                 await sendOperationToServer(operation);
@@ -127,11 +127,7 @@ function EditContent() {
           async (range, oldRange, source) => {
             if (source !== "user") return;
 
-            if (range) {
-              await sendCursorChange(range.index);
-            } else {
-              await sendCursorChange(-1);
-            }
+            sendCursorChange(range ? range.index : -1);
           },
         );
       };
@@ -232,28 +228,27 @@ function EditContent() {
   }
 
   function handleRemoteOperation(payload: TextOperation) {
-    const { delta, actorId, revision } = payload;
+    const { actorId, revision } = payload;
     const docState = docStateRef.current!;
 
     if (actorId === user!.userId) {
-      if (docState.lastSyncedRevision < revision) {
-        docState.acknowledgeOperation(
-          revision,
-          (pendingOperation: TextOperation | null) => {
-            if (pendingOperation) {
-              sendOperationToServer(pendingOperation);
-            }
-          },
-        );
-      }
+      docState.acknowledgeOperation(
+        revision,
+        (pendingOperation: TextOperation | null) => {
+          if (pendingOperation) {
+            pendingOperation.revision = revision;
+            sendOperationToServer(pendingOperation);
+          }
+        },
+      );
     } else {
       docState.transformPendingOperations(payload);
-      docState.lastSyncedRevision = revision;
-      const transformed =
+
+      const transformedForQuill =
         docState.transformOperationAgainstLocalChanges(payload);
 
-      applyRemoteChangeToQuill(transformed!);
-      docStateRef.current!.document.compose(transformed.delta);
+      applyRemoteChangeToQuill(transformedForQuill);
+      docState.document = docState.document.compose(transformedForQuill.delta);
     }
   }
 
