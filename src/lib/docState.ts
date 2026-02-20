@@ -72,12 +72,10 @@ export class DocState {
   }
 
   transformPendingOperations(incomingOp: TextOperation): void {
-    // this.lastSyncedRevision = incomingOp.revision;
-
     if (this.sentOperation !== null) {
       const priority = incomingOp.actorId > this.sentOperation.actorId;
       this.sentOperation = new TextOperation(
-        incomingOp.delta.transform(this.sentOperation.delta, priority),
+        incomingOp.delta.transform(this.sentOperation.delta, !priority),
         this.sentOperation.actorId,
         this.sentOperation.revision,
       );
@@ -87,7 +85,7 @@ export class DocState {
       const priority = incomingOp.actorId > localOp.actorId;
       const transformedDelta = incomingOp.delta.transform(
         localOp.delta,
-        priority,
+        !priority,
       );
 
       return new TextOperation(
@@ -123,12 +121,12 @@ export class DocState {
 
     if (this.sentOperation !== null) {
       const priority = incomingOp.actorId > this.sentOperation.actorId;
-      serverDelta = this.sentOperation.delta.transform(serverDelta, !priority);
+      serverDelta = this.sentOperation.delta.transform(serverDelta, priority);
     }
 
     this.pendingOperations.forEach((localOp: TextOperation) => {
       const priority = incomingOp.actorId > localOp.actorId;
-      serverDelta = localOp.delta.transform(serverDelta, !priority);
+      serverDelta = localOp.delta.transform(serverDelta, priority);
     });
 
     return new TextOperation(
