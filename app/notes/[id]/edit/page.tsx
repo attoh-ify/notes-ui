@@ -58,7 +58,7 @@ function EditContent() {
   const pendingDeltaRef = useRef<Delta>(new Delta());
 
   if (!docStateRef.current) {
-    docStateRef.current = new DocState((newDoc: Delta) => {});
+    docStateRef.current = new DocState(user!.userId);
   }
 
   useEffect(() => {
@@ -106,9 +106,6 @@ function EditContent() {
 
             docStateRef.current?.queueOperation(
               accumulatedDelta,
-              user!.userId,
-
-              (currDoc: Delta) => currDoc.compose(accumulatedDelta),
 
               async (operation: TextOperation) => {
                 await sendOperationToServer(operation);
@@ -226,15 +223,9 @@ function EditContent() {
     const { actorId, revision } = payload;
     const docState = docStateRef.current!;
 
-    const rehydratedPayload: TextOperation = {
-      ...payload,
-      delta: new Delta(payload.delta.ops || []),
-    };
-
     if (actorId === user!.userId) {
       docState.acknowledgeOperation(
         revision,
-        user!.userId,
         (pendingOperation: TextOperation | null) => {
           if (pendingOperation) {
             sendOperationToServer(pendingOperation);
@@ -242,21 +233,24 @@ function EditContent() {
         },
       );
     } else {
-      docState.transformPendingOperations(rehydratedPayload);
-      const transformedForQuill =
-        docState.transformOperationAgainstLocalChanges(rehydratedPayload);
-      docState.lastSyncedRevision = rehydratedPayload.revision;
-      applyRemoteChangeToQuill(transformedForQuill);
-      docState.document = docState.document.compose(transformedForQuill.delta);
+      const rehydratedPayload: TextOperation = {
+        delta: new Delta(payload.delta.ops || []),
+        actorId,
+        revision,
+      };
+
+      // docState.transformPendingOperations(rehydratedPayload);
+      // const transformedForQuill =
+      //   docState.transformOperationAgainstLocalChanges(rehydratedPayload);
+      // docState.lastSyncedRevision = rehydratedPayload.revision;
+      // applyRemoteChangeToQuill(transformedForQuill);
+      // docState.document = docState.document.compose(transformedForQuill.delta);
+
+      const deltaForQuill = docState.applyRemoteOperation(rehydratedPayload);
+      quillRef.current?.updateContents(deltaForQuill, "api");
     }
   }
-
-  function applyRemoteChangeToQuill(op: TextOperation) {
-    if (!quillRef.current) return;
-
-    quillRef.current.updateContents(op.delta, "api");
-  }
-
+  
   async function sendOperationToServer(
     operation: TextOperation,
   ): Promise<void> {

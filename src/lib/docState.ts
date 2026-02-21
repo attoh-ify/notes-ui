@@ -1,138 +1,89 @@
-import { Deque } from "@/src/lib/deque";
 import { TextOperation } from "./textOperation";
 import Delta from "quill-delta";
 
 export class DocState {
-  public onDocumentChange: (newDoc: Delta) => void;
-  public sentOperation: TextOperation | null;
-  public pendingOperations: Deque;
+  public sentOperation: TextOperation | null = null;
+  public pendingDelta: Delta = new Delta();
   public lastSyncedRevision: number = 0;
   public document: Delta = new Delta();
-  public prevDoc: Delta = new Delta();
+  public userId: string;
 
-  constructor(onDocumentChange: (newDoc: Delta) => void) {
-    this.onDocumentChange = onDocumentChange;
-    this.sentOperation = null; // operation sent to server but not yet acknowledged
-    this.pendingOperations = new Deque(); // operations not yet sent to server
+  constructor(userId: string) {
+    this.userId = userId;
   }
 
   acknowledgeOperation(
     newRevision: number,
-    userId: string,
-    onPendingOperation: (op: TextOperation | null) => void,
+    onSend: (op: TextOperation | null) => void,
   ): void {
-    // Remove sent operation
     this.sentOperation = null;
     this.lastSyncedRevision = newRevision;
 
-    // Take out a pending operation
-    if (!this.pendingOperations.isEmpty()) {
-      let composedDelta = new Delta();
-      while (!this.pendingOperations.isEmpty()) {
-        const op = this.pendingOperations.dequeueFront();
-        composedDelta = composedDelta.compose(op!.delta);
-      }
+    if (this.pendingDelta.ops.length > 0) {
       this.sentOperation = new TextOperation(
-        composedDelta, userId, this.lastSyncedRevision
+        this.pendingDelta,
+        this.userId,
+        this.lastSyncedRevision,
       );
-      onPendingOperation(this.sentOperation);
+      this.pendingDelta = new Delta();
+      onSend(this.sentOperation);
     }
   }
 
   setDocument(doc: Delta): void {
-    this.prevDoc = this.document;
     this.document = doc;
   }
 
   async queueOperation(
     delta: Delta,
-    userId: string,
-    composeNewDeltaToDocument: (currDoc: Delta) => Delta,
     onSend: (operation: TextOperation) => Promise<void>,
   ): Promise<void> {
-    this.setDocument(composeNewDeltaToDocument(this.document));
-    console.log(`[DOC] ${this.document.ops}`);
-
-    const operation = new TextOperation(
-      delta, userId, this.lastSyncedRevision
-    )
+    this.document = this.document.compose(delta);
 
     if (this.sentOperation === null) {
-      this.sentOperation = operation;
-      console.log(
-        `[SEND] sent operation = ${JSON.stringify(operation)}, lastSyncedRevision = ${operation.revision}`,
+      this.sentOperation = new TextOperation(
+        delta,
+        this.userId,
+        this.lastSyncedRevision,
       );
-      await onSend(operation);
+      await onSend(this.sentOperation);
     } else {
-      console.log(
-        `[ENQ] enqueued operation = ${JSON.stringify(operation)}, lastSyncedRevision = ${this.lastSyncedRevision}`,
-      );
-      this.pendingOperations.enqueueRear(operation);
+      this.pendingDelta = this.pendingDelta.compose(delta);
     }
   }
 
-  transformPendingOperations(incomingOp: TextOperation): void {
+  applyRemoteOperation(incomingOp: TextOperation): Delta {
+    let serverDelta = incomingOp.delta;
+
     if (this.sentOperation !== null) {
-      const priority = incomingOp.actorId > this.sentOperation.actorId;
+      const incomingWins = incomingOp.actorId > this.sentOperation.actorId;
+
+      serverDelta = this.sentOperation.delta.transform(
+        serverDelta,
+        incomingWins,
+      );
+
       this.sentOperation = new TextOperation(
-        incomingOp.delta.transform(this.sentOperation.delta, !priority),
+        incomingOp.delta.transform(this.sentOperation.delta, !incomingWins),
         this.sentOperation.actorId,
         this.sentOperation.revision,
       );
     }
 
-    this.pendingOperations.modifyWhere((localOp: TextOperation) => {
-      const priority = incomingOp.actorId > localOp.actorId;
-      const transformedDelta = incomingOp.delta.transform(
-        localOp.delta,
-        !priority,
+    if (this.pendingDelta.ops.length > 0) {
+      const incomingWins = incomingOp.actorId > this.userId;
+
+      serverDelta = this.pendingDelta.transform(serverDelta, incomingWins);
+
+      this.pendingDelta = incomingOp.delta.transform(
+        this.pendingDelta,
+        !incomingWins,
       );
-
-      return new TextOperation(
-        transformedDelta,
-        localOp.actorId,
-        localOp.revision,
-      );
-    });
-  }
-
-  transformOperationAgainstSentOperation(
-    incomingOp: TextOperation,
-  ): TextOperation {
-    const priority = incomingOp.actorId > (this.sentOperation?.actorId || "");
-
-    if (this.sentOperation === null) return incomingOp;
-
-    const transformedDelta = incomingOp.delta.transform(
-      this.sentOperation.delta,
-      priority,
-    );
-    return new TextOperation(
-      transformedDelta,
-      this.sentOperation.actorId,
-      this.sentOperation.revision,
-    );
-  }
-
-  transformOperationAgainstLocalChanges(
-    incomingOp: TextOperation,
-  ): TextOperation {
-    let serverDelta = incomingOp.delta;
-
-    if (this.sentOperation !== null) {
-      const priority = incomingOp.actorId > this.sentOperation.actorId;
-      serverDelta = this.sentOperation.delta.transform(serverDelta, priority);
     }
 
-    this.pendingOperations.forEach((localOp: TextOperation) => {
-      const priority = incomingOp.actorId > localOp.actorId;
-      serverDelta = localOp.delta.transform(serverDelta, priority);
-    });
+    this.lastSyncedRevision = incomingOp.revision;
+    this.document = this.document.compose(serverDelta);
 
-    return new TextOperation(
-      serverDelta,
-      incomingOp.actorId,
-      incomingOp.revision,
-    );
+    return serverDelta;
   }
 }
