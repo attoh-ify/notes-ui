@@ -60,11 +60,11 @@ export class DocState {
 
       serverDelta = this.sentOperation.delta.transform(
         serverDelta,
-        incomingWins,
+        !incomingWins,
       );
 
       this.sentOperation = new TextOperation(
-        incomingOp.delta.transform(this.sentOperation.delta, !incomingWins),
+        incomingOp.delta.transform(this.sentOperation.delta, incomingWins),
         this.sentOperation.actorId,
         this.sentOperation.revision,
       );
@@ -74,11 +74,11 @@ export class DocState {
       const incomingWins = incomingOp.actorId > this.userId;
 
       const serverDeltaAfterSent = serverDelta;
-      serverDelta = this.pendingDelta.transform(serverDelta, incomingWins);
+      serverDelta = this.pendingDelta.transform(serverDelta, !incomingWins);
 
       this.pendingDelta = serverDeltaAfterSent.transform(
         this.pendingDelta,
-        !incomingWins,
+        incomingWins,
       );
     }
 
