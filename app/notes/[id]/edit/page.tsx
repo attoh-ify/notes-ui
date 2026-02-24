@@ -239,13 +239,6 @@ function EditContent() {
         revision,
       };
 
-      // docState.transformPendingOperations(rehydratedPayload);
-      // const transformedForQuill =
-      //   docState.transformOperationAgainstLocalChanges(rehydratedPayload);
-      // docState.lastSyncedRevision = rehydratedPayload.revision;
-      // applyRemoteChangeToQuill(transformedForQuill);
-      // docState.document = docState.document.compose(transformedForQuill.delta);
-
       const deltaForQuill = docState.applyRemoteOperation(rehydratedPayload);
       quillRef.current?.updateContents(deltaForQuill, "api");
     }
@@ -254,7 +247,7 @@ function EditContent() {
   async function sendOperationToServer(
     operation: TextOperation,
   ): Promise<void> {
-    await apiFetch(`notes/enqueue/${noteId}`, {
+    await apiFetch(`notes/${noteId}/enqueue`, {
       method: "POST",
       body: JSON.stringify({
         delta: operation.delta,
