@@ -73,9 +73,10 @@ export class DocState {
     if (this.pendingDelta.ops.length > 0) {
       const incomingWins = incomingOp.actorId > this.userId;
 
+      const serverDeltaAfterSent = serverDelta;
       serverDelta = this.pendingDelta.transform(serverDelta, incomingWins);
 
-      this.pendingDelta = incomingOp.delta.transform(
+      this.pendingDelta = serverDeltaAfterSent.transform(
         this.pendingDelta,
         !incomingWins,
       );
