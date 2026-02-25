@@ -333,6 +333,7 @@ function EditContent() {
   }
 
   function handleRemoteOperation(payload: TextOperation) {
+    console.log("operation received: ", payload)
     const { actorId, revision } = payload;
     const docState = docStateRef.current!;
 
@@ -368,6 +369,11 @@ function EditContent() {
         actorId: user!.userId,
       }),
     });
+    console.log("operation sent: ", {
+        delta: operation.delta,
+        revision: operation.revision,
+        actorId: user!.userId,
+      })
   }
 
   async function saveNote() {
