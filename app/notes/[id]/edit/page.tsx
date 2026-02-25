@@ -223,11 +223,23 @@ function EditContent() {
     const { actorId, revision } = payload;
     const docState = docStateRef.current!;
 
+    console.log("=== REMOTE OP ===");
+    console.log("actorId:", actorId);
+    console.log("revision:", revision);
+    console.log("delta:", payload.delta.ops);
+    console.log("isAck:", actorId === user!.userId);
+    console.log("sentOperation:", docState.sentOperation?.delta.ops ?? null);
+    console.log("pendingDelta:", docState.pendingDelta.ops);
+
     if (actorId === user!.userId) {
       docState.acknowledgeOperation(
         revision,
         (pendingOperation: TextOperation | null) => {
           if (pendingOperation) {
+            console.log(
+              "promoting pending as new sent:",
+              pendingOperation.delta.ops,
+            );
             sendOperationToServer(pendingOperation);
           }
         },
@@ -240,10 +252,12 @@ function EditContent() {
       };
 
       const deltaForQuill = docState.applyRemoteOperation(rehydratedPayload);
+      console.log("deltaForQuill:", deltaForQuill.ops);
+      console.log("document after:", docState.document.ops);
       quillRef.current?.updateContents(deltaForQuill, "api");
     }
   }
-  
+
   async function sendOperationToServer(
     operation: TextOperation,
   ): Promise<void> {
