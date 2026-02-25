@@ -32,12 +32,12 @@ interface CursorPayload {
   position: number;
 }
 
-interface ReconnectState {
-  rebasedPending: Delta;
-  cursorPosition: number | null;
-  serverDelta: Delta;
-  savedDocument: Delta;
-}
+// interface ReconnectState {
+//   rebasedPending: Delta;
+//   cursorPosition: number | null;
+//   serverDelta: Delta;
+//   savedDocument: Delta;
+// }
 
 enum MessageType {
   COLLABORATOR_JOIN = "COLLABORATOR_JOIN",
@@ -63,11 +63,11 @@ function EditContent() {
   const quillRef = useRef<Quill | null>(null);
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
   const pendingDeltaRef = useRef<Delta>(new Delta());
-  const heartbeatTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const connectionLostRef = useRef(false);
-  const reconnectStateRef = useRef<ReconnectState | null>(null);
+  // const heartbeatTimerRef = useRef<NodeJS.Timeout | null>(null);
+  // const connectionLostRef = useRef(false);
+  // const reconnectStateRef = useRef<ReconnectState | null>(null);
 
-  const HEARTBEAT_INTERVAL = 5000;
+  // const HEARTBEAT_INTERVAL = 5000;
 
   if (!docStateRef.current) {
     docStateRef.current = new DocState(user!.userId);
@@ -108,52 +108,52 @@ function EditContent() {
           quillRef.current.setContents(docStateRef.current.document, "api");
         }
 
-        const reconnect = reconnectStateRef.current;
-        if (reconnect) {
-          reconnectStateRef.current = null;
+        // const reconnect = reconnectStateRef.current;
+        // if (reconnect) {
+        //   reconnectStateRef.current = null;
 
-          if (reconnect.cursorPosition != null) {
-            const emptyDoc = new Delta();
-            const serverDiff = reconnect.savedDocument
-              .invert(emptyDoc)
-              .compose(reconnect.serverDelta);
-            const newCursor = serverDiff.transformPosition(
-              reconnect.cursorPosition,
-            );
-            quillRef.current.setSelection(newCursor, 0, "api");
-          }
+        //   if (reconnect.cursorPosition != null) {
+        //     const emptyDoc = new Delta();
+        //     const serverDiff = reconnect.savedDocument
+        //       .invert(emptyDoc)
+        //       .compose(reconnect.serverDelta);
+        //     const newCursor = serverDiff.transformPosition(
+        //       reconnect.cursorPosition,
+        //     );
+        //     quillRef.current.setSelection(newCursor, 0, "api");
+        //   }
 
-          if (reconnect.rebasedPending.ops.length > 0) {
-            pendingDeltaRef.current = reconnect.rebasedPending;
-            docStateRef.current?.queueOperation(
-              reconnect.rebasedPending,
-              async (operation: TextOperation) => {
-                await sendOperationToServer(operation);
-                pendingDeltaRef.current = new Delta();
-              },
-            );
-          }
-        }
+        //   if (reconnect.rebasedPending.ops.length > 0) {
+        //     pendingDeltaRef.current = reconnect.rebasedPending;
+        //     docStateRef.current?.queueOperation(
+        //       reconnect.rebasedPending,
+        //       async (operation: TextOperation) => {
+        //         await sendOperationToServer(operation);
+        //         pendingDeltaRef.current = new Delta();
+        //       },
+        //     );
+        //   }
+        // }
 
         quillRef.current.on("text-change", (delta, _oldDelta, source) => {
           if (source !== "user") return;
 
           pendingDeltaRef.current = pendingDeltaRef.current.compose(delta);
 
-          localStorage.setItem(
-            `note-${noteId}`,
-            JSON.stringify({
-              pendingDelta: pendingDeltaRef.current,
-              lastSyncedRevision: docStateRef.current?.lastSyncedRevision,
-              document: docStateRef.current?.document,
-              cursorPosition: quillRef.current?.getSelection()?.index ?? null,
-            }),
-          );
+          // localStorage.setItem(
+          //   `note-${noteId}`,
+          //   JSON.stringify({
+          //     pendingDelta: pendingDeltaRef.current,
+          //     lastSyncedRevision: docStateRef.current?.lastSyncedRevision,
+          //     document: docStateRef.current?.document,
+          //     cursorPosition: quillRef.current?.getSelection()?.index ?? null,
+          //   }),
+          // );
 
           if (debounceRef.current) clearTimeout(debounceRef.current);
 
           debounceRef.current = setTimeout(() => {
-            if (!stompClientRef.current?.connected) return;
+            // if (!stompClientRef.current?.connected) return;
 
             const accumulatedDelta = pendingDeltaRef.current;
             const range = quillRef.current?.getSelection();
@@ -205,32 +205,32 @@ function EditContent() {
         docStateRef.current!.lastSyncedRevision = joinData.revision;
         setCollaborators(joinData.collaborators);
 
-        const rawData = localStorage.getItem(`note-${noteId}`);
-        const saved = rawData ? JSON.parse(rawData) : null;
+        // const rawData = localStorage.getItem(`note-${noteId}`);
+        // const saved = rawData ? JSON.parse(rawData) : null;
 
-        if (saved?.pendingDelta?.ops?.length > 0) {
-          const savedDocument = new Delta(saved.document?.ops || []);
-          const savedPending = new Delta(saved.pendingDelta.ops);
+        // if (saved?.pendingDelta?.ops?.length > 0) {
+        //   const savedDocument = new Delta(saved.document?.ops || []);
+        //   const savedPending = new Delta(saved.pendingDelta.ops);
 
-          const rebasedPending = rebaseAgainstServerUpdate(
-            savedDocument,
-            savedPending,
-            serverDelta,
-          );
+        //   const rebasedPending = rebaseAgainstServerUpdate(
+        //     savedDocument,
+        //     savedPending,
+        //     serverDelta,
+        //   );
 
+        //   docStateRef.current!.setDocument(serverDelta);
+
+        //   reconnectStateRef.current = {
+        //     rebasedPending,
+        //     cursorPosition: saved.cursorPosition ?? null,
+        //     serverDelta,
+        //     savedDocument
+        //   };
+
+        //   localStorage.removeItem(`note-${noteId}`);
+        // } else {
           docStateRef.current!.setDocument(serverDelta);
-
-          reconnectStateRef.current = {
-            rebasedPending,
-            cursorPosition: saved.cursorPosition ?? null,
-            serverDelta,
-            savedDocument
-          };
-
-          localStorage.removeItem(`note-${noteId}`);
-        } else {
-          docStateRef.current!.setDocument(serverDelta);
-        }
+        // }
       } catch (err: any) {
         setError(err.message || "Failed to load note");
       } finally {
@@ -248,8 +248,8 @@ function EditContent() {
       () => new SockJS(`${API_BASE_URL}/relay?noteId=${noteId}`),
     );
     client.debug = () => {};
-    client.heartbeatIncoming = 4000;
-    client.heartbeatOutgoing = 4000;
+    // client.heartbeatIncoming = 4000;
+    // client.heartbeatOutgoing = 4000;
 
     stompClientRef.current = client;
 
@@ -268,14 +268,14 @@ function EditContent() {
         }
       });
 
-      startHeartbeat();
+      // startHeartbeat();
     });
 
-    client.onDisconnect = () => handleConnectionLost();
-    client.onWebSocketClose = () => handleConnectionLost();
+    // client.onDisconnect = () => handleConnectionLost();
+    // client.onWebSocketClose = () => handleConnectionLost();
 
     return () => {
-      clearInterval(heartbeatTimerRef.current!);
+      // clearInterval(heartbeatTimerRef.current!);
       if (client.active) client.disconnect();
     };
   }, [noteId, loading]);
@@ -293,22 +293,22 @@ function EditContent() {
     return serverDiff.transform(savedPending, false);
   }
 
-  function startHeartbeat() {
-    clearInterval(heartbeatTimerRef.current!);
-    heartbeatTimerRef.current = setInterval(() => {
-      if (!stompClientRef.current?.connected) {
-        handleConnectionLost();
-      }
-    }, HEARTBEAT_INTERVAL);
-  }
+  // function startHeartbeat() {
+  //   clearInterval(heartbeatTimerRef.current!);
+  //   heartbeatTimerRef.current = setInterval(() => {
+  //     if (!stompClientRef.current?.connected) {
+  //       handleConnectionLost();
+  //     }
+  //   }, HEARTBEAT_INTERVAL);
+  // }
 
-  async function handleConnectionLost() {
-    if (connectionLostRef.current) return;
-    connectionLostRef.current = true;
+  // async function handleConnectionLost() {
+  //   if (connectionLostRef.current) return;
+  //   connectionLostRef.current = true;
 
-    clearInterval(heartbeatTimerRef.current!);
-    await saveNote();
-  }
+  //   clearInterval(heartbeatTimerRef.current!);
+  //   await saveNote();
+  // }
 
   async function sendCursorChange(position: number): Promise<void> {
     await apiFetch(`notes/${noteId}/cursor`, {
