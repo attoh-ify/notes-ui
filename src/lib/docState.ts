@@ -56,20 +56,18 @@ export class DocState {
     let serverDelta = incomingOp.delta;
 
     if (this.sentOperation !== null) {
-      if (incomingOp.revision <= this.sentOperation.revision) {
-        const incomingWins = incomingOp.actorId > this.sentOperation.actorId;
+      const incomingWins = incomingOp.actorId > this.sentOperation.actorId;
 
-        serverDelta = this.sentOperation.delta.transform(
-          serverDelta,
-          !incomingWins,
-        );
+      serverDelta = this.sentOperation.delta.transform(
+        serverDelta,
+        !incomingWins,
+      );
 
-        this.sentOperation = new TextOperation(
-          incomingOp.delta.transform(this.sentOperation.delta, incomingWins),
-          this.sentOperation.actorId,
-          this.sentOperation.revision,
-        );
-      }
+      this.sentOperation = new TextOperation(
+        incomingOp.delta.transform(this.sentOperation.delta, incomingWins),
+        this.sentOperation.actorId,
+        this.sentOperation.revision,
+      );
     }
 
     if (this.pendingDelta.ops.length > 0) {
