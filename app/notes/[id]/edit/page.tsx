@@ -97,6 +97,7 @@ function EditContent() {
           if (debounceRef.current) clearTimeout(debounceRef.current);
 
           debounceRef.current = setTimeout(() => {
+            if (!stompClientRef.current?.connected) return;
             const accumulatedDelta = pendingDeltaRef.current;
             pendingDeltaRef.current = new Delta();
 
@@ -111,7 +112,7 @@ function EditContent() {
                 await sendOperationToServer(operation);
               },
             );
-          }, 300);
+          }, 1000);
         });
 
         quillRef.current.on(
@@ -180,11 +181,9 @@ function EditContent() {
         const { type, payload } = JSON.parse(message.body);
         if (type === messageType.OPERATION) {
           handleRemoteOperation(payload);
-          console.log(payload.delta);
         }
         if (type === messageType.COLLABORATOR_JOIN) {
           setCollaborators(payload.collaborators);
-          console.log(payload.collaborators);
         }
         if (type === messageType.COLLABORATOR_CURSOR) {
           handleCursorChange(payload);
