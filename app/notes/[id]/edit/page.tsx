@@ -55,6 +55,7 @@ function EditContent() {
   const editorRef = useRef<HTMLDivElement>(null);
   const quillRef = useRef<Quill | null>(null);
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
+  const pendingDeltaRef = useRef<Delta>(new Delta());
 
   if (!docStateRef.current) {
     docStateRef.current = new DocState(user!.userId);
@@ -88,17 +89,17 @@ function EditContent() {
           quillRef.current.setContents(docStateRef.current.document, "api");
         }
 
-        quillRef.current.on("text-change", (delta, oldDelta, source) => {
+        quillRef.current.on("text-change", (delta, _oldDelta, source) => {
           if (source !== "user") return;
 
-          docStateRef.current!.pendingDelta = docStateRef.current!.pendingDelta.compose(delta);
-
+          pendingDeltaRef.current = pendingDeltaRef.current.compose(delta);
+          docStateRef.current!.pendingDelta = pendingDeltaRef.current;
 
           if (debounceRef.current) clearTimeout(debounceRef.current);
 
           debounceRef.current = setTimeout(() => {
             if (!stompClientRef.current?.connected) return;
-            const accumulatedDelta = docStateRef.current!.pendingDelta;
+            const accumulatedDelta = pendingDeltaRef.current;
             
             const range = quillRef.current?.getSelection();
             
@@ -106,10 +107,11 @@ function EditContent() {
             
             docStateRef.current?.queueOperation(
               accumulatedDelta,
-              
+
               async (operation: TextOperation) => {
                 await sendOperationToServer(operation);
-                docStateRef.current!.pendingDelta = new Delta();
+                pendingDeltaRef.current = new Delta();
+                docStateRef.current!.pendingDelta = pendingDeltaRef.current;
               },
             );
           }, 400);
@@ -117,7 +119,7 @@ function EditContent() {
 
         quillRef.current.on(
           "selection-change",
-          async (range, oldRange, source) => {
+          async (range, _oldRange, source) => {
             if (source !== "user") return;
 
             sendCursorChange(range ? range.index : -1);
