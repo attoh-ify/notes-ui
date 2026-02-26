@@ -112,7 +112,7 @@ function EditContent() {
                 await sendOperationToServer(operation);
               },
             );
-          }, 1000);
+          }, 500);
         });
 
         quillRef.current.on(
