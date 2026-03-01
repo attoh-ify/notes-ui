@@ -38,8 +38,6 @@ enum messageType {
   COLLABORATOR_CURSOR = "COLLABORATOR_CURSOR",
 }
 
-// ─── Log Table ───────────────────────────────────────────────────────────────
-
 const COL_HEADERS = [
   "#",
   "Time",
@@ -310,7 +308,6 @@ function LogTable({ entries, onClear }: { entries: OTLogEntry[]; onClear: () => 
   );
 }
 
-// ─── Main Page ────────────────────────────────────────────────────────────────
 
 function EditContent() {
   const { id: noteId } = useParams();
@@ -328,18 +325,15 @@ function EditContent() {
   const editorRef      = useRef<HTMLDivElement>(null);
   const quillRef       = useRef<Quill | null>(null);
   const debounceRef    = useRef<NodeJS.Timeout | null>(null);
-  const pendingDeltaRef = useRef<Delta>(new Delta());
 
   if (!docStateRef.current) {
     docStateRef.current = new DocState(user!.userId);
   }
 
-  // Sync log from docState into React state after each operation
   function syncLog() {
     setLogEntries([...docStateRef.current!.log]);
   }
 
-  // ── Quill init ──────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!loading && editorRef.current && !quillRef.current) {
       const initQuill = async () => {
@@ -367,22 +361,21 @@ function EditContent() {
         quillRef.current.on("text-change", (delta, _oldDelta, source) => {
           if (source !== "user") return;
 
-          pendingDeltaRef.current = pendingDeltaRef.current.compose(delta);
+          docStateRef.current?.pendingDelta.compose(delta);
 
           if (debounceRef.current) clearTimeout(debounceRef.current);
 
           debounceRef.current = setTimeout(() => {
             if (!stompClientRef.current?.connected) return;
 
-            const accumulatedDelta = pendingDeltaRef.current;
-            const range = quillRef.current?.getSelection();
-            sendCursorChange(range ? range.index : -1);
+            const accumulatedDelta = docStateRef.current!.pendingDelta;
+            docStateRef.current!.pendingDelta = new Delta();
+            sendCursorChange(quillRef.current?.getSelection()?.index ?? -1);
 
             docStateRef.current?.queueOperation(
               accumulatedDelta,
               async (operation: TextOperation) => {
                 await sendOperationToServer(operation);
-                pendingDeltaRef.current = new Delta();
                 syncLog();
               },
             ).then(() => syncLog());
@@ -399,7 +392,6 @@ function EditContent() {
     }
   }, [loading]);
 
-  // ── Load note ───────────────────────────────────────────────────────────────
   useEffect(() => {
     async function loadNoteAndJoin() {
       if (!noteId || !user) return;
@@ -427,7 +419,6 @@ function EditContent() {
     if (noteId && user) loadNoteAndJoin();
   }, [noteId, user]);
 
-  // ── WebSocket ───────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!noteId || loading) return;
 
@@ -446,8 +437,6 @@ function EditContent() {
 
     return () => { if (client.active) client.disconnect(); };
   }, [noteId, loading]);
-
-  // ── Handlers ────────────────────────────────────────────────────────────────
 
   async function sendCursorChange(position: number) {
     await apiFetch(`notes/${noteId}/cursor`, {
@@ -503,14 +492,12 @@ function EditContent() {
     }
   }
 
-  // ── Guards ───────────────────────────────────────────────────────────────────
   if (loadingUser) return <div className="container-wide">Checking session...</div>;
   if (!user) { router.push("login"); return null; }
   if (loading) return <div className="container-wide">Loading note...</div>;
   if (error)   return <div className="container-wide" style={{ color: "red" }}>{error}</div>;
   if (!note)   return <div className="container-wide">Note not found.</div>;
 
-  // ── Render ───────────────────────────────────────────────────────────────────
   return (
     <>
       <main className="container-wide" style={{ maxWidth: "1000px", paddingBottom: 60 }}>
