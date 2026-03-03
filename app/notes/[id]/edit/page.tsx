@@ -7,7 +7,7 @@ import { Note } from "../../page";
 import { Stomp, CompatClient } from "@stomp/stompjs";
 import SockJS from "sockjs-client";
 
-import { DocState, OTLogEntry } from "@/src/lib/docState";
+import { DocState } from "@/src/lib/docState";
 import { TextOperation } from "@/src/lib/textOperation";
 import { useAuth } from "@/src/context/AuthContext";
 import type Quill from "quill";
@@ -38,298 +38,6 @@ enum messageType {
   COLLABORATOR_CURSOR = "COLLABORATOR_CURSOR",
 }
 
-const COL_HEADERS = [
-  "#",
-  "Time",
-  "Event",
-  "sentOp (before)",
-  "pending (before)",
-  "rev (before)",
-  "incomingDelta",
-  "incomingRev",
-  "isAck",
-  "transformed→Quill",
-  "sentOp (after)",
-  "pending (after)",
-  "rev (after)",
-  "nextSend",
-];
-
-function eventColor(event: OTLogEntry["event"]) {
-  if (event === "QUEUE") return "#1976d2";
-  if (event === "ACK") return "#388e3c";
-  return "#e65100";
-}
-
-function Cell({
-  v,
-  mono = true,
-}: {
-  v: string | number | boolean;
-  mono?: boolean;
-}) {
-  const s = String(v);
-  return (
-    <td
-      style={{
-        padding: "3px 8px",
-        borderBottom: "1px solid #e0e0e0",
-        fontSize: "11px",
-        fontFamily: mono
-          ? "'JetBrains Mono', 'Fira Code', monospace"
-          : "inherit",
-        whiteSpace: "pre",
-        maxWidth: 200,
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        color: s === "∅" || s === "—" ? "#bbb" : "#222",
-      }}
-      title={s}
-    >
-      {s}
-    </td>
-  );
-}
-
-function LogTable({
-  entries,
-  onClear,
-}: {
-  entries: OTLogEntry[];
-  onClear: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-
-  function downloadCSV() {
-    const escape = (s: string) => `"${String(s).replace(/"/g, '""')}"`;
-    const rows = [
-      COL_HEADERS.map(escape).join(","),
-      ...entries.map((e) =>
-        [
-          e.seq,
-          e.timestamp,
-          e.event,
-          e.sentOpBefore,
-          e.pendingBefore,
-          e.revisionBefore,
-          e.incomingDelta,
-          e.incomingRevision,
-          e.isAck,
-          e.transformedDelta,
-          e.sentOpAfter,
-          e.pendingAfter,
-          e.revisionAfter,
-          e.nextSend,
-        ]
-          .map((v) => escape(String(v)))
-          .join(","),
-      ),
-    ].join("\n");
-
-    const blob = new Blob([rows], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `ot-log-${Date.now()}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
-  return (
-    <div
-      style={{
-        position: "fixed",
-        bottom: 0,
-        left: 0,
-        right: 0,
-        zIndex: 9999,
-        background: "#fff",
-        borderTop: "2px solid #1976d2",
-        boxShadow: "0 -4px 24px rgba(0,0,0,0.12)",
-        display: "flex",
-        flexDirection: "column",
-        maxHeight: open ? "45vh" : "40px",
-        transition: "max-height 0.2s ease",
-        fontFamily: "system-ui, sans-serif",
-      }}
-    >
-      {/* header bar */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 12,
-          padding: "0 16px",
-          height: 40,
-          flexShrink: 0,
-          borderBottom: open ? "1px solid #e0e0e0" : "none",
-          cursor: "pointer",
-          userSelect: "none",
-        }}
-        onClick={() => setOpen((o) => !o)}
-      >
-        <span
-          style={{
-            fontWeight: 700,
-            fontSize: 12,
-            color: "#1976d2",
-            letterSpacing: 1,
-          }}
-        >
-          OT LOG
-        </span>
-        <span
-          style={{
-            background: "#1976d2",
-            color: "#fff",
-            borderRadius: 10,
-            padding: "1px 8px",
-            fontSize: 11,
-            fontWeight: 700,
-          }}
-        >
-          {entries.length}
-        </span>
-        <span style={{ fontSize: 11, color: "#888", marginLeft: "auto" }}>
-          {open ? "▼ collapse" : "▲ expand"}
-        </span>
-        {open && (
-          <>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                downloadCSV();
-              }}
-              style={{
-                padding: "3px 12px",
-                fontSize: 11,
-                fontWeight: 700,
-                background: "#1976d2",
-                color: "#fff",
-                border: "none",
-                borderRadius: 4,
-                cursor: "pointer",
-                letterSpacing: 0.5,
-              }}
-            >
-              ↓ CSV
-            </button>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onClear();
-              }}
-              style={{
-                padding: "3px 12px",
-                fontSize: 11,
-                fontWeight: 700,
-                background: "#fff",
-                color: "#c62828",
-                border: "1px solid #c62828",
-                borderRadius: 4,
-                cursor: "pointer",
-              }}
-            >
-              Clear
-            </button>
-          </>
-        )}
-      </div>
-
-      {/* table */}
-      {open && (
-        <div style={{ overflow: "auto", flex: 1 }}>
-          <table
-            style={{ borderCollapse: "collapse", width: "100%", fontSize: 11 }}
-          >
-            <thead>
-              <tr style={{ background: "#f5f5f5", position: "sticky", top: 0 }}>
-                {COL_HEADERS.map((h) => (
-                  <th
-                    key={h}
-                    style={{
-                      padding: "4px 8px",
-                      textAlign: "left",
-                      fontWeight: 700,
-                      fontSize: 10,
-                      color: "#555",
-                      borderBottom: "2px solid #e0e0e0",
-                      whiteSpace: "nowrap",
-                      letterSpacing: 0.3,
-                    }}
-                  >
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {entries.map((e) => (
-                <tr
-                  key={e.seq}
-                  style={{
-                    background: e.seq % 2 === 0 ? "#fafafa" : "#fff",
-                  }}
-                >
-                  <Cell v={e.seq} />
-                  <Cell v={e.timestamp} />
-                  <td
-                    style={{
-                      padding: "3px 8px",
-                      borderBottom: "1px solid #e0e0e0",
-                      fontSize: 11,
-                      fontWeight: 700,
-                      color: eventColor(e.event),
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {e.event}
-                  </td>
-                  <Cell v={e.sentOpBefore} />
-                  <Cell v={e.pendingBefore} />
-                  <Cell v={e.revisionBefore} />
-                  <Cell v={e.incomingDelta} />
-                  <Cell v={e.incomingRevision} />
-                  <td
-                    style={{
-                      padding: "3px 8px",
-                      borderBottom: "1px solid #e0e0e0",
-                      fontSize: 11,
-                      fontWeight: 700,
-                      color: e.isAck ? "#388e3c" : "#888",
-                    }}
-                  >
-                    {e.isAck ? "✓ ACK" : "—"}
-                  </td>
-                  <Cell v={e.transformedDelta} />
-                  <Cell v={e.sentOpAfter} />
-                  <Cell v={e.pendingAfter} />
-                  <Cell v={e.revisionAfter} />
-                  <Cell v={e.nextSend} />
-                </tr>
-              ))}
-              {entries.length === 0 && (
-                <tr>
-                  <td
-                    colSpan={COL_HEADERS.length}
-                    style={{
-                      textAlign: "center",
-                      padding: 24,
-                      color: "#bbb",
-                      fontSize: 12,
-                    }}
-                  >
-                    No operations yet — start typing to generate a trace.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
-}
 
 function EditContent() {
   const { id: noteId } = useParams();
@@ -342,7 +50,6 @@ function EditContent() {
   const [note, setNote] = useState<Note | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [logEntries, setLogEntries] = useState<OTLogEntry[]>([]);
 
   const docStateRef = useRef<DocState | null>(null);
   const stompClientRef = useRef<CompatClient | null>(null);
@@ -352,10 +59,6 @@ function EditContent() {
 
   if (!docStateRef.current) {
     docStateRef.current = new DocState(user!.userId);
-  }
-
-  function syncLog() {
-    setLogEntries([...docStateRef.current!.log]);
   }
 
   useEffect(() => {
@@ -393,9 +96,7 @@ function EditContent() {
               if (!stompClientRef.current?.connected) return;
               await sendOperationToServer(operation);
               sentOperationFlushed.current = true;
-              syncLog();
             })
-            .then(() => syncLog());
         });
 
         quillRef.current.on(
@@ -503,7 +204,6 @@ function EditContent() {
         sentOperationFlushed.current = false;
         if (pendingOperation) sendOperationToServer(pendingOperation);
       });
-      syncLog();
     } else {
       const rehydrated: TextOperation = {
         delta: new Delta(payload.delta.ops || []),
@@ -511,7 +211,6 @@ function EditContent() {
         revision,
       };
       const deltaForQuill = docState.applyRemoteOperation(rehydrated);
-      syncLog();
       quillRef.current?.updateContents(deltaForQuill, "api");
     }
   }
@@ -656,14 +355,6 @@ function EditContent() {
           Created at: {new Date(note.createdAt).toLocaleString()}
         </footer>
       </main>
-
-      <LogTable
-        entries={logEntries}
-        onClear={() => {
-          docStateRef.current!.log = [];
-          setLogEntries([]);
-        }}
-      />
     </>
   );
 }
