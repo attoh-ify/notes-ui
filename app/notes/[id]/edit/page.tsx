@@ -38,7 +38,6 @@ enum messageType {
   COLLABORATOR_CURSOR = "COLLABORATOR_CURSOR",
 }
 
-
 function EditContent() {
   const { id: noteId } = useParams();
   const { user, loadingUser } = useAuth();
@@ -71,7 +70,29 @@ function EditContent() {
 
         quillRef.current = new QuillModule(editorRef.current!, {
           theme: "snow",
-          modules: { toolbar: ["italic", "bold"], cursors: true },
+          modules: {
+            toolbar: [
+              "bold",
+              "italic",
+              "underline",
+              "strike",
+              "color",
+              "background",
+              "font",
+              "size",
+              "header",
+              "indent",
+              "list",
+              "align",
+              "link",
+              "image",
+              "video",
+              "blockquote",
+              "code-block",
+              "formula",
+            ],
+            cursors: true,
+          },
           placeholder: "Start typing...",
         });
 
@@ -90,13 +111,15 @@ function EditContent() {
 
           sendCursorChange(quillRef.current?.getSelection()?.index ?? -1);
 
-          docStateRef.current
-            ?.queueOperation(delta, async (operation: TextOperation) => {
+          docStateRef.current?.queueOperation(
+            delta,
+            async (operation: TextOperation) => {
               sentOperationFlushed.current = false;
               if (!stompClientRef.current?.connected) return;
               await sendOperationToServer(operation);
               sentOperationFlushed.current = true;
-            })
+            },
+          );
         });
 
         quillRef.current.on(
