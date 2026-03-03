@@ -61,7 +61,13 @@ function eventColor(event: OTLogEntry["event"]) {
   return "#e65100";
 }
 
-function Cell({ v, mono = true }: { v: string | number | boolean; mono?: boolean }) {
+function Cell({
+  v,
+  mono = true,
+}: {
+  v: string | number | boolean;
+  mono?: boolean;
+}) {
   const s = String(v);
   return (
     <td
@@ -69,7 +75,9 @@ function Cell({ v, mono = true }: { v: string | number | boolean; mono?: boolean
         padding: "3px 8px",
         borderBottom: "1px solid #e0e0e0",
         fontSize: "11px",
-        fontFamily: mono ? "'JetBrains Mono', 'Fira Code', monospace" : "inherit",
+        fontFamily: mono
+          ? "'JetBrains Mono', 'Fira Code', monospace"
+          : "inherit",
         whiteSpace: "pre",
         maxWidth: 200,
         overflow: "hidden",
@@ -83,7 +91,13 @@ function Cell({ v, mono = true }: { v: string | number | boolean; mono?: boolean
   );
 }
 
-function LogTable({ entries, onClear }: { entries: OTLogEntry[]; onClear: () => void }) {
+function LogTable({
+  entries,
+  onClear,
+}: {
+  entries: OTLogEntry[];
+  onClear: () => void;
+}) {
   const [open, setOpen] = useState(false);
 
   function downloadCSV() {
@@ -154,7 +168,14 @@ function LogTable({ entries, onClear }: { entries: OTLogEntry[]; onClear: () => 
         }}
         onClick={() => setOpen((o) => !o)}
       >
-        <span style={{ fontWeight: 700, fontSize: 12, color: "#1976d2", letterSpacing: 1 }}>
+        <span
+          style={{
+            fontWeight: 700,
+            fontSize: 12,
+            color: "#1976d2",
+            letterSpacing: 1,
+          }}
+        >
           OT LOG
         </span>
         <span
@@ -218,7 +239,9 @@ function LogTable({ entries, onClear }: { entries: OTLogEntry[]; onClear: () => 
       {/* table */}
       {open && (
         <div style={{ overflow: "auto", flex: 1 }}>
-          <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 11 }}>
+          <table
+            style={{ borderCollapse: "collapse", width: "100%", fontSize: 11 }}
+          >
             <thead>
               <tr style={{ background: "#f5f5f5", position: "sticky", top: 0 }}>
                 {COL_HEADERS.map((h) => (
@@ -308,23 +331,24 @@ function LogTable({ entries, onClear }: { entries: OTLogEntry[]; onClear: () => 
   );
 }
 
-
 function EditContent() {
   const { id: noteId } = useParams();
   const { user, loadingUser } = useAuth();
   const router = useRouter();
 
-  const [collaborators, setCollaborators] = useState<{ [email: string]: string }>({});
+  const [collaborators, setCollaborators] = useState<{
+    [email: string]: string;
+  }>({});
   const [note, setNote] = useState<Note | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [logEntries, setLogEntries] = useState<OTLogEntry[]>([]);
 
-  const docStateRef    = useRef<DocState | null>(null);
+  const docStateRef = useRef<DocState | null>(null);
   const stompClientRef = useRef<CompatClient | null>(null);
-  const editorRef      = useRef<HTMLDivElement>(null);
-  const quillRef       = useRef<Quill | null>(null);
-  const debounceRef    = useRef<NodeJS.Timeout | null>(null);
+  const editorRef = useRef<HTMLDivElement>(null);
+  const quillRef = useRef<Quill | null>(null);
+  const sentOperationFlushed = useRef<boolean>(false);
 
   if (!docStateRef.current) {
     docStateRef.current = new DocState(user!.userId);
@@ -361,31 +385,26 @@ function EditContent() {
         quillRef.current.on("text-change", (delta, _oldDelta, source) => {
           if (source !== "user") return;
 
-          docStateRef.current?.pendingDelta.compose(delta);
+          sendCursorChange(quillRef.current?.getSelection()?.index ?? -1);
 
-          if (debounceRef.current) clearTimeout(debounceRef.current);
-
-          debounceRef.current = setTimeout(() => {
-            if (!stompClientRef.current?.connected) return;
-
-            const accumulatedDelta = docStateRef.current!.pendingDelta;
-            docStateRef.current!.pendingDelta = new Delta();
-            sendCursorChange(quillRef.current?.getSelection()?.index ?? -1);
-
-            docStateRef.current?.queueOperation(
-              accumulatedDelta,
-              async (operation: TextOperation) => {
-                await sendOperationToServer(operation);
-                syncLog();
-              },
-            ).then(() => syncLog());
-          }, 400);
+          docStateRef.current
+            ?.queueOperation(delta, async (operation: TextOperation) => {
+              sentOperationFlushed.current = false;
+              if (!stompClientRef.current?.connected) return;
+              await sendOperationToServer(operation);
+              sentOperationFlushed.current = true;
+              syncLog();
+            })
+            .then(() => syncLog());
         });
 
-        quillRef.current.on("selection-change", async (range, _oldRange, source) => {
-          if (source !== "user") return;
-          sendCursorChange(range ? range.index : -1);
-        });
+        quillRef.current.on(
+          "selection-change",
+          async (range, _oldRange, source) => {
+            if (source !== "user") return;
+            sendCursorChange(range ? range.index : -1);
+          },
+        );
       };
 
       initQuill();
@@ -396,7 +415,9 @@ function EditContent() {
     async function loadNoteAndJoin() {
       if (!noteId || !user) return;
       try {
-        const noteData = await apiFetch<Note>(`notes/${noteId}`, { method: "GET" });
+        const noteData = await apiFetch<Note>(`notes/${noteId}`, {
+          method: "GET",
+        });
         setNote(noteData);
 
         if (noteData.accessRole === "VIEWER") {
@@ -404,7 +425,9 @@ function EditContent() {
           return;
         }
 
-        const joinData = await apiFetch<JoinResponse>(`notes/${noteId}/join`, { method: "GET" });
+        const joinData = await apiFetch<JoinResponse>(`notes/${noteId}/join`, {
+          method: "GET",
+        });
 
         docStateRef.current!.lastSyncedRevision = joinData.revision;
         docStateRef.current!.setDocument(new Delta(joinData.delta.ops || []));
@@ -422,20 +445,32 @@ function EditContent() {
   useEffect(() => {
     if (!noteId || loading) return;
 
-    const client = Stomp.over(() => new SockJS(`${API_BASE_URL}/relay?noteId=${noteId}`));
+    const client = Stomp.over(
+      () => new SockJS(`${API_BASE_URL}/relay?noteId=${noteId}`),
+    );
     client.debug = () => {};
     stompClientRef.current = client;
 
     client.connect({}, () => {
       client.subscribe(`/topic/note/${noteId}`, (message) => {
         const { type, payload } = JSON.parse(message.body);
-        if (type === messageType.OPERATION)       handleRemoteOperation(payload);
-        if (type === messageType.COLLABORATOR_JOIN) setCollaborators(payload.collaborators);
-        if (type === messageType.COLLABORATOR_CURSOR) handleCursorChange(payload);
+        if (type === messageType.OPERATION) handleRemoteOperation(payload);
+        if (type === messageType.COLLABORATOR_JOIN)
+          setCollaborators(payload.collaborators);
+        if (type === messageType.COLLABORATOR_CURSOR)
+          handleCursorChange(payload);
       });
+
+      const docState = docStateRef.current!;
+      if (docState.sentOperation && !sentOperationFlushed.current) {
+        sendOperationToServer(docState.sentOperation);
+        sentOperationFlushed.current = true;
+      }
     });
 
-    return () => { if (client.active) client.disconnect(); };
+    return () => {
+      if (client.active) client.disconnect();
+    };
   }, [noteId, loading]);
 
   async function sendCursorChange(position: number) {
@@ -448,8 +483,15 @@ function EditContent() {
   function handleCursorChange(payload: CursorPayload) {
     if (payload.actorEmail === user!.email) return;
     const cursor = quillRef.current!.getModule("cursors") as CursorModule;
-    cursor.createCursor(payload.actorEmail, payload.actorEmail, collaborators[payload.actorEmail]);
-    cursor.moveCursor(payload.actorEmail, { index: payload.position, length: 0 });
+    cursor.createCursor(
+      payload.actorEmail,
+      payload.actorEmail,
+      collaborators[payload.actorEmail],
+    );
+    cursor.moveCursor(payload.actorEmail, {
+      index: payload.position,
+      length: 0,
+    });
   }
 
   function handleRemoteOperation(payload: TextOperation) {
@@ -458,6 +500,7 @@ function EditContent() {
 
     if (actorId === user!.userId) {
       docState.acknowledgeOperation(revision, (pendingOperation) => {
+        sentOperationFlushed.current = false;
         if (pendingOperation) sendOperationToServer(pendingOperation);
       });
       syncLog();
@@ -477,9 +520,9 @@ function EditContent() {
     await apiFetch(`notes/${noteId}/enqueue`, {
       method: "POST",
       body: JSON.stringify({
-        delta:    operation.delta,
+        delta: operation.delta,
         revision: operation.revision,
-        actorId:  user!.userId,
+        actorId: user!.userId,
       }),
     });
   }
@@ -492,51 +535,94 @@ function EditContent() {
     }
   }
 
-  if (loadingUser) return <div className="container-wide">Checking session...</div>;
-  if (!user) { router.push("login"); return null; }
+  if (loadingUser)
+    return <div className="container-wide">Checking session...</div>;
+  if (!user) {
+    router.push("login");
+    return null;
+  }
   if (loading) return <div className="container-wide">Loading note...</div>;
-  if (error)   return <div className="container-wide" style={{ color: "red" }}>{error}</div>;
-  if (!note)   return <div className="container-wide">Note not found.</div>;
+  if (error)
+    return (
+      <div className="container-wide" style={{ color: "red" }}>
+        {error}
+      </div>
+    );
+  if (!note) return <div className="container-wide">Note not found.</div>;
 
   return (
     <>
-      <main className="container-wide" style={{ maxWidth: "1000px", paddingBottom: 60 }}>
+      <main
+        className="container-wide"
+        style={{ maxWidth: "1000px", paddingBottom: 60 }}
+      >
         <header
           style={{
-            borderBottom:   "1px solid var(--border)",
-            paddingBottom:  "1rem",
-            marginBottom:   "1.5rem",
-            display:        "flex",
+            borderBottom: "1px solid var(--border)",
+            paddingBottom: "1rem",
+            marginBottom: "1.5rem",
+            display: "flex",
             justifyContent: "space-between",
-            alignItems:     "flex-end",
+            alignItems: "flex-end",
           }}
         >
           <div>
-            <span style={{ fontSize: "0.75rem", color: "var(--primary)", fontWeight: "bold", textTransform: "uppercase" }}>
+            <span
+              style={{
+                fontSize: "0.75rem",
+                color: "var(--primary)",
+                fontWeight: "bold",
+                textTransform: "uppercase",
+              }}
+            >
               Editing Note
             </span>
             <h1 style={{ fontSize: "1.75rem", margin: 0 }}>{note.title}</h1>
           </div>
 
           <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: "0.875rem", marginBottom: "8px", display: "flex", gap: "5px", justifyContent: "flex-end", flexWrap: "wrap" }}>
+            <div
+              style={{
+                fontSize: "0.875rem",
+                marginBottom: "8px",
+                display: "flex",
+                gap: "5px",
+                justifyContent: "flex-end",
+                flexWrap: "wrap",
+              }}
+            >
               {Object.entries(collaborators).length > 0 ? (
                 <>
-                  <span style={{ color: "var(--textmuted)" }}>Collaborators:</span>
-                  {Object.entries(collaborators).map(([email, color], index, array) => (
-                    <span key={email} style={{ color, fontWeight: "600" }}>
-                      {email === user?.email ? "You" : email}
-                      {index < array.length - 1 && <span style={{ color, marginLeft: "2px" }}>,</span>}
-                    </span>
-                  ))}
+                  <span style={{ color: "var(--textmuted)" }}>
+                    Collaborators:
+                  </span>
+                  {Object.entries(collaborators).map(
+                    ([email, color], index, array) => (
+                      <span key={email} style={{ color, fontWeight: "600" }}>
+                        {email === user?.email ? "You" : email}
+                        {index < array.length - 1 && (
+                          <span style={{ color, marginLeft: "2px" }}>,</span>
+                        )}
+                      </span>
+                    ),
+                  )}
                 </>
               ) : (
                 <span style={{ color: "var(--textmuted)" }}>Working alone</span>
               )}
             </div>
 
-            <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
-              <button className="btn-secondary" onClick={() => router.push(`/notes/${noteId}`)}>
+            <div
+              style={{
+                display: "flex",
+                gap: "8px",
+                justifyContent: "flex-end",
+              }}
+            >
+              <button
+                className="btn-secondary"
+                onClick={() => router.push(`/notes/${noteId}`)}
+              >
                 Preview
               </button>
               <button className="btn-primary" onClick={saveNote}>
@@ -549,18 +635,24 @@ function EditContent() {
         <div
           ref={editorRef}
           style={{
-            minHeight:       "500px",
-            fontFamily:      "monospace",
-            fontSize:        "1rem",
-            lineHeight:      "1.6",
-            padding:         "2rem",
+            minHeight: "500px",
+            fontFamily: "monospace",
+            fontSize: "1rem",
+            lineHeight: "1.6",
+            padding: "2rem",
             backgroundColor: "#fcfcfc",
-            resize:          "none",
-            border:          "1px solid var(--border)",
+            resize: "none",
+            border: "1px solid var(--border)",
           }}
         />
 
-        <footer style={{ marginTop: "1rem", fontSize: "0.75rem", color: "var(--text-muted)" }}>
+        <footer
+          style={{
+            marginTop: "1rem",
+            fontSize: "0.75rem",
+            color: "var(--text-muted)",
+          }}
+        >
           Created at: {new Date(note.createdAt).toLocaleString()}
         </footer>
       </main>
