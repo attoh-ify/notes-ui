@@ -276,6 +276,11 @@ function EditContent() {
     }
   }
 
+  async function openSettings() {
+    saveNote();
+    router.push(`/notes/${noteId}/edit/note-setting`);
+  }
+
   if (loadingUser)
     return <div className="container-wide">Checking session...</div>;
   if (!user) {
@@ -371,6 +376,9 @@ function EditContent() {
               </button>
               <button className="btn-primary" onClick={downloadNoteAsWord}>
                 download
+              </button>
+              <button className="btn-secondary" onClick={openSettings}>
+                settings
               </button>
             </div>
           </div>

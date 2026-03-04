@@ -13,7 +13,7 @@ export interface NoteVersion {
   id: string;
   masterDelta: Delta;
   revision: number;
-  createdBy: string;
+  comment: string;
   versionNumber: number;
   createdAt: string;
 }

@@ -7,7 +7,7 @@ interface DeleteNoteModalProps {
   noteId: string;
   title: string;
   onClose: () => void;
-  onDelete: () => void;
+  onDelete: (noteId: string) => Promise<void>;
 }
 
 export default function DeleteNoteModal({
@@ -26,7 +26,7 @@ export default function DeleteNoteModal({
         method: "DELETE"
       })
       onClose();
-      onDelete();
+      onDelete(noteId);
     } catch (err: any) {
       throw(err.message || "Failed to delete note")
     }
