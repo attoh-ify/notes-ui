@@ -262,7 +262,7 @@ function EditContent() {
   async function downloadNoteAsWord() {
     const masterDelta = quillRef.current!.getContents();
     const quillToWordConfig = {
-      exportAs: "doc" as const,
+      exportAs: "blob" as const,
     };
 
     try {
