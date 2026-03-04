@@ -4,33 +4,19 @@ import { apiFetch } from "@/src/lib/api";
 
 interface DeleteNoteModalProps {
   open: boolean;
-  noteId: string;
   title: string;
   onClose: () => void;
-  onDelete: (noteId: string) => Promise<void>;
+  onDelete: () => Promise<void>;
 }
 
 export default function DeleteNoteModal({
   open,
-  noteId,
   title,
   onClose,
   onDelete,
 }: DeleteNoteModalProps) {
 
   if (!open) return null;
-
-  async function handleDeleteNote(noteId: string) {
-    try {
-      await apiFetch(`notes/${noteId}`, {
-        method: "DELETE"
-      })
-      onClose();
-      onDelete(noteId);
-    } catch (err: any) {
-      throw(err.message || "Failed to delete note")
-    }
-  }
 
   return (
     <div
@@ -103,7 +89,7 @@ export default function DeleteNoteModal({
             gap: "1rem"
           }}
         >
-          <button onClick={() => handleDeleteNote(noteId)} className="btn-delete">delete</button>
+          <button onClick={() => onDelete()} className="btn-delete">delete</button>
           <button onClick={onClose} className="btn-secondary">cancel</button>
         </div>
       </div>

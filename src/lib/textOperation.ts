@@ -6,5 +6,6 @@ export class TextOperation {
         public delta : Delta,
         public actorId: string,
         public revision: number,
+        public createdAt: string,
     ) {}
 }

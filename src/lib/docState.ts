@@ -25,6 +25,7 @@ export class DocState {
         this.pendingDelta,
         this.userId,
         this.lastSyncedRevision,
+        new Date().toISOString().slice(0, 19)
       );
       this.pendingDelta = new Delta();
       onSend(this.sentOperation);
@@ -46,6 +47,7 @@ export class DocState {
         delta,
         this.userId,
         this.lastSyncedRevision,
+        new Date().toISOString().slice(0, 19)
       );
       await onSend(this.sentOperation);
     } else {
@@ -68,6 +70,7 @@ export class DocState {
         incomingOp.delta.transform(this.sentOperation.delta, incomingWins),
         this.sentOperation.actorId,
         this.sentOperation.revision,
+        this.sentOperation.createdAt
       );
     }
 

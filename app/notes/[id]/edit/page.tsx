@@ -221,7 +221,7 @@ function EditContent() {
   }
 
   function handleRemoteOperation(payload: TextOperation) {
-    const { actorId, revision } = payload;
+    const { actorId, revision, createdAt } = payload;
     const docState = docStateRef.current!;
 
     if (actorId === user!.userId) {
@@ -234,6 +234,7 @@ function EditContent() {
         delta: new Delta(payload.delta.ops || []),
         actorId,
         revision,
+        createdAt
       };
       const deltaForQuill = docState.applyRemoteOperation(rehydrated);
       quillRef.current?.updateContents(deltaForQuill, "api");

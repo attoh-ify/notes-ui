@@ -34,6 +34,7 @@ function NoteSettingsContent() {
           method: "GET",
         });
         setNote(noteData);
+        setCurrentVisibility(noteData.visibility);
         const noteVersionsData = await apiFetch<NoteVersion[]>(
           `notes/${noteId}/versions`,
           {
@@ -41,9 +42,15 @@ function NoteSettingsContent() {
           },
         );
         setNoteVersions(noteVersionsData);
-        setCurrentVisibility(note?.visibility);
+        const noteAccessData = await apiFetch<NoteAccess[]>(
+          `notes/${noteId}/access`,
+          {
+            method: "GET",
+          },
+        );
+        setNoteAccesses(noteAccessData);
       } catch (err: any) {
-        setError(err.message || "Failed to fetch notes");
+        setError(err.message || "Failed to fetch note metadata");
       } finally {
         setLoading(false);
       }
@@ -51,10 +58,41 @@ function NoteSettingsContent() {
     fetchNotes();
   }, [user]);
 
-  async function handleDeleteNote(noteId: string) {}
+  async function handleDeleteNote() {
+    try {
+      await apiFetch(`notes/${noteId}`, {
+        method: "DELETE",
+      });
+      setShowDeleteNoteModal(false);
+      router.push("/notes");
+    } catch (err: any) {
+      throw err.message || "Failed to delete note";
+    }
+  }
 
-  function handleChangeAccessRole(access: NoteAccess, arg1: string): void {
-    throw new Error("Function not implemented.");
+  async function handleChangeAccessRole(
+    noteAccess: NoteAccess,
+    role: NoteAccessRole,
+  ) {
+    try {
+      const data = await apiFetch<NoteAccess>(
+        `notes/${noteId}/access/${noteAccess.id}`,
+        {
+          method: "PUT",
+          body: JSON.stringify({
+            email: noteAccess.email,
+            role,
+          }),
+        },
+      );
+      setNoteAccesses((prev) =>
+        prev.map((access) =>
+          access.id === noteAccess.id ? { ...access, role: data.role } : access,
+        ),
+      );
+    } catch (err: any) {
+      alert(err.message || "Failed to change access role for user");
+    }
   }
 
   async function handleDeleteNoteAccess(noteAccessId: string) {
@@ -378,7 +416,7 @@ function NoteSettingsContent() {
                     }}
                   >
                     {access.email !== user.email &&
-                    (access.role === "OWNER" || access.role === "SUPER") ? (
+                    (note.accessRole === "OWNER" || note.accessRole === "SUPER") ? (
                       <>
                         <select
                           defaultValue={access.role}
@@ -443,7 +481,7 @@ function NoteSettingsContent() {
                   }}
                 />
                 <select
-                  value={note.accessRole}
+                  value={newRole}
                   onChange={(e) => setNewRole(e.target.value as NoteAccessRole)}
                   style={{
                     padding: "10px",
@@ -600,10 +638,9 @@ function NoteSettingsContent() {
         {showDeleteNoteModal && (
           <DeleteNoteModal
             open={showDeleteNoteModal}
-            noteId={noteId as string}
             title={note.title}
             onClose={() => setShowDeleteNoteModal(false)}
-            onDelete={handleDeleteNote}
+            onDelete={() => handleDeleteNote()}
           />
         )}
       </main>
