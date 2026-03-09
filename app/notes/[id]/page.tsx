@@ -38,7 +38,7 @@ function ViewNoteContent() {
         setNote(noteData);
 
         const noteVersionData = await apiFetch<NoteVersion>(
-          `notes/${noteData.id}/versions/${noteData.currentNoteVersion}`,
+          `notes/${noteData.id}/versions/${noteData.currentNoteVersionNumber}`,
           { method: "GET" },
         );
         setNoteVersion(noteVersionData);

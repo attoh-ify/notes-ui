@@ -11,12 +11,13 @@ export type NoteAccessRole = "OWNER" | "SUPER" | "EDITOR" | "VIEWER";
 
 export interface Note {
   id: string;
-  userId: string;
+  ownerEmail: string;
   title: string;
   visibility: NoteVisibility;
   accessRole: NoteAccessRole;
-  currentNoteVersion: string;
+  currentNoteVersionNumber: number;
   createdAt: string;
+  updatedAt: string;
 }
 
 export interface NoteAccess {

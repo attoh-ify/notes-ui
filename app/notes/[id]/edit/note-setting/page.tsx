@@ -137,7 +137,9 @@ function NoteSettingsContent() {
     }
   }
 
-  async function handleCreateNewVersion() {}
+  function handleCreateNewVersion() {
+    router.push(`/notes/${noteId}/edit/note-version`);
+  }
 
   if (loadingUser)
     return <div className="container-wide">Checking session...</div>;
@@ -156,7 +158,7 @@ function NoteSettingsContent() {
     );
   if (!note) return <div className="container-wide">Note not found.</div>;
   if (!noteVersions)
-    return <div className="container-wide">Note versions not found.</div>;
+    return <div className="container-wide">Note version not found.</div>;
 
   return (
     <Suspense fallback={<div>Note Settings...</div>}>

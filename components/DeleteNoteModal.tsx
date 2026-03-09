@@ -1,7 +1,5 @@
 "use client";
 
-import { apiFetch } from "@/src/lib/api";
-
 interface DeleteNoteModalProps {
   open: boolean;
   title: string;

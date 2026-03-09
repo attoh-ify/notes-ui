@@ -32,7 +32,7 @@
 body {
   background-color: var(--bg-main);
   color: var(--text-main);
-  font-family: 'Inter', system-ui, sans-serif;
+  font-family: "Inter", system-ui, sans-serif;
   margin: 0;
 }
 
@@ -131,4 +131,126 @@ body {
 
 .btn-delete:hover {
   background-color: var(--delete-hover);
+}
+
+.suggestion-insert {
+  background-color: #e3f2fd;
+  border: 1px solid #1976d2;
+  border-radius: 2px;
+  padding: 0 2px;
+  cursor: pointer;
+  transition:
+    background-color 0.15s,
+    box-shadow 0.15s;
+}
+.suggestion-insert:hover {
+  background-color: #bbdefb;
+}
+.suggestion-insert.active {
+  background-color: #90caf9;
+  box-shadow: 0 0 0 2px #1976d2;
+}
+
+.suggestion-delete {
+  text-decoration: line-through;
+  text-decoration-color: #c62828;
+  background-color: #ffebee;
+  border: 1px solid #c62828;
+  border-radius: 2px;
+  padding: 0 2px;
+  cursor: pointer;
+  color: #c62828;
+  transition:
+    background-color 0.15s,
+    box-shadow 0.15s;
+}
+.suggestion-delete:hover {
+  background-color: #ffcdd2;
+}
+.suggestion-delete.active {
+  background-color: #ef9a9a;
+  box-shadow: 0 0 0 2px #c62828;
+}
+
+.suggestion-format {
+  background-color: #fffde7;
+  border: 1px solid #f9a825;
+  border-radius: 2px;
+  padding: 0 2px;
+  cursor: pointer;
+  transition:
+    background-color 0.15s,
+    box-shadow 0.15s;
+}
+.suggestion-format:hover {
+  background-color: #fff9c4;
+}
+.suggestion-format.active {
+  background-color: #ffe082;
+  box-shadow: 0 0 0 2px #f9a825;
+}
+
+.ql-toolbar {
+  display: none !important;
+}
+.ql-container.ql-snow {
+  border: none !important;
+  font-size: inherit;
+  font-family: inherit;
+  line-height: inherit;
+}
+
+.button-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.btn-primary,
+.btn-secondary,
+.btn-outline,
+.btn-icon {
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 1px solid transparent;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-primary {
+  background-color: var(--primary);
+  color: white;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.btn-primary:hover {
+  filter: brightness(1.1);
+  transform: translateY(-1px);
+}
+
+.btn-outline {
+  background-color: white;
+  border-color: var(--border);
+  color: var(--text-main);
+}
+
+.btn-outline:hover {
+  background-color: #f8f9fa;
+  border-color: #d1d5db;
+}
+
+.btn-icon {
+  background: transparent;
+  padding: 8px;
+  color: var(--text-muted);
+}
+
+.btn-icon:hover {
+  background-color: #f3f4f6;
+  color: var(--text-main);
 }

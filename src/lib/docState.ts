@@ -1,4 +1,4 @@
-import { TextOperation } from "./textOperation";
+import { OperationState, TextOperation } from "./textOperation";
 import Delta from "quill-delta";
 
 export class DocState {
@@ -6,10 +6,10 @@ export class DocState {
   public pendingDelta: Delta = new Delta();
   public lastSyncedRevision: number = 0;
   public document: Delta = new Delta();
-  public userId: string;
+  public userEmail: string;
 
-  constructor(userId: string) {
-    this.userId = userId;
+  constructor(userEmail: string) {
+    this.userEmail = userEmail;
   }
 
   acknowledgeOperation(
@@ -22,9 +22,11 @@ export class DocState {
 
     if (this.pendingDelta.ops.length > 0) {
       this.sentOperation = new TextOperation(
+        "",
         this.pendingDelta,
-        this.userId,
+        this.userEmail,
         this.lastSyncedRevision,
+        OperationState.PENDING,
         new Date().toISOString().slice(0, 19)
       );
       this.pendingDelta = new Delta();
@@ -44,9 +46,11 @@ export class DocState {
 
     if (this.sentOperation === null) {
       this.sentOperation = new TextOperation(
+        "",
         delta,
-        this.userId,
+        this.userEmail,
         this.lastSyncedRevision,
+        OperationState.PENDING,
         new Date().toISOString().slice(0, 19)
       );
       await onSend(this.sentOperation);
@@ -59,7 +63,7 @@ export class DocState {
     let serverDelta = incomingOp.delta;
 
     if (this.sentOperation !== null) {
-      const incomingWins = incomingOp.actorId > this.sentOperation.actorId;
+      const incomingWins = incomingOp.actorEmail > this.sentOperation.actorEmail;
 
       serverDelta = this.sentOperation.delta.transform(
         serverDelta,
@@ -67,15 +71,17 @@ export class DocState {
       );
 
       this.sentOperation = new TextOperation(
+        this.sentOperation.opId,
         incomingOp.delta.transform(this.sentOperation.delta, incomingWins),
-        this.sentOperation.actorId,
+        this.sentOperation.actorEmail,
         this.sentOperation.revision,
+        this.sentOperation.state,
         this.sentOperation.createdAt
       );
     }
 
     if (this.pendingDelta.ops.length > 0) {
-      const incomingWins = incomingOp.actorId > this.userId;
+      const incomingWins = incomingOp.actorEmail > this.userEmail;
       const serverDeltaAfterSent = serverDelta;
 
       serverDelta = this.pendingDelta.transform(serverDelta, !incomingWins);
