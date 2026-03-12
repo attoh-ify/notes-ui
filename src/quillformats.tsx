@@ -1,4 +1,5 @@
 import type Quill from "quill";
+import { SuggestionPayload } from "./types";
 
 let formatsRegistered = false;
 
@@ -9,24 +10,24 @@ export function registerFormats(QuillModule: typeof Quill) {
   const Inline = QuillModule.import("blots/inline") as any;
 
   class SuggestionInsert extends Inline {
-    static blotName = "suggestion-insert";  // how quill identifies it
-    static tagName = "span";  // HTML element used
+    static blotName = "suggestion-insert";
+    static tagName = "span";
 
-    static create(data: { groupId: string; authorId: string; createdAt: string }) {  // how the element should be built when the format is applied
+    static create(data: { groupId: string; actorEmail: string; createdAt: string }) {
       const node = super.create();
       node.setAttribute("data-group-id", data.groupId);
       node.setAttribute("data-suggestion-type", "insert");
-      node.setAttribute("data-author-id", data.authorId ?? "");
+      node.setAttribute("data-actor-email", data.actorEmail ?? "");
       node.setAttribute("data-created-at", data.createdAt ?? "");
-      node.classList.add("suggestion-insert");  // CSS styling reference
+      node.classList.add("suggestion-insert");
       return node;
     }
 
-    static formats(node: HTMLElement) {
+    static formats(node: HTMLElement): SuggestionPayload {
       return {
-        groupId: node.getAttribute("data-group-id"),
-        authorId: node.getAttribute("data-author-id"),
-        createdAt: node.getAttribute("data-created-at"),
+        groupId: node.getAttribute("data-group-id") ?? "",
+        actorEmail: node.getAttribute("data-actor-email") ?? "",
+        createdAt: node.getAttribute("data-created-at") ?? "",
       };
     }
   }
@@ -35,23 +36,21 @@ export function registerFormats(QuillModule: typeof Quill) {
     static blotName = "suggestion-delete";
     static tagName = "span";
 
-    static create(data: { groupId: string; authorId: string; createdAt: string; originalText: string }) {
+    static create(data: { groupId: string; actorEmail: string; createdAt: string }) {
       const node = super.create();
       node.setAttribute("data-group-id", data.groupId);
       node.setAttribute("data-suggestion-type", "delete");
-      node.setAttribute("data-author-id", data.authorId ?? "");
+      node.setAttribute("data-actor-email", data.actorEmail ?? "");
       node.setAttribute("data-created-at", data.createdAt ?? "");
-      node.setAttribute("data-original-text", data.originalText ?? "");
       node.classList.add("suggestion-delete");
       return node;
     }
 
-    static formats(node: HTMLElement) {
+    static formats(node: HTMLElement): SuggestionPayload {
       return {
-        groupId: node.getAttribute("data-group-id"),
-        authorId: node.getAttribute("data-author-id"),
-        createdAt: node.getAttribute("data-created-at"),
-        originalText: node.getAttribute("data-original-text"),
+        groupId: node.getAttribute("data-group-id") ?? "",
+        actorEmail: node.getAttribute("data-actor-email") ?? "",
+        createdAt: node.getAttribute("data-created-at") ?? "",
       };
     }
   }
@@ -60,28 +59,23 @@ export function registerFormats(QuillModule: typeof Quill) {
     static blotName = "suggestion-format";
     static tagName = "span";
 
-    static create(data: {
-      groupId: string;
-      authorId: string;
-      createdAt: string;
-      attributes: string;
-    }) {
+    static create(data: { groupId: string; actorEmail: string; createdAt: string; attributes: string }) {
       const node = super.create();
       node.setAttribute("data-group-id", data.groupId);
       node.setAttribute("data-suggestion-type", "format");
-      node.setAttribute("data-author-id", data.authorId ?? "");
+      node.setAttribute("data-actor-email", data.actorEmail ?? "");
       node.setAttribute("data-created-at", data.createdAt ?? "");
       node.setAttribute("data-format-attributes", data.attributes ?? "{}");
       node.classList.add("suggestion-format");
       return node;
     }
 
-    static formats(node: HTMLElement) {
+    static formats(node: HTMLElement): SuggestionPayload {
       return {
-        groupId: node.getAttribute("data-group-id"),
-        authorId: node.getAttribute("data-author-id"),
-        createdAt: node.getAttribute("data-created-at"),
-        attributes: node.getAttribute("data-format-attributes"),
+        groupId: node.getAttribute("data-group-id") ?? "",
+        actorEmail: node.getAttribute("data-actor-email") ?? "",
+        createdAt: node.getAttribute("data-created-at") ?? "",
+        attributes: JSON.parse(node.getAttribute("data-format-attributes") ?? "{}"),
       };
     }
   }

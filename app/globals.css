@@ -190,9 +190,9 @@ body {
   box-shadow: 0 0 0 2px #f9a825;
 }
 
-.ql-toolbar {
+/* .ql-toolbar {
   display: none !important;
-}
+} */
 .ql-container.ql-snow {
   border: none !important;
   font-size: inherit;

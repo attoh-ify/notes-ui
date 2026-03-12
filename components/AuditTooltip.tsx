@@ -1,4 +1,4 @@
-import { TooltipState } from "@/src/types";
+import { TooltipState, TYPE_CONFIG } from "@/src/types";
 
 interface AuditTooltipProps {
   tooltip: TooltipState;
@@ -6,12 +6,6 @@ interface AuditTooltipProps {
   onReject: (groupId: string, type: "insert" | "delete" | "format") => void;
   onClose: () => void;
 }
-
-const TYPE_CONFIG = {
-  insert:  { label: "Insertion",   color: "#1976D2" },
-  delete:  { label: "Deletion",    color: "#C62828" },
-  format:  { label: "Formatting",  color: "#F9A825" },
-};
 
 export function AuditTooltip({ tooltip, onAccept, onReject, onClose }: AuditTooltipProps) {
   const config = TYPE_CONFIG[tooltip.type];
@@ -58,10 +52,13 @@ export function AuditTooltip({ tooltip, onAccept, onReject, onClose }: AuditTool
           Made by
         </div>
         <div style={{ fontWeight: 600, color: "#222", wordBreak: "break-all" }}>
-          {tooltip.authorId || "Unknown"}
+          {tooltip.actorEmail || "Unknown"}
         </div>
         <div style={{ fontSize: "0.75rem", color: "#888", marginTop: "4px" }}>
           {tooltip.createdAt ? new Date(tooltip.createdAt).toLocaleString() : "Unknown time"}
+        </div>
+        <div style={{ fontSize: "0.75rem", color: "#888", marginTop: "4px" }}>
+          Group ID: {tooltip.groupId || "Unknown group"}
         </div>
       </div>
 

@@ -1,37 +1,116 @@
+import Delta from "quill-delta";
+
 export type OperationState = "PENDING" | "COMMITTED" | "REJECTED" | "INVERSE";
-
-export interface CharEntry {
-  char: string;
-  source: "base" | "new";
-
-  insertedBy?: string;
-  insertedAt?: string;
-  insertGroupId?: string;
-
-  deletedBy?: string;
-  deletedAt?: string;
-  deleteGroupId?: string;
-
-  formattedBy?: string;
-  formattedAt?: string;
-  formatGroupId?: string;
-  formatAttributes?: Record<string, any>;
-}
-
-export interface Segment {
-  type: "base" | "insert" | "delete" | "format";
-  text: string;
-  authorId?: string;
-  createdAt?: string;
-  groupId?: string;
-  formatAttributes?: Record<string, any>;
-}
 
 export interface TooltipState {
   x: number;
   y: number;
   groupId: string;
   type: "insert" | "delete" | "format";
-  authorId: string;
+  actorEmail: string;
   createdAt: string;
+}
+
+export interface CursorModule {
+  createCursor: (id: string, label: string, color: string) => void;
+  moveCursor: (id: string, range: { index: number; length: number }) => void;
+  removeCursor: (id: string) => void;
+  toggleCursor: (id: string, value: boolean) => void;
+}
+
+export interface ReviewInProgressResponse {
+  noteId: string;
+  state: boolean;
+}
+
+export interface JoinResponse {
+  collaborators: { [email: string]: string };
+  delta: Delta;
+  revision: number;
+}
+
+export interface CursorPayload {
+  actorEmail: string;
+  position: number;
+}
+
+export enum messageType {
+  COLLABORATOR_JOIN = "COLLABORATOR_JOIN",
+  OPERATION = "OPERATION",
+  COLLABORATOR_CURSOR = "COLLABORATOR_CURSOR",
+  REVIEW_IN_PROGRESS = "REVIEW_IN_PROGRESS",
+}
+
+export const TYPE_CONFIG = {
+  insert:  { label: "Insertion",   color: "#1976D2" },
+  delete:  { label: "Deletion",    color: "#C62828" },
+  format:  { label: "Formatting",  color: "#F9A825" },
+};
+
+export interface SuggestionPayload {
+  groupId: string;
+  actorEmail: string;
+  createdAt: string;
+  attributes?: Record<string, any>;
+}
+
+export type NoteVisibility = "PRIVATE" | "PUBLIC";
+export type NoteAccessRole = "OWNER" | "SUPER" | "EDITOR" | "VIEWER";
+
+export interface Note {
+  id: string;
+  ownerEmail: string;
+  title: string;
+  visibility: NoteVisibility;
+  accessRole: NoteAccessRole;
+  currentNoteVersionNumber: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface NoteAccess {
+  id: string;
+  email: string;
+  role: NoteAccessRole;
+}
+
+export interface NoteVersion {
+  id: string;
+  masterDelta: Delta;
+  revision: number;
+  comment: string;
+  versionNumber: number;
+  createdAt: string;
+}
+
+export interface LoginResponse {
+  userId: string;
+  token: string;
+}
+
+export type SuggestionInsert = {
+  groupId: string;
+  actorEmail: string;
+  createdAt: string;
+}
+
+export type SuggestionDelete = {
+  groupId: string;
+  actorEmail: string;
+  createdAt: string;
+}
+
+export type SuggestionFormat = {
+  groupId: string;
+  actorEmail: string;
+  createdAt: string;
+  attributes: string;
+}
+
+export type MutableOp = {
+  insert: string;
+  attributes?: Record<string, any>;
+  _suggestionInsert?: SuggestionInsert;
+  _suggestionDelete?: SuggestionDelete;
+  _suggestionFormat?: SuggestionFormat;
 }

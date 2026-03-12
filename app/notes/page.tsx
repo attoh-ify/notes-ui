@@ -3,28 +3,10 @@
 import CreateNoteModal from "@/components/CreateNoteModal";
 import { useAuth } from "@/src/context/AuthContext";
 import { apiFetch } from "@/src/lib/api";
+import { Note } from "@/src/types";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, Suspense } from "react";
 
-export type NoteVisibility = "PRIVATE" | "PUBLIC";
-export type NoteAccessRole = "OWNER" | "SUPER" | "EDITOR" | "VIEWER";
-
-export interface Note {
-  id: string;
-  ownerEmail: string;
-  title: string;
-  visibility: NoteVisibility;
-  accessRole: NoteAccessRole;
-  currentNoteVersionNumber: number;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface NoteAccess {
-  id: string;
-  email: string;
-  role: NoteAccessRole;
-}
 
 function NotesContent() {
   const router = useRouter();

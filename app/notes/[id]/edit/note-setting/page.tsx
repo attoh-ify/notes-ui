@@ -1,17 +1,11 @@
 "use client";
 
-import {
-  Note,
-  NoteAccess,
-  NoteAccessRole,
-  NoteVisibility,
-} from "@/app/notes/page";
 import { useAuth } from "@/src/context/AuthContext";
 import { apiFetch } from "@/src/lib/api";
 import { useParams, useRouter } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
-import { NoteVersion } from "../../page";
 import DeleteNoteModal from "@/components/DeleteNoteModal";
+import { Note, NoteAccess, NoteAccessRole, NoteVersion, NoteVisibility } from "@/src/types";
 
 function NoteSettingsContent() {
   const { id: noteId } = useParams();
