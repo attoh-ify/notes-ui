@@ -47,13 +47,6 @@ export const TYPE_CONFIG = {
   format:  { label: "Formatting",  color: "#F9A825" },
 };
 
-export interface SuggestionPayload {
-  groupId: string;
-  actorEmail: string;
-  createdAt: string;
-  attributes?: Record<string, any>;
-}
-
 export type NoteVisibility = "PRIVATE" | "PUBLIC";
 export type NoteAccessRole = "OWNER" | "SUPER" | "EDITOR" | "VIEWER";
 

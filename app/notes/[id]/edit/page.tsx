@@ -14,7 +14,19 @@ import Delta from "quill-delta";
 import { saveAs } from "file-saver";
 import * as quillToWord from "quill-to-word";
 import { registerFormats } from "../../../../src/quillformats";
-import { CursorModule, CursorPayload, JoinResponse, messageType, Note, ReviewInProgressResponse, SuggestionPayload, TooltipState } from "../../../../src/types";
+import {
+  CursorModule,
+  CursorPayload,
+  JoinResponse,
+  messageType,
+  MutableOp,
+  Note,
+  ReviewInProgressResponse,
+  SuggestionDelete,
+  SuggestionFormat,
+  SuggestionInsert,
+  TooltipState,
+} from "../../../../src/types";
 import { AuditTooltip } from "@/components/AuditTooltip";
 
 let _groupCounter = 0;
@@ -66,7 +78,12 @@ function EditContent() {
   useEffect(() => {
     const shouldShowEditor = !reviewInProgress || note?.accessRole === "OWNER";
 
-    if (!loading && editorRef.current && !quillRef.current && shouldShowEditor) {
+    if (
+      !loading &&
+      editorRef.current &&
+      !quillRef.current &&
+      shouldShowEditor
+    ) {
       const initQuill = async () => {
         const { default: QuillModule } = await import("quill");
         const { default: QuillCursors } = await import("quill-cursors");
@@ -79,9 +96,24 @@ function EditContent() {
           readOnly: reviewInProgress,
           modules: {
             toolbar: [
-              "bold", "italic", "underline", "strike", "color", "background",
-              "font", "size", "header", "indent", "list", "align", "link",
-              "image", "video", "blockquote", "code-block", "formula",
+              "bold",
+              "italic",
+              "underline",
+              "strike",
+              "color",
+              "background",
+              "font",
+              "size",
+              "header",
+              "indent",
+              "list",
+              "align",
+              "link",
+              "image",
+              "video",
+              "blockquote",
+              "code-block",
+              "formula",
             ],
             cursors: true,
           },
@@ -106,10 +138,13 @@ function EditContent() {
           );
         });
 
-        quillRef.current.on("selection-change", async (range, _oldRange, source) => {
-          if (source !== "user") return;
-          sendCursorChange(range.index ?? 0);
-        });
+        quillRef.current.on(
+          "selection-change",
+          async (range, _oldRange, source) => {
+            if (source !== "user") return;
+            sendCursorChange(range.index ?? 0);
+          },
+        );
       };
       initQuill();
     }
@@ -132,7 +167,7 @@ function EditContent() {
     for (const op of baseOps) {
       baseDocument = baseDocument.compose(new Delta(op.delta.ops));
     }
-    
+
     if (pendingOps.length === 0) {
       quill.setContents(baseDocument, "api");
       setHasChanges(false);
@@ -140,152 +175,324 @@ function EditContent() {
     }
     setHasChanges(true);
 
-    type MutableOp = { insert: string; attributes?: Record<string, any> };
-    const chars: MutableOp[] = [];
-
+    const ops: MutableOp[] = [];
     for (const op of baseDocument.ops) {
       if (typeof op.insert === "string") {
-        for (const ch of op.insert) {
-          chars.push(op.attributes ? { insert: ch, attributes: { ...op.attributes } } : { insert: ch });
-        }
+        ops.push(
+          op.attributes
+            ? { insert: op.insert, attributes: { ...op.attributes } }
+            : { insert: op.insert },
+        );
       }
+    }
+
+    function splitOpAt(index: number, offset: number): number {
+      if (offset === 0 || offset >= ops[index].insert.length) return index;
+
+      const op = ops[index];
+      const left: MutableOp = {
+        insert: op.insert.slice(0, offset),
+        ...(op.attributes ? { attributes: { ...op.attributes } } : {}),
+        ...(op._suggestionInsert ? { _suggestionInsert: { ...op._suggestionInsert } } : {}),
+        ...(op._suggestionFormat ? { _suggestionFormat: { ...op._suggestionFormat } } : {}),
+        ...(op._suggestionDelete ? { _suggestionDelete: { ...op._suggestionDelete } } : {}),
+      }
+
+      const right: MutableOp = {
+        insert: op.insert.slice(offset),
+        ...(op.attributes ? { attributes: { ...op.attributes } } : {}),
+        ...(op._suggestionInsert ? { _suggestionInsert: { ...op._suggestionInsert } } : {}),
+        ...(op._suggestionFormat ? { _suggestionFormat: { ...op._suggestionFormat } } : {}),
+        ...(op._suggestionDelete ? { _suggestionDelete: { ...op._suggestionDelete } } : {}),
+      }
+
+      ops.splice(index, 1, left, right);
+      return index + 1;
+    }
+
+    function findPos(logicalPos: number): { opIndex: number; intraOffset: number } {
+      let remaining = logicalPos;
+      for (let i = 0; i < ops.length; i++) {
+        const op = ops[i]
+        if (op._suggestionDelete) continue;
+        if (remaining === 0) return { opIndex: i, intraOffset: 0 };
+        if (remaining < op.insert.length) return { opIndex: i, intraOffset: remaining }
+        remaining -= op.insert.length;
+      }
+      
+      return { opIndex: ops.length, intraOffset: 0 };
+    }
+
+    function prevSuggestionInsert(
+      opIndex: number,
+      actorEmail: string,
+    ): SuggestionInsert | null {
+      for (let i = opIndex - 1; i >= 0; i--) {
+        const op = ops[i];
+        if (op.insert === "\n") return null;
+        if (op._suggestionInsert?.actorEmail === actorEmail)
+          return op._suggestionInsert;
+        return null;
+      }
+      return null;
+    }
+
+    function prevSuggestionDelete(
+      opIndex: number,
+      actorEmail: string,
+    ): SuggestionDelete | null {
+      for (let i = opIndex - 1; i >= 0; i--) {
+        const op = ops[i];
+        if (op._suggestionDelete?.actorEmail === actorEmail)
+          return op._suggestionDelete;
+        return null;
+      }
+      return null;
     }
 
     for (const textOp of pendingOps) {
       const { actorEmail, createdAt } = textOp;
-      let pos = 0;
+      let logicalPos = 0;
 
-      let currentInsertGroupId: string | null = null;
-      let currentDeleteGroupId: string | null = null;
-      let currentFormatGroupId: string | null = null;
-
-      function prevInsertGroupId(): string | null {
-        if (pos === 0) return null;
-        const prev = chars[pos - 1];
-        const si = prev?.attributes?.["suggestion-insert"] as SuggestionPayload;
-        if (si && si.actorEmail === actorEmail) return si.groupId;
-        return null;
-      }
-      
-      function prevDeleteGroupId(): string | null {
-        if (pos === 0) return null;
-        const prev = chars[pos - 1];
-        const sd = prev?.attributes?.["suggestion-delete"] as SuggestionPayload;
-        if (sd && sd.actorEmail === actorEmail) return sd.groupId;
-        return null;
-      }
-
-      function prevFormatGroupId(): string | null {
-        if (pos === 0) return null;
-        const prev = chars[pos - 1];
-        const sf = prev?.attributes?.["suggestion-format"] as SuggestionPayload;
-        if (sf && sf.actorEmail === actorEmail) return sf.groupId;
-        return null;
-      }
+      let currentInsertGroup: SuggestionInsert | null = null;
+      let currentDeleteGroup: SuggestionDelete | null = null;
+      let currentFormatGroup: SuggestionFormat | null = null;
 
       for (const component of textOp.delta.ops) {
         if (typeof component.retain === "number" && !component.attributes) {
           const isLast = component === textOp.delta.ops[textOp.delta.ops.length - 1];
           if (isLast) break;
 
-          currentInsertGroupId = null;
-          currentDeleteGroupId = null;
-          currentFormatGroupId = null;
-          pos += component.retain;
-
+          currentInsertGroup = null;
+          currentDeleteGroup = null;
+          currentFormatGroup = null;
+          logicalPos += component.retain;
         } else if (typeof component.retain === "number" && component.attributes) {
-          currentInsertGroupId = null;
-          currentDeleteGroupId = null;
+          currentInsertGroup = null;
+          currentDeleteGroup = null;
 
-          if (!currentFormatGroupId) currentFormatGroupId = prevFormatGroupId() ?? nextGroupId();
+          let { opIndex, intraOffset } = findPos(logicalPos);
+          if (intraOffset > 0) {
+            opIndex = splitOpAt(opIndex, intraOffset);
+          }
 
-          for (let i = 0; i < component.retain; i++) {
-            const entry = chars[pos + i];
-            if (!entry) break;
-            if (entry.insert === "\n") continue;
-            entry.attributes = {
-              ...entry.attributes,
-              "suggestion-format": {
-                groupId: currentFormatGroupId,
-                actorEmail,
-                createdAt,
-                attributes: JSON.stringify(component.attributes),
-              },
+          let remaining = component.retain;
+          let cursor = opIndex;
+
+          if (!currentFormatGroup) {
+            const prev = ops[opIndex - 1]?._suggestionFormat;
+            currentFormatGroup = (prev?.actorEmail === actorEmail) ? prev : {
+              groupId: nextGroupId(),
+              actorEmail,
+              createdAt,
+              attributes: JSON.stringify(component.attributes),
             };
           }
-          pos += component.retain;
 
+          while (remaining > 0 && cursor < ops.length) {
+            const op = ops[cursor];
+            if (op.insert === "\n") {
+              // we don't format line breaks
+              cursor++;
+              continue;
+            }
+
+            if (op.insert.length > remaining) {
+              splitOpAt(cursor, remaining);
+            }
+
+            ops[cursor]._suggestionFormat = { ...currentFormatGroup };
+            remaining -= ops[cursor].insert.length;
+          }
+
+          logicalPos += component.retain;
         } else if (typeof component.insert === "string") {
-          currentDeleteGroupId = null;
-          currentFormatGroupId = null;
+          currentDeleteGroup = null;
+          currentFormatGroup = null;
 
-          if (!currentInsertGroupId) currentInsertGroupId = prevInsertGroupId() ?? nextGroupId();
+          const { opIndex, intraOffset } = findPos(logicalPos);
+          let insertAt = opIndex;
+          if (intraOffset > 0) {
+            insertAt = splitOpAt(opIndex, intraOffset);
+          }
 
-          const newChars: MutableOp[] = [];
-          for (const ch of component.insert) {
-            if (ch === "\n") {
-              newChars.push({ insert: "\n" });
-              currentInsertGroupId = null;
-            } else {
-              if (!currentInsertGroupId) currentInsertGroupId = nextGroupId();
-              const attrs: Record<string, any> = {
-                "suggestion-insert": { groupId: currentInsertGroupId, actorEmail, createdAt }
-              };
-              if (component.attributes) {
-                Object.assign(attrs, component.attributes);
-              }
-              newChars.push({ insert: ch, attributes: attrs });
+          if (!currentInsertGroup) {
+            const prev = prevSuggestionInsert(insertAt, actorEmail);
+            currentInsertGroup = prev ?? {
+              groupId: nextGroupId(),
+              actorEmail,
+              createdAt
+            }
+          } else {
+            if (createdAt > currentInsertGroup.createdAt) {
+              currentInsertGroup.createdAt = createdAt;
             }
           }
 
-          chars.splice(pos, 0, ...newChars);
-          pos += newChars.length;
-          
-        } else if (typeof component.delete === "number") {
-          currentInsertGroupId = null;
-          currentFormatGroupId = null;
+          const newOps: MutableOp[] = [];
+          const parts = component.insert.split("\n");
 
-          if (!currentDeleteGroupId) currentDeleteGroupId = prevDeleteGroupId() ?? nextGroupId();
+          for (let i = 0; i < parts.length; i++) {
+            const part = parts[i];
+            if (part.length > 0) {
+              const attrs: Record<string, any> = {
+                ...(component.attributes ?? {}),
+              };
+              newOps.push({
+                insert: part,
+                attributes:attrs,
+                _suggestionInsert: { ...currentInsertGroup! },
+              });
+            }
+
+            if (i < parts.length - 1) {
+              newOps.push({ insert: "\n" });
+              currentInsertGroup = null;
+            }
+          }
+
+          ops.splice(insertAt, 0, ...newOps);
+        } else if (typeof component.delete === "number") {
+          currentInsertGroup = null;
+          currentFormatGroup = null;
+
+          const { opIndex, intraOffset } = findPos(logicalPos);
+          let cursor = opIndex;
+
+          if (intraOffset > 0) {
+            cursor = splitOpAt(opIndex, intraOffset);
+          }
+
+          if (!currentDeleteGroup) {
+            const prev = prevSuggestionDelete(cursor, actorEmail);
+            currentDeleteGroup = prev ?? {
+              groupId: nextGroupId(),
+              actorEmail,
+              createdAt
+            }
+          }
 
           let remaining = component.delete;
-          while (remaining > 0 && pos < chars.length) {
-            const entry = chars[pos];
-            const si = entry.attributes?.["suggestion-insert"];
+          let advanceBy = component.delete;
+          while (remaining > 0 && cursor < ops.length) {
+            const op = ops[cursor];
 
-            if (entry.insert === "\n") {
-              pos++;
+            if (op.insert === "\n") {
+              cursor++
               remaining--;
-              currentDeleteGroupId = null;
-            } else if (si) {
-              chars.splice(pos, 1);
-              remaining--;
-            } else if (entry.attributes?.["suggestion-delete"]) {
-              pos++;
-            } else {
-              entry.attributes = {
-                ...entry.attributes,
-                "suggestion-delete": { groupId: currentDeleteGroupId, actorEmail, createdAt },
-              };
-              pos++;
-              remaining--;
+              currentDeleteGroup = null;
+              continue;
             }
+
+            // actually remove because it was a pending operation
+            if (op._suggestionInsert) {
+              if (op.insert.length <= remaining) {
+                remaining -= op.insert.length;
+              } else {
+                splitOpAt(cursor, remaining);
+                remaining = 0;
+              }
+              ops.splice(cursor, 1);
+              advanceBy -= op.insert.length
+              continue;
+            }
+
+            if (op._suggestionDelete) {
+              // already marked as deleted so skip
+              cursor++;
+              continue;
+            }
+
+            // base text so mark as deleted - dont actually remove
+            if (op.insert.length > remaining) {
+              splitOpAt(cursor, remaining);
+            }
+
+            ops[cursor]._suggestionDelete = { ...currentDeleteGroup! };
+            remaining -= ops[cursor].insert.length;
+            cursor++;
           }
+
+          logicalPos += advanceBy
         }
       }
     }
 
-    const collapsedOps: MutableOp[] = [];
-    for (const ch of chars) {
-      const last = collapsedOps[collapsedOps.length - 1];
-      const sameAttrs = last && JSON.stringify(last.attributes) === JSON.stringify(ch.attributes);
-      if (last && sameAttrs && ch.insert !== "\n") {
-        last.insert += ch.insert;
-      } else {
-        collapsedOps.push({ ...ch });
+    // ensure all ops with the same groupId have the same createdAt (the most recent one)
+    const groupLatest = new Map<string, string>();
+    for (const op of ops) {
+      const si = op._suggestionInsert;
+      if (si) {
+        const current = groupLatest.get(si.groupId);
+        if (!current || si.createdAt > current) groupLatest.set(si.groupId, si.createdAt);
       }
     }
 
-    quill.setContents(new Delta(collapsedOps), "api");
+    for (const op of ops) {
+      if (op._suggestionInsert) {
+        op._suggestionInsert.createdAt = groupLatest.get(op._suggestionInsert.groupId)!;
+      }
+    }
+
+    function sameGroup(a: MutableOp, b: MutableOp): boolean {
+      if (a._suggestionInsert && b._suggestionInsert) {
+        return a._suggestionInsert.groupId === b._suggestionInsert.groupId;
+      }
+      if (a._suggestionFormat && b._suggestionFormat) {
+        return a._suggestionFormat.groupId === b._suggestionFormat.groupId;
+      }
+      if (a._suggestionDelete && b._suggestionDelete) {
+        return a._suggestionDelete.groupId === b._suggestionDelete.groupId;
+      }
+
+      // both are plain base texts
+      if (!a._suggestionInsert && !a._suggestionFormat && !a._suggestionDelete &&
+        !b._suggestionInsert && !b._suggestionFormat && !b._suggestionDelete) {
+          return JSON.stringify(a.attributes) === JSON.stringify(b.attributes);
+        }
+      return false;
+    }
+
+    // collapse ops in the same group
+    const collapsed: MutableOp[] = [];
+    for (const op of ops) {
+      const last = collapsed[collapsed.length - 1];
+      if (last && op.insert !== "\n" && last.insert !== "\n" && sameGroup(op, last)) {
+        last.insert += op.insert;
+      } else {
+        collapsed.push({ ...op })
+      };
+    }
+
+    // create the actual ops
+    const finalOps = collapsed.map((op) => {
+      const attrs: Record<string, any> = { ...(op.attributes) ?? {} }
+
+      if (op._suggestionInsert) {
+        attrs["suggestion-insert"] = {
+          groupId: op._suggestionInsert.groupId,
+          actorEmail: op._suggestionInsert.actorEmail,
+          createdAt: op._suggestionInsert.createdAt
+        };
+      } else if (op._suggestionFormat) {
+        attrs["suggestion-format"] = {
+          groupId: op._suggestionFormat.groupId,
+          actorEmail: op._suggestionFormat.actorEmail,
+          createdAt: op._suggestionFormat.createdAt,
+          attributes: op._suggestionFormat.attributes
+        };
+      } else if (op._suggestionDelete) {
+        attrs["suggestion-delete"] = {
+          groupId: op._suggestionDelete.groupId,
+          actorEmail: op._suggestionDelete.actorEmail,
+          createdAt: op._suggestionDelete.createdAt
+        };
+      }
+
+      return Object.keys(attrs).length > 0 ? { insert: op.insert, attributes: attrs } : { insert: op.insert }
+    });
+
+    quill.setContents(new Delta(finalOps), "api");
     quill.root.addEventListener("click", handleClick);
   }
 
@@ -293,13 +500,17 @@ function EditContent() {
     async function loadNoteAndJoin() {
       if (!noteId || !user) return;
       try {
-        const noteData = await apiFetch<Note>(`notes/${noteId}`, { method: "GET" });
+        const noteData = await apiFetch<Note>(`notes/${noteId}`, {
+          method: "GET",
+        });
         setNote(noteData);
         if (noteData.accessRole === "VIEWER") {
           router.push(`/notes/${noteId}`);
           return;
         }
-        const joinData = await apiFetch<JoinResponse>(`notes/${noteId}/join`, { method: "GET" });
+        const joinData = await apiFetch<JoinResponse>(`notes/${noteId}/join`, {
+          method: "GET",
+        });
         if (joinData === null) {
           setReviewInProgress(true);
           return;
@@ -328,9 +539,12 @@ function EditContent() {
       client.subscribe(`/topic/note/${noteId}`, (message) => {
         const { type, payload } = JSON.parse(message.body);
         if (type === messageType.OPERATION) handleRemoteOperation(payload);
-        if (type === messageType.COLLABORATOR_JOIN) setCollaborators(payload.collaborators);
-        if (type === messageType.COLLABORATOR_CURSOR) handleCursorChange(payload);
-        if (type === messageType.REVIEW_IN_PROGRESS) handleReviewInProgress(payload);
+        if (type === messageType.COLLABORATOR_JOIN)
+          setCollaborators(payload.collaborators);
+        if (type === messageType.COLLABORATOR_CURSOR)
+          handleCursorChange(payload);
+        if (type === messageType.REVIEW_IN_PROGRESS)
+          handleReviewInProgress(payload);
       });
       if (docStateRef.current?.sentOperation && !sentOperationFlushed.current) {
         sendOperationToServer(docStateRef.current.sentOperation);
@@ -346,7 +560,9 @@ function EditContent() {
     if (!user || !reviewInProgress) return;
     async function fetchData() {
       try {
-        const noteData = await apiFetch<Note>(`notes/${noteId}`, { method: "GET" });
+        const noteData = await apiFetch<Note>(`notes/${noteId}`, {
+          method: "GET",
+        });
         setNote(noteData);
         const logData = await apiFetch<TextOperation[]>(
           `notes/${noteData.id}/revision-log`,
@@ -379,7 +595,9 @@ function EditContent() {
 
   const handleClick = useCallback((e: Event) => {
     const el = (e as MouseEvent).target as HTMLElement;
-    const suggestion = el.closest("[data-suggestion-type]") as HTMLElement | null;
+    const suggestion = el.closest(
+      "[data-suggestion-type]",
+    ) as HTMLElement | null;
 
     if (!suggestion) {
       setPanel(null);
@@ -394,7 +612,10 @@ function EditContent() {
         x: 0,
         y: 0,
         groupId,
-        type: suggestion.getAttribute("data-suggestion-type") as "insert" | "delete" | "format",
+        type: suggestion.getAttribute("data-suggestion-type") as
+          | "insert"
+          | "delete"
+          | "format",
         actorEmail: suggestion.getAttribute("data-actor-email")!,
         createdAt: suggestion.getAttribute("data-created-at")!,
       };
@@ -414,7 +635,9 @@ function EditContent() {
     setUndoStack((prev) => prev.slice(0, -1));
   }
 
-  function getGroupRange(groupId: string): { index: number; length: number } | null {
+  function getGroupRange(
+    groupId: string,
+  ): { index: number; length: number } | null {
     const quill = quillRef.current!;
     const els = Array.from(
       quill.root.querySelectorAll(`[data-group-id="${groupId}"]`),
@@ -466,6 +689,7 @@ function EditContent() {
   }
 
   async function sendCursorChange(position: number) {
+    if (reviewInProgress) return;
     await apiFetch(`notes/${noteId}/cursor`, {
       method: "POST",
       body: JSON.stringify({ position }),
@@ -475,8 +699,15 @@ function EditContent() {
   function handleCursorChange(payload: CursorPayload) {
     if (reviewInProgress || payload.actorEmail === user!.email) return;
     const cursor = quillRef.current!.getModule("cursors") as CursorModule;
-    cursor.createCursor(payload.actorEmail, payload.actorEmail, collaborators[payload.actorEmail]);
-    cursor.moveCursor(payload.actorEmail, { index: payload.position, length: 0 });
+    cursor.createCursor(
+      payload.actorEmail,
+      payload.actorEmail,
+      collaborators[payload.actorEmail],
+    );
+    cursor.moveCursor(payload.actorEmail, {
+      index: payload.position,
+      length: 0,
+    });
   }
 
   function handleRemoteOperation(payload: TextOperation) {
@@ -552,7 +783,9 @@ function EditContent() {
   async function downloadNoteAsWord() {
     const masterDelta = quillRef.current!.getContents();
     try {
-      const docx = await quillToWord.generateWord(masterDelta, { exportAs: "blob" });
+      const docx = await quillToWord.generateWord(masterDelta, {
+        exportAs: "blob",
+      });
       saveAs(docx as Blob, `${note?.title}.docx`);
     } catch (error) {
       console.log("Failed to generate word doc: ", error);
@@ -575,14 +808,26 @@ function EditContent() {
     router.push(`/notes/${noteId}/edit/note-setting`);
   }
 
-  if (loadingUser) return <div className="container-wide">Checking session...</div>;
-  if (!user) { router.push("login"); return null; }
+  if (loadingUser)
+    return <div className="container-wide">Checking session...</div>;
+  if (!user) {
+    router.push("login");
+    return null;
+  }
   if (loading) return <div className="container-wide">Loading note...</div>;
-  if (error) return <div className="container-wide" style={{ color: "red" }}>{error}</div>;
+  if (error)
+    return (
+      <div className="container-wide" style={{ color: "red" }}>
+        {error}
+      </div>
+    );
   if (!note) return <div className="container-wide">Note not found.</div>;
 
   return (
-    <main className="container-wide" style={{ maxWidth: "1000px", paddingBottom: 60 }}>
+    <main
+      className="container-wide"
+      style={{ maxWidth: "1000px", paddingBottom: 60 }}
+    >
       <header
         style={{
           borderBottom: "1px solid var(--border)",
@@ -594,42 +839,89 @@ function EditContent() {
         }}
       >
         <div>
-          <span style={{ fontSize: "0.75rem", color: "var(--primary)", fontWeight: "bold", textTransform: "uppercase" }}>
+          <span
+            style={{
+              fontSize: "0.75rem",
+              color: "var(--primary)",
+              fontWeight: "bold",
+              textTransform: "uppercase",
+            }}
+          >
             Editing Note
           </span>
           <h1 style={{ fontSize: "1.75rem", margin: 0 }}>{note.title}</h1>
         </div>
 
         <div style={{ textAlign: "right" }}>
-          <div style={{ fontSize: "0.875rem", marginBottom: "8px", display: "flex", gap: "5px", justifyContent: "flex-end", flexWrap: "wrap" }}>
+          <div
+            style={{
+              fontSize: "0.875rem",
+              marginBottom: "8px",
+              display: "flex",
+              gap: "5px",
+              justifyContent: "flex-end",
+              flexWrap: "wrap",
+            }}
+          >
             {Object.entries(collaborators).length > 0 ? (
               <>
-                <span style={{ color: "var(--textmuted)" }}>Collaborators: </span>
-                {Object.entries(collaborators).map(([email, color], index, array) => (
-                  <span key={email} style={{ color, fontWeight: "600" }}>
-                    {email === user?.email ? "You" : email}
-                    {index < array.length - 1 && <span style={{ color, marginLeft: "2px" }}>,</span>}
-                  </span>
-                ))}
+                <span style={{ color: "var(--textmuted)" }}>
+                  Collaborators:{" "}
+                </span>
+                {Object.entries(collaborators).map(
+                  ([email, color], index, array) => (
+                    <span key={email} style={{ color, fontWeight: "600" }}>
+                      {email === user?.email ? "You" : email}
+                      {index < array.length - 1 && (
+                        <span style={{ color, marginLeft: "2px" }}>,</span>
+                      )}
+                    </span>
+                  ),
+                )}
               </>
             ) : (
               <span style={{ color: "var(--textmuted)" }}>Working alone</span>
             )}
           </div>
 
-          <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
-            <button className="btn-icon" title="Settings" onClick={openSettings}>⚙️</button>
-            <button className="btn-secondary" onClick={downloadNoteAsWord}>Export Docx</button>
-            <div style={{ width: "1px", background: "var(--border)", margin: "0 4px" }} />
+          <div
+            style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}
+          >
+            <button
+              className="btn-icon"
+              title="Settings"
+              onClick={openSettings}
+            >
+              ⚙️
+            </button>
+            <button className="btn-secondary" onClick={downloadNoteAsWord}>
+              Export Docx
+            </button>
+            <div
+              style={{
+                width: "1px",
+                background: "var(--border)",
+                margin: "0 4px",
+              }}
+            />
 
             {!reviewInProgress && (
-              <button className="btn-outline" onClick={() => router.push(`/notes/${noteId}`)}>View</button>
+              <button
+                className="btn-outline"
+                onClick={() => router.push(`/notes/${noteId}`)}
+              >
+                View
+              </button>
             )}
             {note.accessRole === "OWNER" && !reviewInProgress && (
-              <button className="btn-outline" onClick={handleReviewNote}>Review</button>
+              <button className="btn-outline" onClick={handleReviewNote}>
+                Review
+              </button>
             )}
             {!reviewInProgress && (
-              <button className="btn-primary" onClick={saveNote}>Save changes</button>
+              <button className="btn-primary" onClick={saveNote}>
+                Save changes
+              </button>
             )}
             {reviewInProgress && note.accessRole === "OWNER" && (
               <button
@@ -642,21 +934,43 @@ function EditContent() {
               </button>
             )}
             {reviewInProgress && note.accessRole === "OWNER" && (
-              <button className="btn-primary" onClick={saveVersion}>Create new version</button>
+              <button className="btn-primary" onClick={saveVersion}>
+                Create new version
+              </button>
             )}
           </div>
         </div>
       </header>
 
       {reviewInProgress && (
-        <div style={{ backgroundColor: "#fffbeb", border: "1px solid #fcd34b", color: "#92400e", padding: "0.75rem 1rem", borderRadius: "6px", marginBottom: "1rem", display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: "0.875rem", fontWeight: "500" }}>
+        <div
+          style={{
+            backgroundColor: "#fffbeb",
+            border: "1px solid #fcd34b",
+            color: "#92400e",
+            padding: "0.75rem 1rem",
+            borderRadius: "6px",
+            marginBottom: "1rem",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            fontSize: "0.875rem",
+            fontWeight: "500",
+          }}
+        >
           <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
             <span style={{ fontSize: "1.2rem" }}>📝</span>
             <span>
               {note.accessRole === "OWNER" ? (
-                <><strong>Review Mode:</strong> You are reviewing proposed changes. Accept or reject them to update the master version.</>
+                <>
+                  <strong>Review Mode:</strong> You are reviewing proposed
+                  changes. Accept or reject them to update the master version.
+                </>
               ) : (
-                <><strong>Review in Progress:</strong> The owner is currently reviewing a proposed version of this note.</>
+                <>
+                  <strong>Review in Progress:</strong> The owner is currently
+                  reviewing a proposed version of this note.
+                </>
               )}
             </span>
           </div>
@@ -664,31 +978,89 @@ function EditContent() {
       )}
 
       {reviewInProgress && note.accessRole !== "OWNER" ? (
-        <div style={{ minHeight: "500px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", backgroundColor: "#f9fafb", border: "1px solid var(--border)", borderRadius: "8px", textAlign: "center", padding: "2rem" }}>
+        <div
+          style={{
+            minHeight: "500px",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: "#f9fafb",
+            border: "1px solid var(--border)",
+            borderRadius: "8px",
+            textAlign: "center",
+            padding: "2rem",
+          }}
+        >
           <div style={{ fontSize: "2.5rem", marginBottom: "1rem" }}>🔒</div>
-          <h3 style={{ color: "var(--text)", margin: "0 0 0.5rem 0" }}>Editor Locked</h3>
-          <p style={{ color: "var(--text-muted)", maxWidth: "400px", margin: 0 }}>
-            The owner is currently reviewing proposed changes to this note. The editor will be available once the review is complete.
+          <h3 style={{ color: "var(--text)", margin: "0 0 0.5rem 0" }}>
+            Editor Locked
+          </h3>
+          <p
+            style={{ color: "var(--text-muted)", maxWidth: "400px", margin: 0 }}
+          >
+            The owner is currently reviewing proposed changes to this note. The
+            editor will be available once the review is complete.
           </p>
         </div>
       ) : (
-        <div style={{ position: "relative", minHeight: "500px", borderRadius: "8px", padding: "2px", transition: "border 0.2s ease", border: reviewInProgress ? "2px solid #fcd34b" : "1px solid var(--border)", backgroundColor: reviewInProgress ? "#fafafa" : "#fcfcfc" }}>
+        <div
+          style={{
+            position: "relative",
+            minHeight: "500px",
+            borderRadius: "8px",
+            padding: "2px",
+            transition: "border 0.2s ease",
+            border: reviewInProgress
+              ? "2px solid #fcd34b"
+              : "1px solid var(--border)",
+            backgroundColor: reviewInProgress ? "#fafafa" : "#fcfcfc",
+          }}
+        >
           {reviewInProgress && note.accessRole === "OWNER" && (
             <button
               onClick={handleExitReview}
-              style={{ position: "absolute", top: "1rem", right: "1rem", zIndex: 10, backgroundColor: "#ef4444", color: "white", border: "none", padding: "6px 12px", borderRadius: "4px", cursor: "pointer", fontSize: "0.875rem", fontWeight: "600", boxShadow: "0 2px 4px rgba(0,0,0,0.1)" }}
+              style={{
+                position: "absolute",
+                top: "1rem",
+                right: "1rem",
+                zIndex: 10,
+                backgroundColor: "#ef4444",
+                color: "white",
+                border: "none",
+                padding: "6px 12px",
+                borderRadius: "4px",
+                cursor: "pointer",
+                fontSize: "0.875rem",
+                fontWeight: "600",
+                boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
+              }}
             >
               Exit Review
             </button>
           )}
           <div
             ref={editorRef}
-            style={{ fontFamily: "monospace", fontSize: "1rem", lineHeight: "1.6", padding: "2rem", border: "none", resize: "none", cursor: reviewInProgress ? "default" : "text" }}
+            style={{
+              fontFamily: "monospace",
+              fontSize: "1rem",
+              lineHeight: "1.6",
+              padding: "2rem",
+              border: "none",
+              resize: "none",
+              cursor: reviewInProgress ? "default" : "text",
+            }}
           />
         </div>
       )}
 
-      <footer style={{ marginTop: "1rem", fontSize: "0.75rem", color: "var(--text-muted)" }}>
+      <footer
+        style={{
+          marginTop: "1rem",
+          fontSize: "0.75rem",
+          color: "var(--text-muted)",
+        }}
+      >
         Created at: {new Date(note.createdAt).toLocaleString()}
       </footer>
 

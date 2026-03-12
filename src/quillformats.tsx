@@ -1,5 +1,4 @@
 import type Quill from "quill";
-import { SuggestionPayload } from "./types";
 
 let formatsRegistered = false;
 
@@ -23,7 +22,7 @@ export function registerFormats(QuillModule: typeof Quill) {
       return node;
     }
 
-    static formats(node: HTMLElement): SuggestionPayload {
+    static formats(node: HTMLElement): SuggestionInsert {
       return {
         groupId: node.getAttribute("data-group-id") ?? "",
         actorEmail: node.getAttribute("data-actor-email") ?? "",
@@ -46,7 +45,7 @@ export function registerFormats(QuillModule: typeof Quill) {
       return node;
     }
 
-    static formats(node: HTMLElement): SuggestionPayload {
+    static formats(node: HTMLElement): SuggestionDelete {
       return {
         groupId: node.getAttribute("data-group-id") ?? "",
         actorEmail: node.getAttribute("data-actor-email") ?? "",
@@ -70,7 +69,7 @@ export function registerFormats(QuillModule: typeof Quill) {
       return node;
     }
 
-    static formats(node: HTMLElement): SuggestionPayload {
+    static formats(node: HTMLElement): SuggestionFormat {
       return {
         groupId: node.getAttribute("data-group-id") ?? "",
         actorEmail: node.getAttribute("data-actor-email") ?? "",
