@@ -303,6 +303,7 @@ function EditContent() {
 
             ops[cursor]._suggestionFormat = { ...currentFormatGroup };
             remaining -= ops[cursor].insert.length;
+            cursor++;
           }
 
           logicalPos += component.retain;
@@ -434,23 +435,23 @@ function EditContent() {
       }
     }
 
-    function sameGroup(a: MutableOp, b: MutableOp): boolean {
-      if (a._suggestionInsert && b._suggestionInsert) {
-        return a._suggestionInsert.groupId === b._suggestionInsert.groupId;
-      }
-      if (a._suggestionFormat && b._suggestionFormat) {
-        return a._suggestionFormat.groupId === b._suggestionFormat.groupId;
-      }
-      if (a._suggestionDelete && b._suggestionDelete) {
-        return a._suggestionDelete.groupId === b._suggestionDelete.groupId;
-      }
 
-      // both are plain base texts
-      if (!a._suggestionInsert && !a._suggestionFormat && !a._suggestionDelete &&
-        !b._suggestionInsert && !b._suggestionFormat && !b._suggestionDelete) {
-          return JSON.stringify(a.attributes) === JSON.stringify(b.attributes);
-        }
-      return false;
+    function sameGroup(a: MutableOp, b: MutableOp): boolean {
+      const insertMatch = (!a._suggestionInsert && !b._suggestionInsert) ||
+        (a._suggestionInsert && b._suggestionInsert &&
+        a._suggestionInsert.groupId === b._suggestionInsert.groupId);
+
+      const deleteMatch = (!a._suggestionDelete && !b._suggestionDelete) ||
+        (a._suggestionDelete && b._suggestionDelete &&
+        a._suggestionDelete.groupId === b._suggestionDelete.groupId);
+
+      const formatMatch = (!a._suggestionFormat && !b._suggestionFormat) ||
+        (a._suggestionFormat && b._suggestionFormat &&
+        a._suggestionFormat.groupId === b._suggestionFormat.groupId);
+
+      const attrMatch = JSON.stringify(a.attributes) === JSON.stringify(b.attributes);
+
+      return !!insertMatch && !!deleteMatch && !!formatMatch && attrMatch;
     }
 
     // collapse ops in the same group
@@ -474,14 +475,21 @@ function EditContent() {
           actorEmail: op._suggestionInsert.actorEmail,
           createdAt: op._suggestionInsert.createdAt
         };
-      } else if (op._suggestionFormat) {
+      }
+      if (op._suggestionFormat) {
+        try {
+          const fmtAttrs = JSON.parse(op._suggestionFormat.attributes ?? "{}");
+          Object.assign(attrs, fmtAttrs);
+        } catch {}
+
         attrs["suggestion-format"] = {
           groupId: op._suggestionFormat.groupId,
           actorEmail: op._suggestionFormat.actorEmail,
           createdAt: op._suggestionFormat.createdAt,
           attributes: op._suggestionFormat.attributes
         };
-      } else if (op._suggestionDelete) {
+      }
+      if (op._suggestionDelete) {
         attrs["suggestion-delete"] = {
           groupId: op._suggestionDelete.groupId,
           actorEmail: op._suggestionDelete.actorEmail,
@@ -604,18 +612,17 @@ function EditContent() {
       return;
     }
 
+    const parentInsert = suggestion.closest('[data-suggestion-type="insert"]') || (suggestion.getAttribute("data-suggestion-type") === "insert" ? suggestion : null);
+    let effectiveSuggestion = parentInsert || suggestion;
+
+    const type = effectiveSuggestion.getAttribute("data-suggestion-type") as TooltipState["type"];
     const groupId = suggestion.getAttribute("data-group-id")!;
 
     setPanel((prev) => {
       if (prev?.groupId === groupId) return null;
       return {
-        x: 0,
-        y: 0,
         groupId,
-        type: suggestion.getAttribute("data-suggestion-type") as
-          | "insert"
-          | "delete"
-          | "format",
+        type,
         actorEmail: suggestion.getAttribute("data-actor-email")!,
         createdAt: suggestion.getAttribute("data-created-at")!,
       };
@@ -661,11 +668,11 @@ function EditContent() {
       if (!range) return;
 
       if (type === "insert") {
-        quill.removeFormat(range.index, range.length, "api");
+        quill.formatText(range.index, range.length, { "suggestion-insert": null}, "api");
       } else if (type === "delete") {
         quill.deleteText(range.index, range.length, "api");
       } else if (type === "format") {
-        quill.removeFormat(range.index, range.length, "api");
+        quill.formatText(range.index, range.length, { "suggestion-format": null}, "api");
       }
     });
     setPanel(null);
@@ -679,10 +686,42 @@ function EditContent() {
 
       if (type === "insert") {
         quill.deleteText(range.index, range.length, "api");
+
+        const charAfter = quill.getText(range.index, 1);
+        const charBefore = range.index > 0 ? quill.getText(range.index - 1, 1) : "";
+
+        if (charAfter === "\n" && (range.index === 0 || charBefore === "\n")) {
+          quill.deleteText(range.index, 1, "api");
+        }
       } else if (type === "delete") {
-        quill.removeFormat(range.index, range.length, "api");
+        quill.formatText(range.index, range.length, { "suggestion-delete": null}, "api");
       } else if (type === "format") {
-        quill.removeFormat(range.index, range.length, "api");
+        const els = Array.from(
+          quill.root.querySelectorAll(`[data-group-id="${groupId}"]`)
+        ) as HTMLElement[];
+
+        if (els.length === 0) return;
+
+        const firstEl = els[0];
+        const fmtAttrStr = firstEl.getAttribute("data-format-attributes");
+
+        if (fmtAttrStr) {
+          try {
+            const fmtAttrs = JSON.parse(fmtAttrStr);
+            const nulledAttrs: Record<string, null> = {};
+
+            for (const key of Object.keys(fmtAttrs)) {
+              nulledAttrs[key] = null;
+            }
+
+            nulledAttrs["suggestion-format" as any] = null;
+            quill.formatText(range.index, range.length, nulledAttrs, "api");
+          } catch {
+            quill.formatText(range.index, range.length, { "suggestion-format": null}, "api")
+          }
+        } else {
+          quill.formatText(range.index, range.length, { "suggestion-format": null}, "api");
+        }
       }
     });
     setPanel(null);

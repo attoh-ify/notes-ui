@@ -3,8 +3,6 @@ import Delta from "quill-delta";
 export type OperationState = "PENDING" | "COMMITTED" | "REJECTED" | "INVERSE";
 
 export interface TooltipState {
-  x: number;
-  y: number;
   groupId: string;
   type: "insert" | "delete" | "format";
   actorEmail: string;
