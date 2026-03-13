@@ -6,6 +6,7 @@ import Delta from "quill-delta";
 import { useEffect, useState } from "react";
 import { saveAs } from "file-saver";
 import * as quillToWord from "quill-to-word";
+import { useRouter } from "next/navigation";
 
 interface RevisionHistorySectionProps {
   noteId: string;
@@ -16,6 +17,7 @@ export default function RevisionHistorySection({
   noteId,
   title,
 }: RevisionHistorySectionProps) {
+  const router = useRouter();
   const [noteVersions, setNoteVersions] = useState<NoteVersion[] | null>(null);
 
   useEffect(() => {
@@ -107,9 +109,6 @@ export default function RevisionHistorySection({
               .map((v: NoteVersion) => (
                 <tr
                   key={v.id}
-                  onClick={() =>
-                    (window.location.href = `/notes/${noteId}/history/${v.id}`)
-                  }
                   style={{
                     borderBottom: "1px solid #E2E8F0",
                     fontSize: "0.95rem",
@@ -151,6 +150,7 @@ export default function RevisionHistorySection({
                   </td>
                   <td style={{ padding: "12px 16px" }}>
                     <button
+                    onClick={() => router.push(`/notes/${noteId}`)}
                       style={{
                         color: "#3182CE",
                         background: "none",

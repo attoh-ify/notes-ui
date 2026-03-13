@@ -4,12 +4,14 @@ import { useState } from "react";
 
 interface ReviewSidebarModalProps {
   open: boolean;
+  hasChanges: boolean;
   onClose: () => void;
   onSave: (comment: string) => void;
 }
 
 export default function ReviewSidebarModal({
   open,
+  hasChanges,
   onClose,
   onSave,
 }: ReviewSidebarModalProps) {
@@ -56,13 +58,15 @@ export default function ReviewSidebarModal({
           boxSizing: "border-box",
         }}
       />
-      <button
-        className="btn-primary"
-        onClick={() => onSave(reviewComment)}
-        style={{ fontSize: "0.8rem", padding: "0.4rem 0.75rem" }}
-      >
-        Create Version
-      </button>
+      {hasChanges && (
+        <button
+          className="btn-primary"
+          onClick={() => onSave(reviewComment)}
+          style={{ fontSize: "0.8rem", padding: "0.4rem 0.75rem" }}
+        >
+          Create Version
+        </button>
+      )}
       <button
         className="btn-secondary"
         onClick={onClose}

@@ -22,7 +22,6 @@ export class DocState {
 
     if (this.pendingDelta.ops.length > 0) {
       this.sentOperation = new TextOperation(
-        "",
         this.pendingDelta,
         this.userEmail,
         this.lastSyncedRevision,
@@ -46,7 +45,6 @@ export class DocState {
 
     if (this.sentOperation === null) {
       this.sentOperation = new TextOperation(
-        "",
         delta,
         this.userEmail,
         this.lastSyncedRevision,
@@ -71,7 +69,6 @@ export class DocState {
       );
 
       this.sentOperation = new TextOperation(
-        this.sentOperation.opId,
         incomingOp.delta.transform(this.sentOperation.delta, incomingWins),
         this.sentOperation.actorEmail,
         this.sentOperation.revision,

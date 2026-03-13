@@ -6,7 +6,7 @@ import { useEffect, useState, useRef, Suspense, useCallback } from "react";
 import { Stomp, CompatClient } from "@stomp/stompjs";
 import SockJS from "sockjs-client";
 import { DocState } from "@/src/lib/docState";
-import { TextOperation } from "@/src/lib/textOperation";
+import { OperationState, TextOperation } from "@/src/lib/textOperation";
 import { useAuth } from "@/src/context/AuthContext";
 import type Quill from "quill";
 import "quill/dist/quill.snow.css";
@@ -166,40 +166,41 @@ function EditContent() {
     };
   }, [revisionLog]);
 
-  useEffect(() => {
-    async function loadNoteAndJoin() {
-      if (!noteId || !user) return;
-      try {
-        const noteData = await apiFetch<Note>(`notes/${noteId}`, {
-          method: "GET",
-        });
-        setNote(noteData);
-        if (noteData.accessRole === "VIEWER") {
-          router.push(`/notes/${noteId}`);
-          return;
-        }
-        const joinData = await apiFetch<JoinResponse>(`notes/${noteId}/join`, {
-          method: "GET",
-        });
-        if (joinData === null) {
-          setReviewInProgress(true);
-          return;
-        }
-        docStateRef.current!.lastSyncedRevision = joinData.revision;
-        docStateRef.current!.setDocument(new Delta(joinData.delta.ops || []));
-        setCollaborators(joinData.collaborators);
-
-        if (noteData.accessRole === "OWNER") {
-          isOwner.current = true;
-        }
-      } catch (err: any) {
-        setError(err.message || "Failed to load note");
-      } finally {
-        setLoading(false);
+  const loadNoteAndJoin = useCallback(async () => {
+    if (!noteId || !user) return;
+    try {
+      const noteData = await apiFetch<Note>(`notes/${noteId}`, {
+        method: "GET",
+      });
+      setNote(noteData);
+      if (noteData.accessRole === "VIEWER") {
+        router.push(`/notes/${noteId}`);
+        return;
       }
+      const joinData = await apiFetch<JoinResponse>(`notes/${noteId}/join`, {
+        method: "GET",
+      });
+      if (joinData === null) {
+        setReviewInProgress(true);
+        return;
+      }
+      docStateRef.current!.lastSyncedRevision = joinData.revision;
+      docStateRef.current!.setDocument(new Delta(joinData.delta.ops || []));
+      setCollaborators(joinData.collaborators);
+
+      if (noteData.accessRole === "OWNER") {
+        isOwner.current = true;
+      }
+    } catch (err: any) {
+      setError(err.message || "Failed to load note");
+    } finally {
+      setLoading(false);
     }
-    if (noteId && user) loadNoteAndJoin();
-  }, [noteId, user]);
+  }, [noteId, user, router]);
+
+  useEffect(() => {
+    loadNoteAndJoin();
+  }, [loadNoteAndJoin]);
 
   useEffect(() => {
     if (!noteId || loading) return;
@@ -299,15 +300,16 @@ function EditContent() {
     });
   }, []);
 
-  function snapshotAndApply(fn: () => void) {
+  async function snapshotAndApply(fn: () => void) {
     const before = quillRef.current!.getContents();
     fn();
     const after = quillRef.current!.getContents();
     const inverseDelta = after.diff(before);
+
     setUndoStack((prev) => [...prev, inverseDelta]);
   }
 
-  function undo() {
+  async function undo() {
     if (undoStack.length === 0) return;
     const inversDelta = undoStack[undoStack.length - 1];
     quillRef.current!.updateContents(inversDelta, "api");
@@ -448,7 +450,7 @@ function EditContent() {
   }
 
   function handleRemoteOperation(payload: TextOperation) {
-    const { opId, delta, actorEmail, revision, state, createdAt } = payload;
+    const { delta, actorEmail, revision, state, createdAt } = payload;
     const docState = docStateRef.current!;
     if (actorEmail === user!.email) {
       docState.acknowledgeOperation(revision, (pending) => {
@@ -457,7 +459,6 @@ function EditContent() {
       });
     } else {
       const deltaForQuill = docState.applyRemoteOperation({
-        opId,
         delta: new Delta(delta.ops || []),
         actorEmail,
         revision,
@@ -472,15 +473,15 @@ function EditContent() {
     if (reviewInProgress) return;
     await apiFetch(`notes/${noteId}/enqueue`, {
       method: "POST",
-      body: JSON.stringify({
-        delta: operation.delta,
-        actorEmail: user!.email,
-        revision: operation.revision,
-        opId: null,
-        state: null,
-        createdAt: null,
-        inverseOf: null,
-      }),
+      body: JSON.stringify(
+        new TextOperation(
+          operation.delta,
+          user!.email,
+          operation.revision,
+          OperationState.PENDING,
+          new Date().toISOString().slice(0, 19),
+        ),
+      ),
     });
   }
 
@@ -495,12 +496,11 @@ function EditContent() {
   async function saveVersion(comment: string) {
     if (!quillRef.current) return;
     try {
-      // await apiFetch(`notes/${noteId}/versions`, {
-      //   method: "POST",
-      //   body: JSON.stringify({ delta: quillRef.current.getContents() }),
-      // });
-      setShowReviewSidebarModal(false);
-      router.push(`/notes/${noteId}`);
+      saveReviewChanges();
+      await apiFetch(`notes/${noteId}/versions`, {
+        method: "POST",
+        body: JSON.stringify({ comment }),
+      });
     } catch (err: any) {
       setError(err.message || "Failed to save version");
     }
@@ -526,9 +526,14 @@ function EditContent() {
       await apiFetch(`notes/${noteId}/review/exit`, {
         method: "GET",
       });
+
       setRevisionLog(null);
       setHasChanges(false);
-      router.refresh();
+      setReviewInProgress(false);
+      setShowReviewSidebarModal(false);
+      setPanel(null);
+
+      await loadNoteAndJoin();
     } catch (err) {
       console.error("Failed to exit review:", err);
     }
@@ -539,7 +544,35 @@ function EditContent() {
     router.push(`/notes/${noteId}/edit/note-setting`);
   }
 
-  async function saveReviewChanges() {}
+  async function saveReviewChanges() {
+    try {
+      handleExitReview();
+      await apiFetch(`notes/${noteId}/review/exit`, {
+        method: "GET",
+      });
+      let reviewChanges: TextOperation[] = [];
+      for (const delta of undoStack) {
+        reviewChanges.push(
+          new TextOperation(
+            delta,
+            user!.email,
+            0,
+            OperationState.INVERSE,
+            new Date().toISOString().slice(0, 19),
+          ),
+        );
+      }
+
+      await apiFetch(`notes/${noteId}/review`, {
+        method: "POST",
+        body: JSON.stringify(reviewChanges),
+      });
+
+      setUndoStack([]);
+    } catch (err) {
+      console.error("Failed to save changes:", err);
+    }
+  }
 
   if (loadingUser)
     return <div className="container-wide">Checking session...</div>;
@@ -730,7 +763,6 @@ function EditContent() {
         </div>
       ) : (
         <>
-          {/* No-changes banner — shown when review is done */}
           {reviewInProgress && isOwner.current && !hasChanges && (
             <div
               style={{
@@ -767,11 +799,11 @@ function EditContent() {
           <div
             style={{ display: "flex", gap: "1rem", alignItems: "flex-start" }}
           >
-            {/* Comment + action sidebar — only in review mode for owner */}
             {showReviewSidebarModal && isOwner.current && (
               <ReviewSidebarModal
                 open={showReviewSidebarModal}
-                onClose={() => setShowReviewSidebarModal(false)}
+                hasChanges={hasChanges}
+                onClose={() => setShowExitReviewModal(true)}
                 onSave={saveVersion}
               />
             )}

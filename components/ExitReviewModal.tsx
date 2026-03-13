@@ -60,8 +60,8 @@ export default function ExitReviewModal({
           <button
             className="btn-primary"
             onClick={() => {
-              onClose;
-              onSave;
+              onClose();
+              onSave();
             }}
           >
             Save changes &amp; exit
@@ -69,8 +69,8 @@ export default function ExitReviewModal({
           <button
             className="btn-secondary"
             onClick={() => {
-              onClose;
-              exitReview;
+              onClose();
+              exitReview();
             }}
           >
             Exit without saving
