@@ -65,16 +65,34 @@ export function registerFormats(QuillModule: typeof Quill) {
       node.setAttribute("data-actor-email", data.actorEmail ?? "");
       node.setAttribute("data-created-at", data.createdAt ?? "");
       node.setAttribute("data-format-attributes", data.attributes ?? "{}");
+      
+      const attrString = typeof data.attributes === 'object' 
+        ? JSON.stringify(data.attributes) 
+        : data.attributes;
+        
+      node.setAttribute("data-format-attributes", attrString ?? "{}");
       node.classList.add("suggestion-format");
       return node;
     }
 
     static formats(node: HTMLElement): SuggestionFormat {
+      const rawAttr = node.getAttribute("data-format-attributes");
+      
+      let parsedAttributes = {};
+      if (rawAttr) {
+        try {
+          parsedAttributes = typeof rawAttr === 'string' ? JSON.parse(rawAttr) : rawAttr;
+        } catch (e) {
+          console.error("Failed to parse suggestion-format attributes", e);
+          parsedAttributes = {};
+        }
+      }
+
       return {
         groupId: node.getAttribute("data-group-id") ?? "",
         actorEmail: node.getAttribute("data-actor-email") ?? "",
         createdAt: node.getAttribute("data-created-at") ?? "",
-        attributes: JSON.parse(node.getAttribute("data-format-attributes") ?? "{}"),
+        attributes: parsedAttributes,
       };
     }
   }

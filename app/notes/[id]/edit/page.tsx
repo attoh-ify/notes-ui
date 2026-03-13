@@ -49,8 +49,10 @@ function EditContent() {
   const [reviewInProgress, setReviewInProgress] = useState<boolean>(false);
   const [revisionLog, setRevisionLog] = useState<TextOperation[] | null>(null);
   const [hasChanges, setHasChanges] = useState(false);
+  const [reviewComment, setReviewComment] = useState<string>("");
   const [undoStack, setUndoStack] = useState<Delta[]>([]);
   const [panel, setPanel] = useState<TooltipState | null>(null);
+  const [showExitConfirm, setShowExitConfirm] = useState(false);
 
   const editorRef = useRef<HTMLDivElement>(null);
   const quillRef = useRef<Quill | null>(null);
@@ -193,33 +195,49 @@ function EditContent() {
       const left: MutableOp = {
         insert: op.insert.slice(0, offset),
         ...(op.attributes ? { attributes: { ...op.attributes } } : {}),
-        ...(op._suggestionInsert ? { _suggestionInsert: { ...op._suggestionInsert } } : {}),
-        ...(op._suggestionFormat ? { _suggestionFormat: { ...op._suggestionFormat } } : {}),
-        ...(op._suggestionDelete ? { _suggestionDelete: { ...op._suggestionDelete } } : {}),
-      }
+        ...(op._suggestionInsert
+          ? { _suggestionInsert: { ...op._suggestionInsert } }
+          : {}),
+        ...(op._suggestionFormat
+          ? { _suggestionFormat: { ...op._suggestionFormat } }
+          : {}),
+        ...(op._suggestionDelete
+          ? { _suggestionDelete: { ...op._suggestionDelete } }
+          : {}),
+      };
 
       const right: MutableOp = {
         insert: op.insert.slice(offset),
         ...(op.attributes ? { attributes: { ...op.attributes } } : {}),
-        ...(op._suggestionInsert ? { _suggestionInsert: { ...op._suggestionInsert } } : {}),
-        ...(op._suggestionFormat ? { _suggestionFormat: { ...op._suggestionFormat } } : {}),
-        ...(op._suggestionDelete ? { _suggestionDelete: { ...op._suggestionDelete } } : {}),
-      }
+        ...(op._suggestionInsert
+          ? { _suggestionInsert: { ...op._suggestionInsert } }
+          : {}),
+        ...(op._suggestionFormat
+          ? { _suggestionFormat: { ...op._suggestionFormat } }
+          : {}),
+        ...(op._suggestionDelete
+          ? { _suggestionDelete: { ...op._suggestionDelete } }
+          : {}),
+      };
 
       ops.splice(index, 1, left, right);
       return index + 1;
     }
 
-    function findPos(logicalPos: number): { opIndex: number; intraOffset: number } {
+    function findPos(logicalPos: number): {
+      opIndex: number;
+      intraOffset: number;
+    } {
       let remaining = logicalPos;
       for (let i = 0; i < ops.length; i++) {
-        const op = ops[i]
+        const op = ops[i];
         if (op._suggestionDelete) continue;
         if (remaining === 0) return { opIndex: i, intraOffset: 0 };
-        if (remaining < op.insert.length) return { opIndex: i, intraOffset: remaining }
+        if (remaining < op.insert.length)
+          return { opIndex: i, intraOffset: remaining };
         remaining -= op.insert.length;
       }
-      
+
       return { opIndex: ops.length, intraOffset: 0 };
     }
 
@@ -260,14 +278,18 @@ function EditContent() {
 
       for (const component of textOp.delta.ops) {
         if (typeof component.retain === "number" && !component.attributes) {
-          const isLast = component === textOp.delta.ops[textOp.delta.ops.length - 1];
+          const isLast =
+            component === textOp.delta.ops[textOp.delta.ops.length - 1];
           if (isLast) break;
 
           currentInsertGroup = null;
           currentDeleteGroup = null;
           currentFormatGroup = null;
           logicalPos += component.retain;
-        } else if (typeof component.retain === "number" && component.attributes) {
+        } else if (
+          typeof component.retain === "number" &&
+          component.attributes
+        ) {
           currentInsertGroup = null;
           currentDeleteGroup = null;
 
@@ -281,12 +303,15 @@ function EditContent() {
 
           if (!currentFormatGroup) {
             const prev = ops[opIndex - 1]?._suggestionFormat;
-            currentFormatGroup = (prev?.actorEmail === actorEmail) ? prev : {
-              groupId: nextGroupId(),
-              actorEmail,
-              createdAt,
-              attributes: JSON.stringify(component.attributes),
-            };
+            currentFormatGroup =
+              prev?.actorEmail === actorEmail
+                ? prev
+                : {
+                    groupId: nextGroupId(),
+                    actorEmail,
+                    createdAt,
+                    attributes: JSON.stringify(component.attributes),
+                  };
           }
 
           while (remaining > 0 && cursor < ops.length) {
@@ -322,8 +347,8 @@ function EditContent() {
             currentInsertGroup = prev ?? {
               groupId: nextGroupId(),
               actorEmail,
-              createdAt
-            }
+              createdAt,
+            };
           } else {
             if (createdAt > currentInsertGroup.createdAt) {
               currentInsertGroup.createdAt = createdAt;
@@ -341,7 +366,7 @@ function EditContent() {
               };
               newOps.push({
                 insert: part,
-                attributes:attrs,
+                attributes: attrs,
                 _suggestionInsert: { ...currentInsertGroup! },
               });
             }
@@ -369,8 +394,8 @@ function EditContent() {
             currentDeleteGroup = prev ?? {
               groupId: nextGroupId(),
               actorEmail,
-              createdAt
-            }
+              createdAt,
+            };
           }
 
           let remaining = component.delete;
@@ -379,7 +404,7 @@ function EditContent() {
             const op = ops[cursor];
 
             if (op.insert === "\n") {
-              cursor++
+              cursor++;
               remaining--;
               currentDeleteGroup = null;
               continue;
@@ -394,7 +419,7 @@ function EditContent() {
                 remaining = 0;
               }
               ops.splice(cursor, 1);
-              advanceBy -= op.insert.length
+              advanceBy -= op.insert.length;
               continue;
             }
 
@@ -414,7 +439,7 @@ function EditContent() {
             cursor++;
           }
 
-          logicalPos += advanceBy
+          logicalPos += advanceBy;
         }
       }
     }
@@ -425,31 +450,40 @@ function EditContent() {
       const si = op._suggestionInsert;
       if (si) {
         const current = groupLatest.get(si.groupId);
-        if (!current || si.createdAt > current) groupLatest.set(si.groupId, si.createdAt);
+        if (!current || si.createdAt > current)
+          groupLatest.set(si.groupId, si.createdAt);
       }
     }
 
     for (const op of ops) {
       if (op._suggestionInsert) {
-        op._suggestionInsert.createdAt = groupLatest.get(op._suggestionInsert.groupId)!;
+        op._suggestionInsert.createdAt = groupLatest.get(
+          op._suggestionInsert.groupId,
+        )!;
       }
     }
 
-
     function sameGroup(a: MutableOp, b: MutableOp): boolean {
-      const insertMatch = (!a._suggestionInsert && !b._suggestionInsert) ||
-        (a._suggestionInsert && b._suggestionInsert &&
-        a._suggestionInsert.groupId === b._suggestionInsert.groupId);
+      const insertMatch =
+        (!a._suggestionInsert && !b._suggestionInsert) ||
+        (a._suggestionInsert &&
+          b._suggestionInsert &&
+          a._suggestionInsert.groupId === b._suggestionInsert.groupId);
 
-      const deleteMatch = (!a._suggestionDelete && !b._suggestionDelete) ||
-        (a._suggestionDelete && b._suggestionDelete &&
-        a._suggestionDelete.groupId === b._suggestionDelete.groupId);
+      const deleteMatch =
+        (!a._suggestionDelete && !b._suggestionDelete) ||
+        (a._suggestionDelete &&
+          b._suggestionDelete &&
+          a._suggestionDelete.groupId === b._suggestionDelete.groupId);
 
-      const formatMatch = (!a._suggestionFormat && !b._suggestionFormat) ||
-        (a._suggestionFormat && b._suggestionFormat &&
-        a._suggestionFormat.groupId === b._suggestionFormat.groupId);
+      const formatMatch =
+        (!a._suggestionFormat && !b._suggestionFormat) ||
+        (a._suggestionFormat &&
+          b._suggestionFormat &&
+          a._suggestionFormat.groupId === b._suggestionFormat.groupId);
 
-      const attrMatch = JSON.stringify(a.attributes) === JSON.stringify(b.attributes);
+      const attrMatch =
+        JSON.stringify(a.attributes) === JSON.stringify(b.attributes);
 
       return !!insertMatch && !!deleteMatch && !!formatMatch && attrMatch;
     }
@@ -458,22 +492,27 @@ function EditContent() {
     const collapsed: MutableOp[] = [];
     for (const op of ops) {
       const last = collapsed[collapsed.length - 1];
-      if (last && op.insert !== "\n" && last.insert !== "\n" && sameGroup(op, last)) {
+      if (
+        last &&
+        op.insert !== "\n" &&
+        last.insert !== "\n" &&
+        sameGroup(op, last)
+      ) {
         last.insert += op.insert;
       } else {
-        collapsed.push({ ...op })
-      };
+        collapsed.push({ ...op });
+      }
     }
 
     // create the actual ops
     const finalOps = collapsed.map((op) => {
-      const attrs: Record<string, any> = { ...(op.attributes) ?? {} }
+      const attrs: Record<string, any> = { ...(op.attributes ?? {}) };
 
       if (op._suggestionInsert) {
         attrs["suggestion-insert"] = {
           groupId: op._suggestionInsert.groupId,
           actorEmail: op._suggestionInsert.actorEmail,
-          createdAt: op._suggestionInsert.createdAt
+          createdAt: op._suggestionInsert.createdAt,
         };
       }
       if (op._suggestionFormat) {
@@ -486,18 +525,20 @@ function EditContent() {
           groupId: op._suggestionFormat.groupId,
           actorEmail: op._suggestionFormat.actorEmail,
           createdAt: op._suggestionFormat.createdAt,
-          attributes: op._suggestionFormat.attributes
+          attributes: op._suggestionFormat.attributes,
         };
       }
       if (op._suggestionDelete) {
         attrs["suggestion-delete"] = {
           groupId: op._suggestionDelete.groupId,
           actorEmail: op._suggestionDelete.actorEmail,
-          createdAt: op._suggestionDelete.createdAt
+          createdAt: op._suggestionDelete.createdAt,
         };
       }
 
-      return Object.keys(attrs).length > 0 ? { insert: op.insert, attributes: attrs } : { insert: op.insert }
+      return Object.keys(attrs).length > 0
+        ? { insert: op.insert, attributes: attrs }
+        : { insert: op.insert };
     });
 
     quill.setContents(new Delta(finalOps), "api");
@@ -612,33 +653,39 @@ function EditContent() {
       return;
     }
 
-    const parentInsert = suggestion.closest('[data-suggestion-type="insert"]') || (suggestion.getAttribute("data-suggestion-type") === "insert" ? suggestion : null);
+    const parentInsert = suggestion.closest('[data-suggestion-type="insert"]');
     let effectiveSuggestion = parentInsert || suggestion;
 
-    const type = effectiveSuggestion.getAttribute("data-suggestion-type") as TooltipState["type"];
-    const groupId = suggestion.getAttribute("data-group-id")!;
+    const type = effectiveSuggestion.getAttribute(
+      "data-suggestion-type",
+    ) as TooltipState["type"];
+    const groupId = effectiveSuggestion.getAttribute("data-group-id")!;
+    const actorEmail = effectiveSuggestion.getAttribute("data-actor-email")!;
+    const createdAt = effectiveSuggestion.getAttribute("data-created-at")!;
 
     setPanel((prev) => {
       if (prev?.groupId === groupId) return null;
       return {
         groupId,
         type,
-        actorEmail: suggestion.getAttribute("data-actor-email")!,
-        createdAt: suggestion.getAttribute("data-created-at")!,
+        actorEmail,
+        createdAt,
       };
     });
   }, []);
 
   function snapshotAndApply(fn: () => void) {
-    const snapshot = quillRef.current!.getContents();
+    const before = quillRef.current!.getContents();
     fn();
-    setUndoStack((prev) => [...prev, snapshot]);
+    const after = quillRef.current!.getContents();
+    const inverseDelta = after.diff(before);
+    setUndoStack((prev) => [...prev, inverseDelta]);
   }
 
   function undo() {
     if (undoStack.length === 0) return;
-    const snapshot = undoStack[undoStack.length - 1];
-    quillRef.current!.setContents(snapshot, "api");
+    const inversDelta = undoStack[undoStack.length - 1];
+    quillRef.current!.updateContents(inversDelta, "api");
     setUndoStack((prev) => prev.slice(0, -1));
   }
 
@@ -668,11 +715,21 @@ function EditContent() {
       if (!range) return;
 
       if (type === "insert") {
-        quill.formatText(range.index, range.length, { "suggestion-insert": null}, "api");
+        quill.formatText(
+          range.index,
+          range.length,
+          { "suggestion-insert": null },
+          "api",
+        );
       } else if (type === "delete") {
         quill.deleteText(range.index, range.length, "api");
       } else if (type === "format") {
-        quill.formatText(range.index, range.length, { "suggestion-format": null}, "api");
+        quill.formatText(
+          range.index,
+          range.length,
+          { "suggestion-format": null },
+          "api",
+        );
       }
     });
     setPanel(null);
@@ -688,16 +745,22 @@ function EditContent() {
         quill.deleteText(range.index, range.length, "api");
 
         const charAfter = quill.getText(range.index, 1);
-        const charBefore = range.index > 0 ? quill.getText(range.index - 1, 1) : "";
+        const charBefore =
+          range.index > 0 ? quill.getText(range.index - 1, 1) : "";
 
         if (charAfter === "\n" && (range.index === 0 || charBefore === "\n")) {
           quill.deleteText(range.index, 1, "api");
         }
       } else if (type === "delete") {
-        quill.formatText(range.index, range.length, { "suggestion-delete": null}, "api");
+        quill.formatText(
+          range.index,
+          range.length,
+          { "suggestion-delete": null },
+          "api",
+        );
       } else if (type === "format") {
         const els = Array.from(
-          quill.root.querySelectorAll(`[data-group-id="${groupId}"]`)
+          quill.root.querySelectorAll(`[data-group-id="${groupId}"]`),
         ) as HTMLElement[];
 
         if (els.length === 0) return;
@@ -717,10 +780,20 @@ function EditContent() {
             nulledAttrs["suggestion-format" as any] = null;
             quill.formatText(range.index, range.length, nulledAttrs, "api");
           } catch {
-            quill.formatText(range.index, range.length, { "suggestion-format": null}, "api")
+            quill.formatText(
+              range.index,
+              range.length,
+              { "suggestion-format": null },
+              "api",
+            );
           }
         } else {
-          quill.formatText(range.index, range.length, { "suggestion-format": null}, "api");
+          quill.formatText(
+            range.index,
+            range.length,
+            { "suggestion-format": null },
+            "api",
+          );
         }
       }
     });
@@ -833,9 +906,12 @@ function EditContent() {
 
   async function handleExitReview() {
     try {
-      await apiFetch(`notes/${noteId}/review/exit`, { method: "GET" });
+      await apiFetch(`notes/${noteId}/review/exit`, {
+        method: "GET"
+      });
       setRevisionLog(null);
       setHasChanges(false);
+      setReviewComment("");
       router.refresh();
     } catch (err) {
       console.error("Failed to exit review:", err);
@@ -972,11 +1048,6 @@ function EditContent() {
                 ↩ Undo
               </button>
             )}
-            {reviewInProgress && note.accessRole === "OWNER" && (
-              <button className="btn-primary" onClick={saveVersion}>
-                Create new version
-              </button>
-            )}
           </div>
         </div>
       </header>
@@ -1032,77 +1103,198 @@ function EditContent() {
           }}
         >
           <div style={{ fontSize: "2.5rem", marginBottom: "1rem" }}>🔒</div>
-          <h3 style={{ color: "var(--text)", margin: "0 0 0.5rem 0" }}>
-            Editor Locked
-          </h3>
-          <p
-            style={{ color: "var(--text-muted)", maxWidth: "400px", margin: 0 }}
-          >
-            The owner is currently reviewing proposed changes to this note. The
-            editor will be available once the review is complete.
+          <h3 style={{ color: "var(--text)", margin: "0 0 0.5rem 0" }}>Editor Locked</h3>
+          <p style={{ color: "var(--text-muted)", maxWidth: "400px", margin: 0 }}>
+            The owner is currently reviewing proposed changes. The editor will be available once the review is complete.
           </p>
         </div>
       ) : (
-        <div
-          style={{
-            position: "relative",
-            minHeight: "500px",
-            borderRadius: "8px",
-            padding: "2px",
-            transition: "border 0.2s ease",
-            border: reviewInProgress
-              ? "2px solid #fcd34b"
-              : "1px solid var(--border)",
-            backgroundColor: reviewInProgress ? "#fafafa" : "#fcfcfc",
-          }}
-        >
-          {reviewInProgress && note.accessRole === "OWNER" && (
-            <button
-              onClick={handleExitReview}
+        <>
+          {/* No-changes banner — shown when review is done */}
+          {reviewInProgress && note.accessRole === "OWNER" && !hasChanges && (
+            <div
               style={{
-                position: "absolute",
-                top: "1rem",
-                right: "1rem",
-                zIndex: 10,
-                backgroundColor: "#ef4444",
-                color: "white",
-                border: "none",
-                padding: "6px 12px",
-                borderRadius: "4px",
-                cursor: "pointer",
-                fontSize: "0.875rem",
-                fontWeight: "600",
-                boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: "#f9fafb",
+                border: "1px solid var(--border)",
+                borderRadius: "8px",
+                textAlign: "center",
+                padding: "2rem",
+                gap: "1rem",
+                marginBottom: "1rem",
               }}
             >
-              Exit Review
-            </button>
+              <div style={{ fontSize: "2.5rem" }}>✅</div>
+              <h3 style={{ color: "var(--text)", margin: 0 }}>No pending changes</h3>
+              <p style={{ color: "var(--text-muted)", maxWidth: "400px", margin: 0 }}>
+                All proposed changes have been reviewed. Exit review mode when ready.
+              </p>
+            </div>
           )}
-          <div
-            ref={editorRef}
-            style={{
-              fontFamily: "monospace",
-              fontSize: "1rem",
-              lineHeight: "1.6",
-              padding: "2rem",
-              border: "none",
-              resize: "none",
-              cursor: reviewInProgress ? "default" : "text",
-            }}
-          />
-        </div>
+ 
+          <div style={{ display: "flex", gap: "1rem", alignItems: "flex-start" }}>
+ 
+            {/* Comment + action sidebar — only in review mode for owner */}
+            {reviewInProgress && note.accessRole === "OWNER" && (
+              <div
+                style={{
+                  width: "200px",
+                  flexShrink: 0,
+                  border: "1px solid var(--border)",
+                  borderRadius: "8px",
+                  padding: "0.875rem",
+                  backgroundColor: "#fff",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "0.625rem",
+                  position: "sticky",
+                  top: "1rem",
+                }}
+              >
+                <span style={{ fontSize: "0.8rem", fontWeight: 600, color: "var(--text)" }}>
+                  Review Note
+                </span>
+                <textarea
+                  value={reviewComment}
+                  onChange={(e) => setReviewComment(e.target.value)}
+                  placeholder="Optional summary..."
+                  rows={4}
+                  style={{
+                    width: "100%",
+                    padding: "0.5rem",
+                    border: "1px solid var(--border)",
+                    borderRadius: "6px",
+                    fontSize: "0.8rem",
+                    resize: "vertical",
+                    fontFamily: "inherit",
+                    color: "var(--text)",
+                    backgroundColor: "#fafafa",
+                    boxSizing: "border-box",
+                  }}
+                />
+                {hasChanges && (
+                  <button
+                    className="btn-primary"
+                    onClick={saveVersion}
+                    style={{ fontSize: "0.8rem", padding: "0.4rem 0.75rem" }}
+                  >
+                    Create Version
+                  </button>
+                )}
+                <button
+                  className="btn-secondary"
+                  onClick={() => setShowExitConfirm(true)}
+                  style={{ fontSize: "0.8rem", padding: "0.4rem 0.75rem" }}
+                >
+                  Exit Review
+                </button>
+              </div>
+            )}
+ 
+            {/* Editor — always mounted so Quill always has a stable DOM node */}
+            <div
+              style={{
+                flex: 1,
+                minWidth: 0,
+                position: "relative",
+                minHeight: "500px",
+                borderRadius: "8px",
+                padding: "2px",
+                transition: "border 0.2s ease",
+                border: reviewInProgress ? "2px solid #fcd34b" : "1px solid var(--border)",
+                backgroundColor: reviewInProgress ? "#fafafa" : "#fcfcfc",
+                // Hide (but keep mounted) when there are no changes and we've shown the banner
+                display: (reviewInProgress && note.accessRole === "OWNER" && !hasChanges) ? "none" : "block",
+              }}
+            >
+              <div
+                ref={editorRef}
+                style={{
+                  fontFamily: "monospace",
+                  fontSize: "1rem",
+                  lineHeight: "1.6",
+                  padding: "2rem",
+                  border: "none",
+                  resize: "none",
+                  cursor: reviewInProgress ? "default" : "text",
+                }}
+              />
+            </div>
+          </div>
+ 
+          {/* Exit review confirmation modal */}
+          {showExitConfirm && (
+            <div
+              style={{
+                position: "fixed",
+                inset: 0,
+                backgroundColor: "rgba(0,0,0,0.4)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                zIndex: 1000,
+              }}
+              onClick={() => setShowExitConfirm(false)}
+            >
+              <div
+                style={{
+                  backgroundColor: "#fff",
+                  borderRadius: "10px",
+                  padding: "1.5rem",
+                  maxWidth: "380px",
+                  width: "90%",
+                  boxShadow: "0 8px 32px rgba(0,0,0,0.18)",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "1rem",
+                }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <h3 style={{ margin: 0, fontSize: "1rem", color: "var(--text)" }}>
+                  Exit Review
+                </h3>
+                <p style={{ margin: 0, fontSize: "0.875rem", color: "var(--text-muted)" }}>
+                  What would you like to do with the changes you've reviewed so far?
+                </p>
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                  <button
+                    className="btn-primary"
+                    onClick={() => {
+                      setShowExitConfirm(false);
+                      saveVersion();
+                    }}
+                  >
+                    Save changes &amp; exit
+                  </button>
+                  <button
+                    className="btn-secondary"
+                    onClick={() => {
+                      setShowExitConfirm(false);
+                      handleExitReview();
+                    }}
+                  >
+                    Exit without saving
+                  </button>
+                  <button
+                    className="btn-outline"
+                    onClick={() => setShowExitConfirm(false)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </>
       )}
-
-      <footer
-        style={{
-          marginTop: "1rem",
-          fontSize: "0.75rem",
-          color: "var(--text-muted)",
-        }}
-      >
+ 
+      <footer style={{ marginTop: "1rem", fontSize: "0.75rem", color: "var(--text-muted)" }}>
         Created at: {new Date(note.createdAt).toLocaleString()}
       </footer>
-
+ 
       {panel && (
         <AuditTooltip
           tooltip={panel}
