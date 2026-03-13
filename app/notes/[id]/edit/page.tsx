@@ -11,8 +11,6 @@ import { useAuth } from "@/src/context/AuthContext";
 import type Quill from "quill";
 import "quill/dist/quill.snow.css";
 import Delta from "quill-delta";
-import { saveAs } from "file-saver";
-import * as quillToWord from "quill-to-word";
 import { registerFormats } from "../../../../src/lib/quillformats";
 import {
   CursorModule,
@@ -523,18 +521,6 @@ function EditContent() {
     }
   }
 
-  async function downloadNoteAsWord() {
-    const masterDelta = quillRef.current!.getContents();
-    try {
-      const docx = await quillToWord.generateWord(masterDelta, {
-        exportAs: "blob",
-      });
-      saveAs(docx as Blob, `${note?.title}.docx`);
-    } catch (error) {
-      console.log("Failed to generate word doc: ", error);
-    }
-  }
-
   async function handleExitReview() {
     try {
       await apiFetch(`notes/${noteId}/review/exit`, {
@@ -640,9 +626,6 @@ function EditContent() {
               onClick={openSettings}
             >
               ⚙️
-            </button>
-            <button className="btn-secondary" onClick={downloadNoteAsWord}>
-              Export Docx
             </button>
             <div
               style={{

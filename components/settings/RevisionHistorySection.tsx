@@ -2,14 +2,19 @@
 
 import { apiFetch } from "@/src/lib/api";
 import { NoteVersion } from "@/src/types";
+import Delta from "quill-delta";
 import { useEffect, useState } from "react";
+import { saveAs } from "file-saver";
+import * as quillToWord from "quill-to-word";
 
 interface RevisionHistorySectionProps {
   noteId: string;
+  title: string;
 }
 
 export default function RevisionHistorySection({
   noteId,
+  title,
 }: RevisionHistorySectionProps) {
   const [noteVersions, setNoteVersions] = useState<NoteVersion[] | null>(null);
 
@@ -30,6 +35,17 @@ export default function RevisionHistorySection({
 
     initNoteVersions();
   }, []);
+
+  async function downloadNoteAsWord(masterDelta: Delta, title: string) {
+    try {
+      const docx = await quillToWord.generateWord(masterDelta, {
+        exportAs: "blob",
+      });
+      saveAs(docx as Blob, `${title}.docx`);
+    } catch (error) {
+      console.log("Failed to generate word doc: ", error);
+    }
+  }
 
   if (!noteVersions)
     return <div className="container-wide">Note version not found.</div>;
@@ -82,6 +98,7 @@ export default function RevisionHistorySection({
               <th style={{ padding: "12px 16px" }}>Details</th>
               <th style={{ padding: "12px 16px" }}>Created At</th>
               <th style={{ padding: "12px 16px" }}>Action</th>
+              <th style={{ padding: "12px 16px" }}>Download</th>
             </tr>
           </thead>
           <tbody>
@@ -145,6 +162,14 @@ export default function RevisionHistorySection({
                       View
                     </button>
                   </td>
+                  <td>
+                    <button
+                      className="btn-secondary"
+                      onClick={() => downloadNoteAsWord(v.masterDelta, `${title}-${v.versionNumber}`)}
+                    >
+                      Export Docx
+                    </button>
+                  </td>
                 </tr>
               ))}
             {noteVersions.length < 2 && (
@@ -157,7 +182,7 @@ export default function RevisionHistorySection({
                     color: "#A0AEC0",
                   }}
                 >
-                  No previous versions found.
+                  No versions found.
                 </td>
               </tr>
             )}

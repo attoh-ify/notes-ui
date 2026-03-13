@@ -99,7 +99,7 @@ function NoteSettingsContent() {
           </p>
         </header>
 
-        <RevisionHistorySection noteId={noteId as string} />
+        <RevisionHistorySection noteId={noteId as string} title={note.title} />
 
         <CollaboratorsSection
           noteId={noteId as string}
@@ -107,11 +107,13 @@ function NoteSettingsContent() {
           accessRole={note.accessRole}
         />
 
-        {currentVisibility && (<VisibilitySection
-          noteId={noteId as string}
-          accessRole={note.accessRole}
-          visibility={currentVisibility}
-        />)}
+        {currentVisibility && (
+          <VisibilitySection
+            noteId={noteId as string}
+            accessRole={note.accessRole}
+            visibility={currentVisibility}
+          />
+        )}
 
         {isOwner.current && (
           <section
