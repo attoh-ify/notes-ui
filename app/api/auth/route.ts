@@ -3,7 +3,7 @@ import { NextResponse } from "next/server"
 export async function POST(request: Request) {
     try {
         const body = await request.json();
-        const token = await body.token
+        const token = body.token
         console.log("API Auth Route: Setting token cookie for middleware...");
 
         if (!token) {

@@ -13,26 +13,20 @@ import "quill/dist/quill.snow.css";
 import Delta from "quill-delta";
 import { saveAs } from "file-saver";
 import * as quillToWord from "quill-to-word";
-import { registerFormats } from "../../../../src/quillformats";
+import { registerFormats } from "../../../../src/lib/quillformats";
 import {
   CursorModule,
   CursorPayload,
   JoinResponse,
   messageType,
-  MutableOp,
   Note,
   ReviewInProgressResponse,
-  SuggestionDelete,
-  SuggestionFormat,
-  SuggestionInsert,
   TooltipState,
 } from "../../../../src/types";
 import { AuditTooltip } from "@/components/AuditTooltip";
-
-let _groupCounter = 0;
-function nextGroupId(): string {
-  return `g_${++_groupCounter}`;
-}
+import displayFormattedNote from "@/src/lib/attribution";
+import ExitReviewModal from "@/components/ExitReviewModal";
+import ReviewSidebarModal from "@/components/ReviewSidebarModal";
 
 function EditContent() {
   const { id: noteId } = useParams();
@@ -49,16 +43,17 @@ function EditContent() {
   const [reviewInProgress, setReviewInProgress] = useState<boolean>(false);
   const [revisionLog, setRevisionLog] = useState<TextOperation[] | null>(null);
   const [hasChanges, setHasChanges] = useState(false);
-  const [reviewComment, setReviewComment] = useState<string>("");
   const [undoStack, setUndoStack] = useState<Delta[]>([]);
   const [panel, setPanel] = useState<TooltipState | null>(null);
-  const [showExitConfirm, setShowExitConfirm] = useState(false);
+  const [showExitReviewModal, setShowExitReviewModal] = useState(false);
+  const [showReviewSidebarModal, setShowReviewSidebarModal] = useState(false);
 
   const editorRef = useRef<HTMLDivElement>(null);
   const quillRef = useRef<Quill | null>(null);
   const docStateRef = useRef<DocState | null>(null);
   const stompClientRef = useRef<CompatClient | null>(null);
   const sentOperationFlushed = useRef<boolean>(false);
+  const isOwner = useRef<boolean>(false);
 
   if (!docStateRef.current && user) {
     docStateRef.current = new DocState(user.email);
@@ -128,7 +123,9 @@ function EditContent() {
 
         quillRef.current.on("text-change", (delta, _oldDelta, source) => {
           if (source !== "user") return;
-          sendCursorChange(quillRef.current?.getSelection()?.index ?? 0);
+          const range = quillRef.current?.getSelection();
+          if (!range) return;
+          sendCursorChange(range.index ?? 0);
           docStateRef.current?.queueOperation(
             delta,
             async (operation: TextOperation) => {
@@ -144,6 +141,7 @@ function EditContent() {
           "selection-change",
           async (range, _oldRange, source) => {
             if (source !== "user") return;
+            if (!range) return;
             sendCursorChange(range.index ?? 0);
           },
         );
@@ -153,397 +151,22 @@ function EditContent() {
   }, [loading, reviewInProgress, note?.accessRole]);
 
   useEffect(() => {
-    if (revisionLog && quillRef.current) {
-      displayFormattedNote();
+    const quill = quillRef.current;
+
+    if (!revisionLog || !quill) return;
+
+    const finalOps = displayFormattedNote(quill, revisionLog);
+
+    if (finalOps !== null) {
+      setHasChanges(true);
+      quill.setContents(new Delta(finalOps), "api");
     }
-  }, [revisionLog]);
-
-  function displayFormattedNote() {
-    const quill = quillRef.current!;
-    const log = revisionLog!;
-
-    const baseOps = log.filter((op) => op.state !== "PENDING");
-    const pendingOps = log.filter((op) => op.state === "PENDING");
-
-    let baseDocument = new Delta();
-    for (const op of baseOps) {
-      baseDocument = baseDocument.compose(new Delta(op.delta.ops));
-    }
-
-    if (pendingOps.length === 0) {
-      quill.setContents(baseDocument, "api");
-      setHasChanges(false);
-      return false;
-    }
-    setHasChanges(true);
-
-    const ops: MutableOp[] = [];
-    for (const op of baseDocument.ops) {
-      if (typeof op.insert === "string") {
-        ops.push(
-          op.attributes
-            ? { insert: op.insert, attributes: { ...op.attributes } }
-            : { insert: op.insert },
-        );
-      }
-    }
-
-    function splitOpAt(index: number, offset: number): number {
-      if (offset === 0 || offset >= ops[index].insert.length) return index;
-
-      const op = ops[index];
-      const left: MutableOp = {
-        insert: op.insert.slice(0, offset),
-        ...(op.attributes ? { attributes: { ...op.attributes } } : {}),
-        ...(op._suggestionInsert
-          ? { _suggestionInsert: { ...op._suggestionInsert } }
-          : {}),
-        ...(op._suggestionFormat
-          ? { _suggestionFormat: { ...op._suggestionFormat } }
-          : {}),
-        ...(op._suggestionDelete
-          ? { _suggestionDelete: { ...op._suggestionDelete } }
-          : {}),
-      };
-
-      const right: MutableOp = {
-        insert: op.insert.slice(offset),
-        ...(op.attributes ? { attributes: { ...op.attributes } } : {}),
-        ...(op._suggestionInsert
-          ? { _suggestionInsert: { ...op._suggestionInsert } }
-          : {}),
-        ...(op._suggestionFormat
-          ? { _suggestionFormat: { ...op._suggestionFormat } }
-          : {}),
-        ...(op._suggestionDelete
-          ? { _suggestionDelete: { ...op._suggestionDelete } }
-          : {}),
-      };
-
-      ops.splice(index, 1, left, right);
-      return index + 1;
-    }
-
-    function findPos(logicalPos: number): {
-      opIndex: number;
-      intraOffset: number;
-    } {
-      let remaining = logicalPos;
-      for (let i = 0; i < ops.length; i++) {
-        const op = ops[i];
-        if (op._suggestionDelete) continue;
-        if (remaining === 0) return { opIndex: i, intraOffset: 0 };
-        if (remaining < op.insert.length)
-          return { opIndex: i, intraOffset: remaining };
-        remaining -= op.insert.length;
-      }
-
-      return { opIndex: ops.length, intraOffset: 0 };
-    }
-
-    function prevSuggestionInsert(
-      opIndex: number,
-      actorEmail: string,
-    ): SuggestionInsert | null {
-      for (let i = opIndex - 1; i >= 0; i--) {
-        const op = ops[i];
-        if (op.insert === "\n") return null;
-        if (op._suggestionInsert?.actorEmail === actorEmail)
-          return op._suggestionInsert;
-        return null;
-      }
-      return null;
-    }
-
-    function prevSuggestionDelete(
-      opIndex: number,
-      actorEmail: string,
-    ): SuggestionDelete | null {
-      for (let i = opIndex - 1; i >= 0; i--) {
-        const op = ops[i];
-        if (op._suggestionDelete?.actorEmail === actorEmail)
-          return op._suggestionDelete;
-        return null;
-      }
-      return null;
-    }
-
-    for (const textOp of pendingOps) {
-      const { actorEmail, createdAt } = textOp;
-      let logicalPos = 0;
-
-      let currentInsertGroup: SuggestionInsert | null = null;
-      let currentDeleteGroup: SuggestionDelete | null = null;
-      let currentFormatGroup: SuggestionFormat | null = null;
-
-      for (const component of textOp.delta.ops) {
-        if (typeof component.retain === "number" && !component.attributes) {
-          const isLast =
-            component === textOp.delta.ops[textOp.delta.ops.length - 1];
-          if (isLast) break;
-
-          currentInsertGroup = null;
-          currentDeleteGroup = null;
-          currentFormatGroup = null;
-          logicalPos += component.retain;
-        } else if (
-          typeof component.retain === "number" &&
-          component.attributes
-        ) {
-          currentInsertGroup = null;
-          currentDeleteGroup = null;
-
-          let { opIndex, intraOffset } = findPos(logicalPos);
-          if (intraOffset > 0) {
-            opIndex = splitOpAt(opIndex, intraOffset);
-          }
-
-          let remaining = component.retain;
-          let cursor = opIndex;
-
-          if (!currentFormatGroup) {
-            const prev = ops[opIndex - 1]?._suggestionFormat;
-            currentFormatGroup =
-              prev?.actorEmail === actorEmail
-                ? prev
-                : {
-                    groupId: nextGroupId(),
-                    actorEmail,
-                    createdAt,
-                    attributes: JSON.stringify(component.attributes),
-                  };
-          }
-
-          while (remaining > 0 && cursor < ops.length) {
-            const op = ops[cursor];
-            if (op.insert === "\n") {
-              // we don't format line breaks
-              cursor++;
-              continue;
-            }
-
-            if (op.insert.length > remaining) {
-              splitOpAt(cursor, remaining);
-            }
-
-            ops[cursor]._suggestionFormat = { ...currentFormatGroup };
-            remaining -= ops[cursor].insert.length;
-            cursor++;
-          }
-
-          logicalPos += component.retain;
-        } else if (typeof component.insert === "string") {
-          currentDeleteGroup = null;
-          currentFormatGroup = null;
-
-          const { opIndex, intraOffset } = findPos(logicalPos);
-          let insertAt = opIndex;
-          if (intraOffset > 0) {
-            insertAt = splitOpAt(opIndex, intraOffset);
-          }
-
-          if (!currentInsertGroup) {
-            const prev = prevSuggestionInsert(insertAt, actorEmail);
-            currentInsertGroup = prev ?? {
-              groupId: nextGroupId(),
-              actorEmail,
-              createdAt,
-            };
-          } else {
-            if (createdAt > currentInsertGroup.createdAt) {
-              currentInsertGroup.createdAt = createdAt;
-            }
-          }
-
-          const newOps: MutableOp[] = [];
-          const parts = component.insert.split("\n");
-
-          for (let i = 0; i < parts.length; i++) {
-            const part = parts[i];
-            if (part.length > 0) {
-              const attrs: Record<string, any> = {
-                ...(component.attributes ?? {}),
-              };
-              newOps.push({
-                insert: part,
-                attributes: attrs,
-                _suggestionInsert: { ...currentInsertGroup! },
-              });
-            }
-
-            if (i < parts.length - 1) {
-              newOps.push({ insert: "\n" });
-              currentInsertGroup = null;
-            }
-          }
-
-          ops.splice(insertAt, 0, ...newOps);
-        } else if (typeof component.delete === "number") {
-          currentInsertGroup = null;
-          currentFormatGroup = null;
-
-          const { opIndex, intraOffset } = findPos(logicalPos);
-          let cursor = opIndex;
-
-          if (intraOffset > 0) {
-            cursor = splitOpAt(opIndex, intraOffset);
-          }
-
-          if (!currentDeleteGroup) {
-            const prev = prevSuggestionDelete(cursor, actorEmail);
-            currentDeleteGroup = prev ?? {
-              groupId: nextGroupId(),
-              actorEmail,
-              createdAt,
-            };
-          }
-
-          let remaining = component.delete;
-          let advanceBy = component.delete;
-          while (remaining > 0 && cursor < ops.length) {
-            const op = ops[cursor];
-
-            if (op.insert === "\n") {
-              cursor++;
-              remaining--;
-              currentDeleteGroup = null;
-              continue;
-            }
-
-            // actually remove because it was a pending operation
-            if (op._suggestionInsert) {
-              if (op.insert.length <= remaining) {
-                remaining -= op.insert.length;
-              } else {
-                splitOpAt(cursor, remaining);
-                remaining = 0;
-              }
-              ops.splice(cursor, 1);
-              advanceBy -= op.insert.length;
-              continue;
-            }
-
-            if (op._suggestionDelete) {
-              // already marked as deleted so skip
-              cursor++;
-              continue;
-            }
-
-            // base text so mark as deleted - dont actually remove
-            if (op.insert.length > remaining) {
-              splitOpAt(cursor, remaining);
-            }
-
-            ops[cursor]._suggestionDelete = { ...currentDeleteGroup! };
-            remaining -= ops[cursor].insert.length;
-            cursor++;
-          }
-
-          logicalPos += advanceBy;
-        }
-      }
-    }
-
-    // ensure all ops with the same groupId have the same createdAt (the most recent one)
-    const groupLatest = new Map<string, string>();
-    for (const op of ops) {
-      const si = op._suggestionInsert;
-      if (si) {
-        const current = groupLatest.get(si.groupId);
-        if (!current || si.createdAt > current)
-          groupLatest.set(si.groupId, si.createdAt);
-      }
-    }
-
-    for (const op of ops) {
-      if (op._suggestionInsert) {
-        op._suggestionInsert.createdAt = groupLatest.get(
-          op._suggestionInsert.groupId,
-        )!;
-      }
-    }
-
-    function sameGroup(a: MutableOp, b: MutableOp): boolean {
-      const insertMatch =
-        (!a._suggestionInsert && !b._suggestionInsert) ||
-        (a._suggestionInsert &&
-          b._suggestionInsert &&
-          a._suggestionInsert.groupId === b._suggestionInsert.groupId);
-
-      const deleteMatch =
-        (!a._suggestionDelete && !b._suggestionDelete) ||
-        (a._suggestionDelete &&
-          b._suggestionDelete &&
-          a._suggestionDelete.groupId === b._suggestionDelete.groupId);
-
-      const formatMatch =
-        (!a._suggestionFormat && !b._suggestionFormat) ||
-        (a._suggestionFormat &&
-          b._suggestionFormat &&
-          a._suggestionFormat.groupId === b._suggestionFormat.groupId);
-
-      const attrMatch =
-        JSON.stringify(a.attributes) === JSON.stringify(b.attributes);
-
-      return !!insertMatch && !!deleteMatch && !!formatMatch && attrMatch;
-    }
-
-    // collapse ops in the same group
-    const collapsed: MutableOp[] = [];
-    for (const op of ops) {
-      const last = collapsed[collapsed.length - 1];
-      if (
-        last &&
-        op.insert !== "\n" &&
-        last.insert !== "\n" &&
-        sameGroup(op, last)
-      ) {
-        last.insert += op.insert;
-      } else {
-        collapsed.push({ ...op });
-      }
-    }
-
-    // create the actual ops
-    const finalOps = collapsed.map((op) => {
-      const attrs: Record<string, any> = { ...(op.attributes ?? {}) };
-
-      if (op._suggestionInsert) {
-        attrs["suggestion-insert"] = {
-          groupId: op._suggestionInsert.groupId,
-          actorEmail: op._suggestionInsert.actorEmail,
-          createdAt: op._suggestionInsert.createdAt,
-        };
-      }
-      if (op._suggestionFormat) {
-        try {
-          const fmtAttrs = JSON.parse(op._suggestionFormat.attributes ?? "{}");
-          Object.assign(attrs, fmtAttrs);
-        } catch {}
-
-        attrs["suggestion-format"] = {
-          groupId: op._suggestionFormat.groupId,
-          actorEmail: op._suggestionFormat.actorEmail,
-          createdAt: op._suggestionFormat.createdAt,
-          attributes: op._suggestionFormat.attributes,
-        };
-      }
-      if (op._suggestionDelete) {
-        attrs["suggestion-delete"] = {
-          groupId: op._suggestionDelete.groupId,
-          actorEmail: op._suggestionDelete.actorEmail,
-          createdAt: op._suggestionDelete.createdAt,
-        };
-      }
-
-      return Object.keys(attrs).length > 0
-        ? { insert: op.insert, attributes: attrs }
-        : { insert: op.insert };
-    });
-
-    quill.setContents(new Delta(finalOps), "api");
     quill.root.addEventListener("click", handleClick);
-  }
+
+    return () => {
+      quill.root.removeEventListener("click", handleClick);
+    };
+  }, [revisionLog]);
 
   useEffect(() => {
     async function loadNoteAndJoin() {
@@ -567,6 +190,10 @@ function EditContent() {
         docStateRef.current!.lastSyncedRevision = joinData.revision;
         docStateRef.current!.setDocument(new Delta(joinData.delta.ops || []));
         setCollaborators(joinData.collaborators);
+
+        if (noteData.accessRole === "OWNER") {
+          isOwner.current = true;
+        }
       } catch (err: any) {
         setError(err.message || "Failed to load note");
       } finally {
@@ -867,13 +494,14 @@ function EditContent() {
     }
   }
 
-  async function saveVersion() {
+  async function saveVersion(comment: string) {
     if (!quillRef.current) return;
     try {
-      await apiFetch(`notes/${noteId}/versions`, {
-        method: "POST",
-        body: JSON.stringify({ delta: quillRef.current.getContents() }),
-      });
+      // await apiFetch(`notes/${noteId}/versions`, {
+      //   method: "POST",
+      //   body: JSON.stringify({ delta: quillRef.current.getContents() }),
+      // });
+      setShowReviewSidebarModal(false);
       router.push(`/notes/${noteId}`);
     } catch (err: any) {
       setError(err.message || "Failed to save version");
@@ -890,6 +518,9 @@ function EditContent() {
       quillRef.current = null;
     }
     setReviewInProgress(payload.state);
+    if (isOwner.current) {
+      setShowReviewSidebarModal(true);
+    }
   }
 
   async function downloadNoteAsWord() {
@@ -907,11 +538,10 @@ function EditContent() {
   async function handleExitReview() {
     try {
       await apiFetch(`notes/${noteId}/review/exit`, {
-        method: "GET"
+        method: "GET",
       });
       setRevisionLog(null);
       setHasChanges(false);
-      setReviewComment("");
       router.refresh();
     } catch (err) {
       console.error("Failed to exit review:", err);
@@ -923,10 +553,12 @@ function EditContent() {
     router.push(`/notes/${noteId}/edit/note-setting`);
   }
 
+  async function saveReviewChanges() {}
+
   if (loadingUser)
     return <div className="container-wide">Checking session...</div>;
   if (!user) {
-    router.push("login");
+    router.push("/login");
     return null;
   }
   if (loading) return <div className="container-wide">Loading note...</div>;
@@ -1028,7 +660,7 @@ function EditContent() {
                 View
               </button>
             )}
-            {note.accessRole === "OWNER" && !reviewInProgress && (
+            {isOwner.current && !reviewInProgress && (
               <button className="btn-outline" onClick={handleReviewNote}>
                 Review
               </button>
@@ -1038,7 +670,7 @@ function EditContent() {
                 Save changes
               </button>
             )}
-            {reviewInProgress && note.accessRole === "OWNER" && (
+            {reviewInProgress && isOwner.current && (
               <button
                 className="btn-secondary"
                 onClick={undo}
@@ -1087,7 +719,7 @@ function EditContent() {
         </div>
       )}
 
-      {reviewInProgress && note.accessRole !== "OWNER" ? (
+      {reviewInProgress && !isOwner.current ? (
         <div
           style={{
             minHeight: "500px",
@@ -1103,15 +735,20 @@ function EditContent() {
           }}
         >
           <div style={{ fontSize: "2.5rem", marginBottom: "1rem" }}>🔒</div>
-          <h3 style={{ color: "var(--text)", margin: "0 0 0.5rem 0" }}>Editor Locked</h3>
-          <p style={{ color: "var(--text-muted)", maxWidth: "400px", margin: 0 }}>
-            The owner is currently reviewing proposed changes. The editor will be available once the review is complete.
+          <h3 style={{ color: "var(--text)", margin: "0 0 0.5rem 0" }}>
+            Editor Locked
+          </h3>
+          <p
+            style={{ color: "var(--text-muted)", maxWidth: "400px", margin: 0 }}
+          >
+            The owner is currently reviewing proposed changes. The editor will
+            be available once the review is complete.
           </p>
         </div>
       ) : (
         <>
           {/* No-changes banner — shown when review is done */}
-          {reviewInProgress && note.accessRole === "OWNER" && !hasChanges && (
+          {reviewInProgress && isOwner.current && !hasChanges && (
             <div
               style={{
                 display: "flex",
@@ -1128,73 +765,34 @@ function EditContent() {
               }}
             >
               <div style={{ fontSize: "2.5rem" }}>✅</div>
-              <h3 style={{ color: "var(--text)", margin: 0 }}>No pending changes</h3>
-              <p style={{ color: "var(--text-muted)", maxWidth: "400px", margin: 0 }}>
-                All proposed changes have been reviewed. Exit review mode when ready.
+              <h3 style={{ color: "var(--text)", margin: 0 }}>
+                No pending changes
+              </h3>
+              <p
+                style={{
+                  color: "var(--text-muted)",
+                  maxWidth: "400px",
+                  margin: 0,
+                }}
+              >
+                All proposed changes have been reviewed. Exit review mode when
+                ready.
               </p>
             </div>
           )}
- 
-          <div style={{ display: "flex", gap: "1rem", alignItems: "flex-start" }}>
- 
+
+          <div
+            style={{ display: "flex", gap: "1rem", alignItems: "flex-start" }}
+          >
             {/* Comment + action sidebar — only in review mode for owner */}
-            {reviewInProgress && note.accessRole === "OWNER" && (
-              <div
-                style={{
-                  width: "200px",
-                  flexShrink: 0,
-                  border: "1px solid var(--border)",
-                  borderRadius: "8px",
-                  padding: "0.875rem",
-                  backgroundColor: "#fff",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "0.625rem",
-                  position: "sticky",
-                  top: "1rem",
-                }}
-              >
-                <span style={{ fontSize: "0.8rem", fontWeight: 600, color: "var(--text)" }}>
-                  Review Note
-                </span>
-                <textarea
-                  value={reviewComment}
-                  onChange={(e) => setReviewComment(e.target.value)}
-                  placeholder="Optional summary..."
-                  rows={4}
-                  style={{
-                    width: "100%",
-                    padding: "0.5rem",
-                    border: "1px solid var(--border)",
-                    borderRadius: "6px",
-                    fontSize: "0.8rem",
-                    resize: "vertical",
-                    fontFamily: "inherit",
-                    color: "var(--text)",
-                    backgroundColor: "#fafafa",
-                    boxSizing: "border-box",
-                  }}
-                />
-                {hasChanges && (
-                  <button
-                    className="btn-primary"
-                    onClick={saveVersion}
-                    style={{ fontSize: "0.8rem", padding: "0.4rem 0.75rem" }}
-                  >
-                    Create Version
-                  </button>
-                )}
-                <button
-                  className="btn-secondary"
-                  onClick={() => setShowExitConfirm(true)}
-                  style={{ fontSize: "0.8rem", padding: "0.4rem 0.75rem" }}
-                >
-                  Exit Review
-                </button>
-              </div>
+            {showReviewSidebarModal && isOwner.current && (
+              <ReviewSidebarModal
+                open={showReviewSidebarModal}
+                onClose={() => setShowReviewSidebarModal(false)}
+                onSave={saveVersion}
+              />
             )}
- 
-            {/* Editor — always mounted so Quill always has a stable DOM node */}
+
             <div
               style={{
                 flex: 1,
@@ -1204,10 +802,15 @@ function EditContent() {
                 borderRadius: "8px",
                 padding: "2px",
                 transition: "border 0.2s ease",
-                border: reviewInProgress ? "2px solid #fcd34b" : "1px solid var(--border)",
+                border: reviewInProgress
+                  ? "2px solid #fcd34b"
+                  : "1px solid var(--border)",
                 backgroundColor: reviewInProgress ? "#fafafa" : "#fcfcfc",
                 // Hide (but keep mounted) when there are no changes and we've shown the banner
-                display: (reviewInProgress && note.accessRole === "OWNER" && !hasChanges) ? "none" : "block",
+                display:
+                  reviewInProgress && note.accessRole === "OWNER" && !hasChanges
+                    ? "none"
+                    : "block",
               }}
             >
               <div
@@ -1224,77 +827,28 @@ function EditContent() {
               />
             </div>
           </div>
- 
-          {/* Exit review confirmation modal */}
-          {showExitConfirm && (
-            <div
-              style={{
-                position: "fixed",
-                inset: 0,
-                backgroundColor: "rgba(0,0,0,0.4)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                zIndex: 1000,
-              }}
-              onClick={() => setShowExitConfirm(false)}
-            >
-              <div
-                style={{
-                  backgroundColor: "#fff",
-                  borderRadius: "10px",
-                  padding: "1.5rem",
-                  maxWidth: "380px",
-                  width: "90%",
-                  boxShadow: "0 8px 32px rgba(0,0,0,0.18)",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "1rem",
-                }}
-                onClick={(e) => e.stopPropagation()}
-              >
-                <h3 style={{ margin: 0, fontSize: "1rem", color: "var(--text)" }}>
-                  Exit Review
-                </h3>
-                <p style={{ margin: 0, fontSize: "0.875rem", color: "var(--text-muted)" }}>
-                  What would you like to do with the changes you've reviewed so far?
-                </p>
-                <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-                  <button
-                    className="btn-primary"
-                    onClick={() => {
-                      setShowExitConfirm(false);
-                      saveVersion();
-                    }}
-                  >
-                    Save changes &amp; exit
-                  </button>
-                  <button
-                    className="btn-secondary"
-                    onClick={() => {
-                      setShowExitConfirm(false);
-                      handleExitReview();
-                    }}
-                  >
-                    Exit without saving
-                  </button>
-                  <button
-                    className="btn-outline"
-                    onClick={() => setShowExitConfirm(false)}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            </div>
+
+          {showExitReviewModal && (
+            <ExitReviewModal
+              open={showExitReviewModal}
+              onClose={() => setShowExitReviewModal(false)}
+              onSave={saveReviewChanges}
+              exitReview={handleExitReview}
+            />
           )}
         </>
       )}
- 
-      <footer style={{ marginTop: "1rem", fontSize: "0.75rem", color: "var(--text-muted)" }}>
+
+      <footer
+        style={{
+          marginTop: "1rem",
+          fontSize: "0.75rem",
+          color: "var(--text-muted)",
+        }}
+      >
         Created at: {new Date(note.createdAt).toLocaleString()}
       </footer>
- 
+
       {panel && (
         <AuditTooltip
           tooltip={panel}

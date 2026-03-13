@@ -1,7 +1,7 @@
 "use client";
 
-import { Note } from "@/app/notes/page";
 import { apiFetch } from "@/src/lib/api";
+import { Note } from "@/src/types";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
