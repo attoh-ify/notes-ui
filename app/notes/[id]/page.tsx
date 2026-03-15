@@ -3,20 +3,11 @@
 import { apiFetch } from "@/src/lib/api";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState, Suspense, useRef } from "react";
-import { Note } from "../page";
 import { useAuth } from "@/src/context/AuthContext";
-import Delta from "quill-delta";
 import type Quill from "quill";
 import "quill/dist/quill.snow.css";
+import { Note, NoteVersion } from "@/src/types";
 
-export interface NoteVersion {
-  id: string;
-  masterDelta: Delta;
-  revision: number;
-  createdBy: string;
-  versionNumber: number;
-  createdAt: string;
-}
 
 function ViewNoteContent() {
   const { id: noteId } = useParams();
@@ -38,7 +29,7 @@ function ViewNoteContent() {
         setNote(noteData);
 
         const noteVersionData = await apiFetch<NoteVersion>(
-          `notes/${noteData.id}/versions/${noteData.currentNoteVersion}`,
+          `notes/${noteData.id}/versions/${noteData.currentNoteVersionNumber}`,
           { method: "GET" },
         );
         setNoteVersion(noteVersionData);

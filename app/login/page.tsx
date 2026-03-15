@@ -2,13 +2,10 @@
 
 import { useAuth } from "@/src/context/AuthContext";
 import { apiFetch } from "@/src/lib/api";
+import { LoginResponse } from "@/src/types";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-interface LoginResponse {
-  userId: string;
-  token: string;
-}
 
 export default function LoginPage() {
   const { setUser } = useAuth();
