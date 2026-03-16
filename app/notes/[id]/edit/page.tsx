@@ -25,6 +25,13 @@ import { AuditTooltip } from "@/components/AuditTooltip";
 import displayFormattedNote from "@/src/lib/attribution";
 import ExitReviewModal from "@/components/ExitReviewModal";
 import ReviewSidebarModal from "@/components/ReviewSidebarModal";
+import { before } from "node:test";
+
+type ReviewChoice = "ACCEPT" | "REJECT";
+interface UndoEntry {
+  type: ReviewChoice;
+  delta: Delta;
+}
 
 function EditContent() {
   const { id: noteId } = useParams();
@@ -41,7 +48,8 @@ function EditContent() {
   const [reviewInProgress, setReviewInProgress] = useState<boolean>(false);
   const [revisionLog, setRevisionLog] = useState<TextOperation[] | null>(null);
   const [hasChanges, setHasChanges] = useState(false);
-  const [undoStack, setUndoStack] = useState<Delta[]>([]);
+  const [undoStack, setUndoStack] = useState<UndoEntry[]>([]);
+  const [reviewChangeStack, setReviewChangeStack] = useState<Delta[]>([]);
   const [panel, setPanel] = useState<TooltipState | null>(null);
   const [showExitReviewModal, setShowExitReviewModal] = useState(false);
   const [showReviewSidebarModal, setShowReviewSidebarModal] = useState(false);
@@ -300,19 +308,42 @@ function EditContent() {
     });
   }, []);
 
-  async function snapshotAndApply(fn: () => void) {
+  function stripSuggestionAttributes(delta: Delta) {
+    const ops = delta.ops.map(op => {
+      if (!op.attributes) return op;
+
+      const { ["suggestion-format"]: _, ...attrs } = op.attributes;
+
+      return {
+        ...op,
+        attributes: Object.keys(attrs).length ? attrs : undefined
+      }
+    })
+
+    return new Delta(ops);
+  }
+
+  async function snapshotAndApply(fn: () => void, type: ReviewChoice) {
     const before = quillRef.current!.getContents();
     fn();
     const after = quillRef.current!.getContents();
-    const inverseDelta = after.diff(before);
 
-    setUndoStack((prev) => [...prev, inverseDelta]);
+    const undo = after.diff(before);
+    if (type === "REJECT") {
+      const change = stripSuggestionAttributes(before.diff(after));
+      setReviewChangeStack((prev) => [...prev, change])
+    }
+
+    setUndoStack((prev) => [...prev, { type, delta: undo }]);
   }
 
   async function undo() {
     if (undoStack.length === 0) return;
-    const inversDelta = undoStack[undoStack.length - 1];
-    quillRef.current!.updateContents(inversDelta, "api");
+    const inverseEntry = undoStack[undoStack.length - 1];
+    quillRef.current!.updateContents(inverseEntry.delta, "api");
+    if (undoStack[undoStack.length - 1].type === "REJECT") {
+      setReviewChangeStack((prev) => prev.splice(0, -1));
+    }
     setUndoStack((prev) => prev.slice(0, -1));
   }
 
@@ -358,7 +389,7 @@ function EditContent() {
           "api",
         );
       }
-    });
+    }, "ACCEPT");
     setPanel(null);
   }
 
@@ -423,7 +454,7 @@ function EditContent() {
           );
         }
       }
-    });
+    }, "REJECT");
     setPanel(null);
   }
 
@@ -532,6 +563,8 @@ function EditContent() {
       setReviewInProgress(false);
       setShowReviewSidebarModal(false);
       setPanel(null);
+      setUndoStack([]);
+      setReviewChangeStack([]);
 
       await loadNoteAndJoin();
     } catch (err) {
@@ -546,29 +579,26 @@ function EditContent() {
 
   async function saveReviewChanges() {
     try {
-      handleExitReview();
-      await apiFetch(`notes/${noteId}/review/exit`, {
-        method: "GET",
-      });
-      let reviewChanges: TextOperation[] = [];
-      for (const delta of undoStack) {
-        reviewChanges.push(
-          new TextOperation(
-            delta,
-            user!.email,
-            0,
-            OperationState.INVERSE,
-            new Date().toISOString().slice(0, 19),
-          ),
-        );
+      
+      let delta = reviewChangeStack[0];
+      for (let i = 1; i < reviewChangeStack.length; i++) {
+        delta = delta.compose(reviewChangeStack[i]);
       }
-
+      
+      let reviewChange = new TextOperation(
+        delta,
+        user!.email,
+        0,
+        OperationState.INVERSE,
+        new Date().toISOString().slice(0, 19),
+      );
+      
       await apiFetch(`notes/${noteId}/review`, {
         method: "POST",
-        body: JSON.stringify(reviewChanges),
+        body: JSON.stringify(reviewChange),
       });
-
-      setUndoStack([]);
+      
+      handleExitReview();
     } catch (err) {
       console.error("Failed to save changes:", err);
     }
