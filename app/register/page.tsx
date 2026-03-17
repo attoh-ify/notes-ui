@@ -8,13 +8,13 @@ export default function RegisterPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isLoading, setIsloading] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setError(null);
-    setLoading(true);
+    setErrorMessage(null);
+    setIsloading(true);
 
     try {
       await apiFetch("users/register", {
@@ -25,17 +25,29 @@ export default function RegisterPage() {
       setPassword("");
       router.push("/login");
     } catch (err: any) {
-      setError(err.message || "User registration failed failed");
+      setErrorMessage(err.message || "User registration failed failed");
     } finally {
-      setLoading(false);
+      setIsloading(false);
     }
   }
 
   return (
     <main className="container-center">
-      <h1 style={{ textAlign: "center", marginBottom: "1.5rem", fontSize: "1.5rem" }}>Sign Up</h1>
+      <h1
+        style={{
+          textAlign: "center",
+          marginBottom: "1.5rem",
+          fontSize: "1.5rem",
+        }}
+      >
+        Sign Up
+      </h1>
 
-      <form className="flex-col-gap" onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "1rem"}}>
+      <form
+        className="flex-col-gap"
+        onSubmit={handleSubmit}
+        style={{ display: "flex", flexDirection: "column", gap: "1rem" }}
+      >
         <input
           className="input-field"
           type="email"
@@ -52,20 +64,37 @@ export default function RegisterPage() {
           onChange={(e) => setPassword(e.target.value)}
           required
         />
-        <button
-          className="btn-primary"
-          type="submit"
-          disabled={loading}
-        >
-          {loading ? "Registering..." : "Sign up"}
+        <button className="btn-primary" type="submit" disabled={isLoading}>
+          {isLoading ? "Registering..." : "Sign up"}
         </button>
       </form>
 
-      {error &&
-        <p style={{ color: "#ef4444", textAlign: "center", fontSize: "0.875rem", marginTop: "1rem" }}>{error}</p>
-      }
+      {errorMessage && (
+        <p
+          style={{
+            color: "#ef4444",
+            textAlign: "center",
+            fontSize: "0.875rem",
+            marginTop: "1rem",
+          }}
+        >
+          {errorMessage}
+        </p>
+      )}
 
-      <p style={{ marginTop: "1.5rem", textAlign: "center", fontSize: "0.875rem", color: "var(--text-muted)" }}>Already have an Account? <a href="/login"style={{ color: "var(--primary)"}}>Sign in</a></p>
+      <p
+        style={{
+          marginTop: "1.5rem",
+          textAlign: "center",
+          fontSize: "0.875rem",
+          color: "var(--text-muted)",
+        }}
+      >
+        Already have an Account?{" "}
+        <a href="/login" style={{ color: "var(--primary)" }}>
+          Sign in
+        </a>
+      </p>
     </main>
   );
 }

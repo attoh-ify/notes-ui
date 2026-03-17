@@ -25,11 +25,10 @@ import { AuditTooltip } from "@/components/AuditTooltip";
 import displayFormattedNote from "@/src/lib/attribution";
 import ExitReviewModal from "@/components/ExitReviewModal";
 import ReviewSidebarModal from "@/components/ReviewSidebarModal";
-import { before } from "node:test";
 
-type ReviewChoice = "ACCEPT" | "REJECT";
-interface UndoEntry {
-  type: ReviewChoice;
+type ReviewAction = "ACCEPT" | "REJECT";
+interface ReviewEntry {
+  type: ReviewAction;
   delta: Delta;
 }
 
@@ -42,24 +41,27 @@ function EditContent() {
   const [collaborators, setCollaborators] = useState<{
     [email: string]: string;
   }>({});
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsloading] = useState(true);
+  const [errorMessage, setErrorMessageMessage] = useState<string | null>(null);
 
-  const [reviewInProgress, setReviewInProgress] = useState<boolean>(false);
+  const [isReviewing, setIsReviewing] = useState<boolean>(false);
   const [revisionLog, setRevisionLog] = useState<TextOperation[] | null>(null);
-  const [hasChanges, setHasChanges] = useState(false);
-  const [undoStack, setUndoStack] = useState<UndoEntry[]>([]);
-  const [reviewChangeStack, setReviewChangeStack] = useState<Delta[]>([]);
-  const [panel, setPanel] = useState<TooltipState | null>(null);
+  const [activeSuggestion, setActiveSuggestion] = useState<TooltipState | null>(
+    null,
+  );
   const [showExitReviewModal, setShowExitReviewModal] = useState(false);
   const [showReviewSidebarModal, setShowReviewSidebarModal] = useState(false);
+  const [hasPendingSuggestions, setHasPendingSuggestions] = useState(false);
 
   const editorRef = useRef<HTMLDivElement>(null);
   const quillRef = useRef<Quill | null>(null);
   const docStateRef = useRef<DocState | null>(null);
   const stompClientRef = useRef<CompatClient | null>(null);
-  const sentOperationFlushed = useRef<boolean>(false);
+  const isSyncComplete = useRef<boolean>(false);
   const isOwner = useRef<boolean>(false);
+  const reviewHistory = useRef<ReviewEntry[]>([]);
+  const rejectedChanges = useRef<Delta[]>([]);
+  const acceptedOps = useRef<string[][]>([]);
 
   if (!docStateRef.current && user) {
     docStateRef.current = new DocState(user.email);
@@ -71,18 +73,18 @@ function EditContent() {
     quill.root.querySelectorAll(".active").forEach((el) => {
       el.classList.remove("active");
     });
-    if (panel?.groupId) {
+    if (activeSuggestion?.groupId) {
       quill.root
-        .querySelectorAll(`[data-group-id="${panel.groupId}"]`)
+        .querySelectorAll(`[data-group-id="${activeSuggestion.groupId}"]`)
         .forEach((el) => el.classList.add("active"));
     }
-  }, [panel]);
+  }, [activeSuggestion]);
 
   useEffect(() => {
-    const shouldShowEditor = !reviewInProgress || note?.accessRole === "OWNER";
+    const shouldShowEditor = !isReviewing || note?.accessRole === "OWNER";
 
     if (
-      !loading &&
+      !isLoading &&
       editorRef.current &&
       !quillRef.current &&
       shouldShowEditor
@@ -96,7 +98,7 @@ function EditContent() {
 
         quillRef.current = new QuillModule(editorRef.current!, {
           theme: "snow",
-          readOnly: reviewInProgress,
+          readOnly: isReviewing,
           modules: {
             toolbar: [
               "bold",
@@ -135,10 +137,10 @@ function EditContent() {
           docStateRef.current?.queueOperation(
             delta,
             async (operation: TextOperation) => {
-              sentOperationFlushed.current = false;
+              isSyncComplete.current = false;
               if (!stompClientRef.current?.connected) return;
               await sendOperationToServer(operation);
-              sentOperationFlushed.current = true;
+              isSyncComplete.current = true;
             },
           );
         });
@@ -154,20 +156,23 @@ function EditContent() {
       };
       initQuill();
     }
-  }, [loading, reviewInProgress, note?.accessRole]);
+  }, [isLoading, isReviewing, note?.accessRole]);
 
   useEffect(() => {
     const quill = quillRef.current;
 
     if (!revisionLog || !quill) return;
 
-    const finalOps = displayFormattedNote(quill, revisionLog);
+    const baseOps = revisionLog.filter((op) => op.state === "COMMITTED");
+    const pendingOps = revisionLog.filter((op) => op.state === "PENDING");
 
-    if (finalOps !== null) {
-      setHasChanges(true);
-      quill.setContents(new Delta(finalOps), "api");
+    const applyDelta = displayFormattedNote(quill, baseOps, pendingOps);
+
+    if (applyDelta !== null) {
+      setHasPendingSuggestions(true);
+      quill.updateContents(applyDelta, "api");
+      quill.root.addEventListener("click", handleClick);
     }
-    quill.root.addEventListener("click", handleClick);
 
     return () => {
       quill.root.removeEventListener("click", handleClick);
@@ -189,7 +194,7 @@ function EditContent() {
         method: "GET",
       });
       if (joinData === null) {
-        setReviewInProgress(true);
+        setIsReviewing(true);
         return;
       }
       docStateRef.current!.lastSyncedRevision = joinData.revision;
@@ -200,9 +205,9 @@ function EditContent() {
         isOwner.current = true;
       }
     } catch (err: any) {
-      setError(err.message || "Failed to load note");
+      setErrorMessageMessage(err.message || "Failed to load note");
     } finally {
-      setLoading(false);
+      setIsloading(false);
     }
   }, [noteId, user, router]);
 
@@ -211,7 +216,7 @@ function EditContent() {
   }, [loadNoteAndJoin]);
 
   useEffect(() => {
-    if (!noteId || loading) return;
+    if (!noteId || isLoading) return;
     const client = Stomp.over(
       () => new SockJS(`${API_BASE_URL}/relay?noteId=${noteId}`),
     );
@@ -229,18 +234,18 @@ function EditContent() {
         if (type === messageType.REVIEW_IN_PROGRESS)
           handleReviewInProgress(payload);
       });
-      if (docStateRef.current?.sentOperation && !sentOperationFlushed.current) {
+      if (docStateRef.current?.sentOperation && !isSyncComplete.current) {
         sendOperationToServer(docStateRef.current.sentOperation);
-        sentOperationFlushed.current = true;
+        isSyncComplete.current = true;
       }
     });
     return () => {
       if (client.active) client.disconnect();
     };
-  }, [noteId, loading]);
+  }, [noteId, isLoading]);
 
   useEffect(() => {
-    if (!user || !reviewInProgress) return;
+    if (!user || !isReviewing) return;
     async function fetchData() {
       try {
         const noteData = await apiFetch<Note>(`notes/${noteId}`, {
@@ -253,13 +258,13 @@ function EditContent() {
         );
         setRevisionLog(logData);
       } catch (err: any) {
-        setError(err.message || "Failed to fetch note data");
+        setErrorMessageMessage(err.message || "Failed to fetch note data");
       } finally {
-        setLoading(false);
+        setIsloading(false);
       }
     }
     fetchData();
-  }, [user, reviewInProgress]);
+  }, [user, isReviewing]);
 
   useEffect(() => {
     const quill = quillRef.current;
@@ -267,28 +272,30 @@ function EditContent() {
     const toolbar = editorRef.current?.previousSibling as HTMLElement;
     const isToolbar = toolbar?.classList.contains("ql-toolbar");
 
-    if (reviewInProgress) {
+    if (isReviewing) {
       quill.enable(false);
       if (isToolbar) toolbar.style.display = "none";
     } else {
       quill.enable(true);
       if (isToolbar) toolbar.style.display = "block";
     }
-  }, [reviewInProgress, loading]);
+  }, [isReviewing, isLoading]);
 
   const handleClick = useCallback((e: Event) => {
-    const el = (e as MouseEvent).target as HTMLElement;
-    const suggestion = el.closest(
+    const targetElement = (e as MouseEvent).target as HTMLElement;
+    const suggestionNode = targetElement.closest(
       "[data-suggestion-type]",
     ) as HTMLElement | null;
 
-    if (!suggestion) {
-      setPanel(null);
+    if (!suggestionNode) {
+      setActiveSuggestion(null);
       return;
     }
 
-    const parentInsert = suggestion.closest('[data-suggestion-type="insert"]');
-    let effectiveSuggestion = parentInsert || suggestion;
+    const parentInsert = suggestionNode.closest(
+      '[data-suggestion-type="insert"]',
+    );
+    let effectiveSuggestion = parentInsert || suggestionNode;
 
     const type = effectiveSuggestion.getAttribute(
       "data-suggestion-type",
@@ -296,55 +303,67 @@ function EditContent() {
     const groupId = effectiveSuggestion.getAttribute("data-group-id")!;
     const actorEmail = effectiveSuggestion.getAttribute("data-actor-email")!;
     const createdAt = effectiveSuggestion.getAttribute("data-created-at")!;
+    const opIds = JSON.parse(effectiveSuggestion.getAttribute("data-opIds")!);
 
-    setPanel((prev) => {
+    setActiveSuggestion((prev) => {
       if (prev?.groupId === groupId) return null;
       return {
         groupId,
         type,
         actorEmail,
         createdAt,
+        opIds,
       };
     });
   }, []);
 
   function stripSuggestionAttributes(delta: Delta) {
-    const ops = delta.ops.map(op => {
+    const ops = delta.ops.map((op) => {
       if (!op.attributes) return op;
 
-      const { ["suggestion-format"]: _, ...attrs } = op.attributes;
+      const {
+        ["suggestion-format"]: _,
+        ["suggestion-delete"]: __,
+        ["suggestion-insert"]: ___,
+        ...attrs
+      } = op.attributes;
 
       return {
         ...op,
-        attributes: Object.keys(attrs).length ? attrs : undefined
-      }
-    })
+        attributes: Object.keys(attrs).length ? attrs : undefined,
+      };
+    });
 
     return new Delta(ops);
   }
 
-  async function snapshotAndApply(fn: () => void, type: ReviewChoice) {
-    const before = quillRef.current!.getContents();
-    fn();
-    const after = quillRef.current!.getContents();
+  function snapshotAndApply(applyChange: () => void, type: ReviewAction) {
+    const initialState = quillRef.current!.getContents();
+    applyChange();
+    const finalState = quillRef.current!.getContents();
 
-    const undo = after.diff(before);
+    const undo = finalState.diff(initialState);
     if (type === "REJECT") {
-      const change = stripSuggestionAttributes(before.diff(after));
-      setReviewChangeStack((prev) => [...prev, change])
+      const change = stripSuggestionAttributes(initialState.diff(finalState));
+      rejectedChanges.current.push(change);
     }
 
-    setUndoStack((prev) => [...prev, { type, delta: undo }]);
+    reviewHistory.current.push({ type, delta: undo });
   }
 
   async function undo() {
-    if (undoStack.length === 0) return;
-    const inverseEntry = undoStack[undoStack.length - 1];
+    if (reviewHistory.current.length === 0) return;
+    const inverseEntry =
+      reviewHistory.current[reviewHistory.current.length - 1];
     quillRef.current!.updateContents(inverseEntry.delta, "api");
-    if (undoStack[undoStack.length - 1].type === "REJECT") {
-      setReviewChangeStack((prev) => prev.splice(0, -1));
+
+    const action = reviewHistory.current[reviewHistory.current.length - 1].type;
+    if (action === "REJECT") {
+      rejectedChanges.current.pop();
+    } else if (action === "ACCEPT") {
+      acceptedOps.current.pop();
     }
-    setUndoStack((prev) => prev.slice(0, -1));
+    reviewHistory.current.pop();
   }
 
   function getGroupRange(
@@ -366,10 +385,17 @@ function EditContent() {
     };
   }
 
-  function acceptChange(groupId: string, type: "insert" | "delete" | "format") {
+  function acceptChange(
+    groupId: string,
+    type: "insert" | "delete" | "format",
+    opIds: string[],
+  ) {
     snapshotAndApply(() => {
       const quill = quillRef.current!;
       const range = getGroupRange(groupId);
+
+      acceptedOps.current.push(opIds);
+
       if (!range) return;
 
       if (type === "insert") {
@@ -390,7 +416,7 @@ function EditContent() {
         );
       }
     }, "ACCEPT");
-    setPanel(null);
+    setActiveSuggestion(null);
   }
 
   function rejectChange(groupId: string, type: "insert" | "delete" | "format") {
@@ -455,11 +481,11 @@ function EditContent() {
         }
       }
     }, "REJECT");
-    setPanel(null);
+    setActiveSuggestion(null);
   }
 
   async function sendCursorChange(position: number) {
-    if (reviewInProgress) return;
+    if (isReviewing) return;
     await apiFetch(`notes/${noteId}/cursor`, {
       method: "POST",
       body: JSON.stringify({ position }),
@@ -467,7 +493,7 @@ function EditContent() {
   }
 
   function handleCursorChange(payload: CursorPayload) {
-    if (reviewInProgress || payload.actorEmail === user!.email) return;
+    if (isReviewing || payload.actorEmail === user!.email) return;
     const cursor = quillRef.current!.getModule("cursors") as CursorModule;
     cursor.createCursor(
       payload.actorEmail,
@@ -485,11 +511,12 @@ function EditContent() {
     const docState = docStateRef.current!;
     if (actorEmail === user!.email) {
       docState.acknowledgeOperation(revision, (pending) => {
-        sentOperationFlushed.current = false;
+        isSyncComplete.current = false;
         if (pending) sendOperationToServer(pending);
       });
     } else {
       const deltaForQuill = docState.applyRemoteOperation({
+        opId: "",
         delta: new Delta(delta.ops || []),
         actorEmail,
         revision,
@@ -501,11 +528,12 @@ function EditContent() {
   }
 
   async function sendOperationToServer(operation: TextOperation) {
-    if (reviewInProgress) return;
+    if (isReviewing) return;
     await apiFetch(`notes/${noteId}/enqueue`, {
       method: "POST",
       body: JSON.stringify(
         new TextOperation(
+          "",
           operation.delta,
           user!.email,
           operation.revision,
@@ -520,20 +548,20 @@ function EditContent() {
     try {
       await apiFetch(`notes/${noteId}/save`, { method: "POST" });
     } catch (err: any) {
-      setError(err.message || "Failed to save note");
+      setErrorMessageMessage(err.message || "Failed to save note");
     }
   }
 
   async function saveVersion(comment: string) {
     if (!quillRef.current) return;
     try {
-      saveReviewChanges();
+      await saveReviewChanges();
       await apiFetch(`notes/${noteId}/versions`, {
         method: "POST",
         body: JSON.stringify({ comment }),
       });
     } catch (err: any) {
-      setError(err.message || "Failed to save version");
+      setErrorMessageMessage(err.message || "Failed to save version");
     }
   }
 
@@ -546,8 +574,8 @@ function EditContent() {
     if (payload.state === false && note?.ownerEmail !== user?.email) {
       quillRef.current = null;
     }
-    setReviewInProgress(payload.state);
-    if (isOwner.current) {
+    setIsReviewing(payload.state);
+    if (isOwner.current && payload.state === true) {
       setShowReviewSidebarModal(true);
     }
   }
@@ -559,12 +587,12 @@ function EditContent() {
       });
 
       setRevisionLog(null);
-      setHasChanges(false);
-      setReviewInProgress(false);
+      setHasPendingSuggestions(false);
+      setIsReviewing(false);
       setShowReviewSidebarModal(false);
-      setPanel(null);
-      setUndoStack([]);
-      setReviewChangeStack([]);
+      setActiveSuggestion(null);
+      reviewHistory.current = [];
+      rejectedChanges.current = [];
 
       await loadNoteAndJoin();
     } catch (err) {
@@ -579,25 +607,27 @@ function EditContent() {
 
   async function saveReviewChanges() {
     try {
-      
-      let delta = reviewChangeStack[0];
-      for (let i = 1; i < reviewChangeStack.length; i++) {
-        delta = delta.compose(reviewChangeStack[i]);
-      }
-      
-      let reviewChange = new TextOperation(
+      const delta = rejectedChanges.current.length > 0 ? rejectedChanges.current.reduce((acc, d) => acc.compose(d)) : new Delta();
+
+      let rejectedChange = new TextOperation(
+        "",
         delta,
         user!.email,
         0,
-        OperationState.INVERSE,
+        OperationState.PENDING,
         new Date().toISOString().slice(0, 19),
       );
-      
+
+      let acceptedOpIds = [...new Set(acceptedOps.current.flat())];
+
       await apiFetch(`notes/${noteId}/review`, {
         method: "POST",
-        body: JSON.stringify(reviewChange),
+        body: JSON.stringify({
+          rejectedChange,
+          acceptedOpIds,
+        }),
       });
-      
+
       handleExitReview();
     } catch (err) {
       console.error("Failed to save changes:", err);
@@ -610,11 +640,11 @@ function EditContent() {
     router.push("/login");
     return null;
   }
-  if (loading) return <div className="container-wide">Loading note...</div>;
-  if (error)
+  if (isLoading) return <div className="container-wide">Loading note...</div>;
+  if (errorMessage)
     return (
       <div className="container-wide" style={{ color: "red" }}>
-        {error}
+        {errorMessage}
       </div>
     );
   if (!note) return <div className="container-wide">Note not found.</div>;
@@ -698,7 +728,7 @@ function EditContent() {
               }}
             />
 
-            {!reviewInProgress && (
+            {!isReviewing && (
               <button
                 className="btn-outline"
                 onClick={() => router.push(`/notes/${noteId}`)}
@@ -706,22 +736,24 @@ function EditContent() {
                 View
               </button>
             )}
-            {isOwner.current && !reviewInProgress && (
+            {isOwner.current && !isReviewing && (
               <button className="btn-outline" onClick={handleReviewNote}>
                 Review
               </button>
             )}
-            {!reviewInProgress && (
+            {!isReviewing && (
               <button className="btn-primary" onClick={saveNote}>
                 Save changes
               </button>
             )}
-            {reviewInProgress && isOwner.current && (
+            {isReviewing && isOwner.current && (
               <button
                 className="btn-secondary"
                 onClick={undo}
-                disabled={undoStack.length === 0}
-                style={{ opacity: undoStack.length === 0 ? 0.4 : 1 }}
+                disabled={reviewHistory.current.length === 0}
+                style={{
+                  opacity: reviewHistory.current.length === 0 ? 0.4 : 1,
+                }}
               >
                 ↩ Undo
               </button>
@@ -730,7 +762,7 @@ function EditContent() {
         </div>
       </header>
 
-      {reviewInProgress && (
+      {isReviewing && (
         <div
           style={{
             backgroundColor: "#fffbeb",
@@ -765,7 +797,7 @@ function EditContent() {
         </div>
       )}
 
-      {reviewInProgress && !isOwner.current ? (
+      {isReviewing && !isOwner.current ? (
         <div
           style={{
             minHeight: "500px",
@@ -793,7 +825,7 @@ function EditContent() {
         </div>
       ) : (
         <>
-          {reviewInProgress && isOwner.current && !hasChanges && (
+          {isReviewing && isOwner.current && !hasPendingSuggestions && (
             <div
               style={{
                 display: "flex",
@@ -832,7 +864,7 @@ function EditContent() {
             {showReviewSidebarModal && isOwner.current && (
               <ReviewSidebarModal
                 open={showReviewSidebarModal}
-                hasChanges={hasChanges}
+                hasPendingSuggestions={hasPendingSuggestions}
                 onClose={() => setShowExitReviewModal(true)}
                 onSave={saveVersion}
               />
@@ -847,13 +879,14 @@ function EditContent() {
                 borderRadius: "8px",
                 padding: "2px",
                 transition: "border 0.2s ease",
-                border: reviewInProgress
+                border: isReviewing
                   ? "2px solid #fcd34b"
                   : "1px solid var(--border)",
-                backgroundColor: reviewInProgress ? "#fafafa" : "#fcfcfc",
-                // Hide (but keep mounted) when there are no changes and we've shown the banner
+                backgroundColor: isReviewing ? "#fafafa" : "#fcfcfc",
                 display:
-                  reviewInProgress && note.accessRole === "OWNER" && !hasChanges
+                  isReviewing &&
+                  note.accessRole === "OWNER" &&
+                  !hasPendingSuggestions
                     ? "none"
                     : "block",
               }}
@@ -867,7 +900,7 @@ function EditContent() {
                   padding: "2rem",
                   border: "none",
                   resize: "none",
-                  cursor: reviewInProgress ? "default" : "text",
+                  cursor: isReviewing ? "default" : "text",
                 }}
               />
             </div>
@@ -894,12 +927,12 @@ function EditContent() {
         Created at: {new Date(note.createdAt).toLocaleString()}
       </footer>
 
-      {panel && (
+      {activeSuggestion && (
         <AuditTooltip
-          tooltip={panel}
+          tooltip={activeSuggestion}
           onAccept={acceptChange}
           onReject={rejectChange}
-          onClose={() => setPanel(null)}
+          onClose={() => setActiveSuggestion(null)}
         />
       )}
     </main>

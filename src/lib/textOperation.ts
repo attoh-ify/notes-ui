@@ -2,12 +2,12 @@ import Delta from "quill-delta";
 
 export enum OperationState {
   PENDING = "PENDING",
-  COMMITTED = "COMMITTED",
-  INVERSE = "INVERSE"
+  COMMITTED = "COMMITTED"
 }
 
 export class TextOperation {
   constructor(
+    public opId: string,
     public delta: Delta,
     public actorEmail: string,
     public revision: number,

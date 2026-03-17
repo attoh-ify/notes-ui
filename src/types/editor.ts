@@ -10,12 +10,14 @@ export type SuggestionInsert = {
   groupId: string;
   actorEmail: string;
   createdAt: string;
+  opIds: string[];
 };
 
 export type SuggestionDelete = {
   groupId: string;
   actorEmail: string;
   createdAt: string;
+  opIds: string[];
 };
 
 export type SuggestionFormat = {
@@ -23,6 +25,7 @@ export type SuggestionFormat = {
   actorEmail: string;
   createdAt: string;
   attributes: string;
+  opIds: string[];
 };
 
 export interface TooltipState {
@@ -30,6 +33,7 @@ export interface TooltipState {
   type: "insert" | "delete" | "format";
   actorEmail: string;
   createdAt: string;
+  opIds: string[];
 }
 
 export interface CursorModule {

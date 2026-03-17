@@ -7,107 +7,121 @@ import {
   SuggestionInsert,
 } from "@/src/types";
 
-let _groupCounter = 0;
-const ops: MutableOp[] = [];
-
-function nextGroupId(): string {
-  return `g_${++_groupCounter}`;
-}
-
-function splitOpAt(index: number, offset: number): number {
-  if (offset === 0 || offset >= ops[index].insert.length) return index;
-
-  const op = ops[index];
-  const left: MutableOp = {
-    insert: op.insert.slice(0, offset),
-    ...(op.attributes ? { attributes: { ...op.attributes } } : {}),
-    ...(op._suggestionInsert
-      ? { _suggestionInsert: { ...op._suggestionInsert } }
-      : {}),
-    ...(op._suggestionFormat
-      ? { _suggestionFormat: { ...op._suggestionFormat } }
-      : {}),
-    ...(op._suggestionDelete
-      ? { _suggestionDelete: { ...op._suggestionDelete } }
-      : {}),
-  };
-
-  const right: MutableOp = {
-    insert: op.insert.slice(offset),
-    ...(op.attributes ? { attributes: { ...op.attributes } } : {}),
-    ...(op._suggestionInsert
-      ? { _suggestionInsert: { ...op._suggestionInsert } }
-      : {}),
-    ...(op._suggestionFormat
-      ? { _suggestionFormat: { ...op._suggestionFormat } }
-      : {}),
-    ...(op._suggestionDelete
-      ? { _suggestionDelete: { ...op._suggestionDelete } }
-      : {}),
-  };
-
-  ops.splice(index, 1, left, right);
-  return index + 1;
-}
-
-function findPos(logicalPos: number): {
-  opIndex: number;
-  intraOffset: number;
-} {
-  let remaining = logicalPos;
-  for (let i = 0; i < ops.length; i++) {
-    const op = ops[i];
-    if (op._suggestionDelete) continue;
-    if (remaining === 0) return { opIndex: i, intraOffset: 0 };
-    if (remaining < op.insert.length)
-      return { opIndex: i, intraOffset: remaining };
-    remaining -= op.insert.length;
-  }
-
-  return { opIndex: ops.length, intraOffset: 0 };
-}
-
-function prevSuggestionInsert(
-  opIndex: number,
-  actorEmail: string,
-): SuggestionInsert | null {
-  for (let i = opIndex - 1; i >= 0; i--) {
-    const op = ops[i];
-    if (op.insert === "\n") return null;
-    if (op._suggestionInsert?.actorEmail === actorEmail)
-      return op._suggestionInsert;
-    return null;
-  }
-  return null;
-}
-
-function prevSuggestionDelete(
-  opIndex: number,
-  actorEmail: string,
-): SuggestionDelete | null {
-  for (let i = opIndex - 1; i >= 0; i--) {
-    const op = ops[i];
-    if (op._suggestionDelete?.actorEmail === actorEmail)
-      return op._suggestionDelete;
-    return null;
-  }
-  return null;
-}
-
 export default function displayFormattedNote(
   quill: Quill,
-  log: TextOperation[],
-): MutableOp[] | null {
-  const baseOps = log.filter((op) => op.state !== "PENDING");
-  const pendingOps = log.filter((op) => op.state === "PENDING");
+  baseOps: TextOperation[],
+  pendingOps: TextOperation[]
+): Delta | null {
 
   let baseDocument = new Delta();
   for (const op of baseOps) {
     baseDocument = baseDocument.compose(new Delta(op.delta.ops));
   }
 
+  quill.setContents(baseDocument, "api");
+
   if (pendingOps.length === 0) {
-    quill.setContents(baseDocument, "api");
+    return null;
+  }
+
+  let _groupCounter = 0;
+  const ops: MutableOp[] = [];
+
+  function nextGroupId(): string {
+    return `g_${++_groupCounter}`;
+  }
+
+  function splitOpAt(index: number, offset: number): number {
+    if (offset === 0 || offset >= ops[index].insert.length) return index;
+
+    const op = ops[index];
+    const left: MutableOp = {
+      insert: op.insert.slice(0, offset),
+      ...(op.attributes ? { attributes: { ...op.attributes } } : {}),
+      ...(op._suggestionInsert
+        ? { _suggestionInsert: { ...op._suggestionInsert } }
+        : {}),
+      ...(op._suggestionFormat
+        ? { _suggestionFormat: { ...op._suggestionFormat } }
+        : {}),
+      ...(op._suggestionDelete
+        ? { _suggestionDelete: { ...op._suggestionDelete } }
+        : {}),
+    };
+
+    const right: MutableOp = {
+      insert: op.insert.slice(offset),
+      ...(op.attributes ? { attributes: { ...op.attributes } } : {}),
+      ...(op._suggestionInsert
+        ? { _suggestionInsert: { ...op._suggestionInsert } }
+        : {}),
+      ...(op._suggestionFormat
+        ? { _suggestionFormat: { ...op._suggestionFormat } }
+        : {}),
+      ...(op._suggestionDelete
+        ? { _suggestionDelete: { ...op._suggestionDelete } }
+        : {}),
+    };
+
+    ops.splice(index, 1, left, right);
+    return index + 1;
+  }
+
+  function findPos(logicalPos: number): {
+    opIndex: number;
+    intraOffset: number;
+  } {
+    let remaining = logicalPos;
+    for (let i = 0; i < ops.length; i++) {
+      const op = ops[i];
+      if (op._suggestionDelete) continue;
+      if (remaining === 0) return { opIndex: i, intraOffset: 0 };
+      if (remaining < op.insert.length)
+        return { opIndex: i, intraOffset: remaining };
+      remaining -= op.insert.length;
+    }
+
+    return { opIndex: ops.length, intraOffset: 0 };
+  }
+
+  function prevSuggestionInsert(
+    opIndex: number,
+    actorEmail: string,
+  ): SuggestionInsert | null {
+    const prev = ops[opIndex - 1];
+    if (!prev) return null;
+
+    if (prev.insert === "\n") return null;
+
+    if (prev._suggestionInsert?.actorEmail === actorEmail)
+      return prev._suggestionInsert;
+
+    return null;
+  }
+
+  function prevSuggestionDelete(
+    opIndex: number,
+    actorEmail: string,
+  ): SuggestionDelete | null {
+    const prev = ops[opIndex - 1];
+
+    if (!prev) return null;
+
+    if (prev._suggestionDelete?.actorEmail === actorEmail)
+      return prev._suggestionDelete;
+    return null;
+  }
+
+  function prevSuggestionFormat(
+    opIndex: number,
+    actorEmail: string,
+  ): SuggestionFormat | null {
+    const prev = ops[opIndex - 1];
+
+    if (!prev) return null;
+
+    if (prev._suggestionFormat?.actorEmail === actorEmail)
+      return prev._suggestionFormat;
     return null;
   }
 
@@ -122,7 +136,7 @@ export default function displayFormattedNote(
   }
 
   for (const textOp of pendingOps) {
-    const { actorEmail, createdAt } = textOp;
+    const { opId, actorEmail, createdAt } = textOp;
     let logicalPos = 0;
 
     let currentInsertGroup: SuggestionInsert | null = null;
@@ -152,16 +166,15 @@ export default function displayFormattedNote(
         let cursor = opIndex;
 
         if (!currentFormatGroup) {
-          const prev = ops[opIndex - 1]?._suggestionFormat;
-          currentFormatGroup =
-            prev?.actorEmail === actorEmail
-              ? prev
-              : {
-                  groupId: nextGroupId(),
-                  actorEmail,
-                  createdAt,
-                  attributes: JSON.stringify(component.attributes),
-                };
+          const prev = prevSuggestionFormat(opIndex, actorEmail);
+          prev?.opIds.push(opId)
+          currentFormatGroup = prev ?? {
+            groupId: nextGroupId(),
+            actorEmail,
+            createdAt,
+            attributes: JSON.stringify(component.attributes),
+            opIds: [opId]
+          };
         }
 
         while (remaining > 0 && cursor < ops.length) {
@@ -194,10 +207,12 @@ export default function displayFormattedNote(
 
         if (!currentInsertGroup) {
           const prev = prevSuggestionInsert(insertAt, actorEmail);
+          prev?.opIds.push(opId)
           currentInsertGroup = prev ?? {
             groupId: nextGroupId(),
             actorEmail,
             createdAt,
+            opIds: [opId]
           };
         } else {
           if (createdAt > currentInsertGroup.createdAt) {
@@ -205,29 +220,24 @@ export default function displayFormattedNote(
           }
         }
 
-        const newOps: MutableOp[] = [];
         const parts = component.insert.split("\n");
 
         for (let i = 0; i < parts.length; i++) {
-          const part = parts[i];
-          if (part.length > 0) {
-            const attrs: Record<string, any> = {
-              ...(component.attributes ?? {}),
-            };
-            newOps.push({
-              insert: part,
-              attributes: attrs,
-              _suggestionInsert: { ...currentInsertGroup! },
+          if (parts[i].length > 0) {
+            ops.splice(insertAt, 0, {
+              insert: parts[i],
+              attributes: { ...(component.attributes ?? {}) },
+              _suggestionInsert: { ...currentInsertGroup },
             });
+            insertAt++;
           }
-
           if (i < parts.length - 1) {
-            newOps.push({ insert: "\n" });
-            currentInsertGroup = null;
+            ops.splice(insertAt, 0, { insert: "\n" });
+            insertAt++;
           }
         }
 
-        ops.splice(insertAt, 0, ...newOps);
+        logicalPos += component.insert.length;
       } else if (typeof component.delete === "number") {
         currentInsertGroup = null;
         currentFormatGroup = null;
@@ -241,37 +251,18 @@ export default function displayFormattedNote(
 
         if (!currentDeleteGroup) {
           const prev = prevSuggestionDelete(cursor, actorEmail);
+          prev?.opIds.push(opId)
           currentDeleteGroup = prev ?? {
             groupId: nextGroupId(),
             actorEmail,
             createdAt,
+            opIds: [opId]
           };
         }
 
         let remaining = component.delete;
-        let advanceBy = component.delete;
         while (remaining > 0 && cursor < ops.length) {
           const op = ops[cursor];
-
-          if (op.insert === "\n") {
-            cursor++;
-            remaining--;
-            currentDeleteGroup = null;
-            continue;
-          }
-
-          // actually remove because it was a pending operation
-          if (op._suggestionInsert) {
-            if (op.insert.length <= remaining) {
-              remaining -= op.insert.length;
-            } else {
-              splitOpAt(cursor, remaining);
-              remaining = 0;
-            }
-            ops.splice(cursor, 1);
-            advanceBy -= op.insert.length;
-            continue;
-          }
 
           if (op._suggestionDelete) {
             // already marked as deleted so skip
@@ -279,17 +270,33 @@ export default function displayFormattedNote(
             continue;
           }
 
-          // base text so mark as deleted - dont actually remove
-          if (op.insert.length > remaining) {
-            splitOpAt(cursor, remaining);
+          if (op.insert === "\n") {
+            cursor++;
+            remaining--;
+            logicalPos++;
+            continue;
           }
 
+          // actually remove because it was a pending operation
+          if (op._suggestionInsert) {
+            const len = Math.min(op.insert.length, remaining);
+            if (len < op.insert.length) splitOpAt(cursor, len);
+
+            ops.splice(cursor, 1);
+            remaining -= len;
+            logicalPos += len;
+            continue;
+          }
+
+          // base text so mark as deleted - dont actually remove
+          const len = Math.min(op.insert.length, remaining);
+          if (len < op.insert.length) splitOpAt(cursor, len);
+
           ops[cursor]._suggestionDelete = { ...currentDeleteGroup! };
-          remaining -= ops[cursor].insert.length;
+          remaining -= len;
+          logicalPos += len;
           cursor++;
         }
-
-        logicalPos += advanceBy;
       }
     }
   }
@@ -355,14 +362,17 @@ export default function displayFormattedNote(
   }
 
   // create the actual ops
-  const finalOps = collapsed.map((op) => {
-    const attrs: Record<string, any> = { ...(op.attributes ?? {}) };
+  let applyDelta = new Delta();
+  for (const op of collapsed) {
+    const len = op.insert.length;
+    const attrs: Record<string, any> = {};
 
     if (op._suggestionInsert) {
       attrs["suggestion-insert"] = {
         groupId: op._suggestionInsert.groupId,
         actorEmail: op._suggestionInsert.actorEmail,
         createdAt: op._suggestionInsert.createdAt,
+        opIds: op._suggestionInsert.opIds
       };
     }
     if (op._suggestionFormat) {
@@ -376,6 +386,7 @@ export default function displayFormattedNote(
         actorEmail: op._suggestionFormat.actorEmail,
         createdAt: op._suggestionFormat.createdAt,
         attributes: op._suggestionFormat.attributes,
+        opIds: op._suggestionFormat.opIds
       };
     }
     if (op._suggestionDelete) {
@@ -383,13 +394,20 @@ export default function displayFormattedNote(
         groupId: op._suggestionDelete.groupId,
         actorEmail: op._suggestionDelete.actorEmail,
         createdAt: op._suggestionDelete.createdAt,
+        opIds: op._suggestionDelete.opIds
       };
     }
 
-    return Object.keys(attrs).length > 0
-      ? { insert: op.insert, attributes: attrs }
-      : { insert: op.insert };
-  });
+    if (Object.keys(attrs).length > 0) {
+      if (op._suggestionInsert) {
+        applyDelta.insert(op.insert, attrs);
+      } else {
+        applyDelta.retain(len, attrs);
+      }
+    } else {
+      applyDelta.retain(len)
+    }
+  }
 
-  return finalOps;
+  return applyDelta;
 }

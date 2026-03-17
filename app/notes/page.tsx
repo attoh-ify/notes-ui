@@ -7,13 +7,12 @@ import { Note } from "@/src/types";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, Suspense } from "react";
 
-
 function NotesContent() {
   const router = useRouter();
   const { user, loadingUser } = useAuth();
   const [notes, setNotes] = useState<Note[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsloading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showCreateNoteModal, setShowCreateNoteModal] = useState(false);
 
   useEffect(() => {
@@ -24,9 +23,9 @@ function NotesContent() {
         });
         setNotes(data);
       } catch (err: any) {
-        setError(err.message || "Failed to fetch notes");
+        setErrorMessage(err.message || "Failed to fetch notes");
       } finally {
-        setLoading(false);
+        setIsloading(false);
       }
     }
     fetchNotes();
@@ -43,7 +42,7 @@ function NotesContent() {
 
       router.push("/login");
     } catch (err: any) {
-      setError(err.message || "Failed to logout");
+      setErrorMessage(err.message || "Failed to logout");
     }
   }
 
@@ -55,11 +54,11 @@ function NotesContent() {
     return null;
   }
 
-  if (loading) return <div className="container-wide">Loading notes...</div>;
-  if (error)
+  if (isLoading) return <div className="container-wide">Loading notes...</div>;
+  if (errorMessage)
     return (
       <div className="container-wide" style={{ color: "red" }}>
-        {error}
+        {errorMessage}
       </div>
     );
 

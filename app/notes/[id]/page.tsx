@@ -8,14 +8,13 @@ import type Quill from "quill";
 import "quill/dist/quill.snow.css";
 import { Note, NoteVersion } from "@/src/types";
 
-
 function ViewNoteContent() {
   const { id: noteId } = useParams();
   const { user, loadingUser } = useAuth();
   const [note, setNote] = useState<Note | null>(null);
   const [noteVersion, setNoteVersion] = useState<NoteVersion | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsloading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const router = useRouter();
   const editorRef = useRef<HTMLDivElement>(null);
   const quillRef = useRef<Quill | null>(null);
@@ -34,9 +33,9 @@ function ViewNoteContent() {
         );
         setNoteVersion(noteVersionData);
       } catch (err: any) {
-        setError(err.message || "Failed to load note");
+        setErrorMessage(err.message || "Failed to load note");
       } finally {
-        setLoading(false);
+        setIsloading(false);
       }
     }
 
@@ -44,7 +43,7 @@ function ViewNoteContent() {
   }, [noteId, user]);
 
   useEffect(() => {
-    if (!loading && editorRef.current && !quillRef.current) {
+    if (!isLoading && editorRef.current && !quillRef.current) {
       const initQuill = async () => {
         const { default: QuillModule } = await import("quill");
 
@@ -65,7 +64,7 @@ function ViewNoteContent() {
 
       initQuill();
     }
-  }, [loading]);
+  }, [isLoading]);
 
   useEffect(() => {
     if (quillRef.current && noteVersion?.masterDelta) {
@@ -81,11 +80,11 @@ function ViewNoteContent() {
     return null;
   }
 
-  if (loading) return <div className="container-wide">Loading note...</div>;
-  if (error)
+  if (isLoading) return <div className="container-wide">Loading note...</div>;
+  if (errorMessage)
     return (
       <div className="container-wide" style={{ color: "red" }}>
-        {error}
+        {errorMessage}
       </div>
     );
   if (!note) return <div className="container-wide">Note not found.</div>;

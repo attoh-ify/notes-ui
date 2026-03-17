@@ -4,14 +4,14 @@ import { useState } from "react";
 
 interface ReviewSidebarModalProps {
   open: boolean;
-  hasChanges: boolean;
+  hasPendingSuggestions: boolean;
   onClose: () => void;
   onSave: (comment: string) => void;
 }
 
 export default function ReviewSidebarModal({
   open,
-  hasChanges,
+  hasPendingSuggestions,
   onClose,
   onSave,
 }: ReviewSidebarModalProps) {
@@ -58,7 +58,7 @@ export default function ReviewSidebarModal({
           boxSizing: "border-box",
         }}
       />
-      {hasChanges && (
+      {hasPendingSuggestions && (
         <button
           className="btn-primary"
           onClick={() => onSave(reviewComment)}

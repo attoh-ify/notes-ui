@@ -2,6 +2,15 @@ import type Quill from "quill";
 
 let formatsRegistered = false;
 
+const getJsonObject = (node: HTMLElement, opIds: string, fallback: any) => {
+  const val = node.getAttribute(opIds);
+  try {
+    return val ? JSON.parse(val) : fallback;
+  } catch {
+    return fallback;
+  }
+};
+
 export function registerFormats(QuillModule: typeof Quill) {
   if (formatsRegistered) return;
   formatsRegistered = true;
@@ -12,12 +21,22 @@ export function registerFormats(QuillModule: typeof Quill) {
     static blotName = "suggestion-insert";
     static tagName = "span";
 
-    static create(data: { groupId: string; actorEmail: string; createdAt: string }) {
+    static create(data: {
+      groupId: string;
+      actorEmail: string;
+      createdAt: string;
+      opIds: string;
+    }) {
       const node = super.create();
+
+      const ids = Array.isArray(data.opIds) ? data.opIds : [];
+      const uniqueIds = [...new Set(ids)];
+
       node.setAttribute("data-group-id", data.groupId);
       node.setAttribute("data-suggestion-type", "insert");
       node.setAttribute("data-actor-email", data.actorEmail ?? "");
       node.setAttribute("data-created-at", data.createdAt ?? "");
+      node.setAttribute("data-opIds", JSON.stringify(uniqueIds));
       node.classList.add("suggestion-insert");
       return node;
     }
@@ -27,6 +46,7 @@ export function registerFormats(QuillModule: typeof Quill) {
         groupId: node.getAttribute("data-group-id") ?? "",
         actorEmail: node.getAttribute("data-actor-email") ?? "",
         createdAt: node.getAttribute("data-created-at") ?? "",
+        opIds: getJsonObject(node, "data-opIds", []),
       };
     }
   }
@@ -35,12 +55,22 @@ export function registerFormats(QuillModule: typeof Quill) {
     static blotName = "suggestion-delete";
     static tagName = "span";
 
-    static create(data: { groupId: string; actorEmail: string; createdAt: string }) {
+    static create(data: {
+      groupId: string;
+      actorEmail: string;
+      createdAt: string;
+      opIds: string;
+    }) {
       const node = super.create();
+      
+      const ids = Array.isArray(data.opIds) ? data.opIds : [];
+      const uniqueIds = [...new Set(ids)];
+
       node.setAttribute("data-group-id", data.groupId);
       node.setAttribute("data-suggestion-type", "delete");
       node.setAttribute("data-actor-email", data.actorEmail ?? "");
       node.setAttribute("data-created-at", data.createdAt ?? "");
+      node.setAttribute("data-opIds", JSON.stringify(uniqueIds));
       node.classList.add("suggestion-delete");
       return node;
     }
@@ -50,6 +80,7 @@ export function registerFormats(QuillModule: typeof Quill) {
         groupId: node.getAttribute("data-group-id") ?? "",
         actorEmail: node.getAttribute("data-actor-email") ?? "",
         createdAt: node.getAttribute("data-created-at") ?? "",
+        opIds: getJsonObject(node, "data-opIds", []),
       };
     }
   }
@@ -58,41 +89,40 @@ export function registerFormats(QuillModule: typeof Quill) {
     static blotName = "suggestion-format";
     static tagName = "span";
 
-    static create(data: { groupId: string; actorEmail: string; createdAt: string; attributes: string }) {
+    static create(data: {
+      groupId: string;
+      actorEmail: string;
+      createdAt: string;
+      attributes: string;
+      opIds: string;
+    }) {
+      const attrString =
+        typeof data.attributes === "object"
+          ? JSON.stringify(data.attributes)
+          : data.attributes;
+
       const node = super.create();
+
+      const ids = Array.isArray(data.opIds) ? data.opIds : [];
+      const uniqueIds = [...new Set(ids)];
+
       node.setAttribute("data-group-id", data.groupId);
-      node.setAttribute("data-suggestion-type", "format");
+      node.setAttribute("data-suggestion-type", "insert");
       node.setAttribute("data-actor-email", data.actorEmail ?? "");
       node.setAttribute("data-created-at", data.createdAt ?? "");
-      node.setAttribute("data-format-attributes", data.attributes ?? "{}");
-      
-      const attrString = typeof data.attributes === 'object' 
-        ? JSON.stringify(data.attributes) 
-        : data.attributes;
-        
+      node.setAttribute("data-opIds", JSON.stringify(uniqueIds));
       node.setAttribute("data-format-attributes", attrString ?? "{}");
       node.classList.add("suggestion-format");
       return node;
     }
 
     static formats(node: HTMLElement): SuggestionFormat {
-      const rawAttr = node.getAttribute("data-format-attributes");
-      
-      let parsedAttributes = {};
-      if (rawAttr) {
-        try {
-          parsedAttributes = typeof rawAttr === 'string' ? JSON.parse(rawAttr) : rawAttr;
-        } catch (e) {
-          console.error("Failed to parse suggestion-format attributes", e);
-          parsedAttributes = {};
-        }
-      }
-
       return {
         groupId: node.getAttribute("data-group-id") ?? "",
         actorEmail: node.getAttribute("data-actor-email") ?? "",
         createdAt: node.getAttribute("data-created-at") ?? "",
-        attributes: parsedAttributes,
+        opIds: getJsonObject(node, "data-opIds", []),
+        attributes: getJsonObject(node, "data-format-attributes", {}),
       };
     }
   }

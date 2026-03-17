@@ -15,8 +15,8 @@ function NoteSettingsContent() {
   const router = useRouter();
   const { user, loadingUser } = useAuth();
   const [note, setNote] = useState<Note | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsloading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [currentVisibility, setCurrentVisibility] = useState<NoteVisibility>();
   const [showDeleteNoteModal, setShowDeleteNoteModal] = useState(false);
   const isOwner = useRef<boolean>(false);
@@ -34,9 +34,9 @@ function NoteSettingsContent() {
           isOwner.current = true;
         }
       } catch (err: any) {
-        setError(err.message || "Failed to fetch note metadata");
+        setErrorMessage(err.message || "Failed to fetch note metadata");
       } finally {
-        setLoading(false);
+        setIsloading(false);
       }
     }
     fetchNotes();
@@ -62,11 +62,11 @@ function NoteSettingsContent() {
     return null;
   }
 
-  if (loading) return <div className="container-wide">Loading note...</div>;
-  if (error)
+  if (isLoading) return <div className="container-wide">Loading note...</div>;
+  if (errorMessage)
     return (
       <div className="container-wide" style={{ color: "red" }}>
-        {error}
+        {errorMessage}
       </div>
     );
   if (!note) return <div className="container-wide">Note not found.</div>;

@@ -17,7 +17,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [loadingUser, setLoadingUser] = useState(true);
+  const [loadingUser, setIsloadingUser] = useState(true);
 
   useEffect(() => {
     const hydrateAuth = () => {
@@ -27,10 +27,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setUser(JSON.parse(savedUser));
         }
       } catch (err: any) {
-        console.log(err.message || "Failed to fetch user details")
+        console.log(err.message || "Failed to fetch user details");
         localStorage.removeItem("user");
       } finally {
-        setLoadingUser(false);
+        setIsloadingUser(false);
       }
     };
 
