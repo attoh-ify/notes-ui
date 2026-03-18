@@ -6,18 +6,20 @@ import {
   SuggestionFormat,
   SuggestionInsert,
 } from "@/src/types";
+import { apiFetch } from "./api";
 
-export default function displayFormattedNote(
+export default async function displayFormattedNote(
   quill: Quill,
-  baseOps: TextOperation[],
+  noteId: string,
+  committedOps: TextOperation[],
   pendingOps: TextOperation[],
-): Delta | null {
-  let baseDocument = new Delta();
-  for (const op of baseOps) {
-    baseDocument = baseDocument.compose(new Delta(op.delta.ops));
+): Promise<Delta | null> {
+  let committedDocument = new Delta();
+  for (const op of committedOps) {
+    committedDocument = committedDocument.compose(new Delta(op.delta.ops));
   }
 
-  quill.setContents(baseDocument, "api");
+  quill.setContents(committedDocument, "api");
 
   if (pendingOps.length === 0) {
     return null;
@@ -36,6 +38,7 @@ export default function displayFormattedNote(
     const op = ops[index];
     const left: MutableOp = {
       insert: op.insert.slice(0, offset),
+      opId: op.opId ?? "",
       ...(op.attributes ? { attributes: { ...op.attributes } } : {}),
       ...(op._suggestionInsert
         ? { _suggestionInsert: { ...op._suggestionInsert } }
@@ -50,6 +53,7 @@ export default function displayFormattedNote(
 
     const right: MutableOp = {
       insert: op.insert.slice(offset),
+      opId: op.opId ?? "",
       ...(op.attributes ? { attributes: { ...op.attributes } } : {}),
       ...(op._suggestionInsert
         ? { _suggestionInsert: { ...op._suggestionInsert } }
@@ -134,12 +138,12 @@ export default function displayFormattedNote(
     return null;
   }
 
-  for (const op of baseDocument.ops) {
+  for (const op of committedDocument.ops) {
     if (typeof op.insert === "string") {
       ops.push(
         op.attributes
-          ? { insert: op.insert, attributes: { ...op.attributes } }
-          : { insert: op.insert },
+          ? { insert: op.insert, opId: "", attributes: { ...op.attributes } }
+          : { insert: op.insert, opId: "" },
       );
     }
   }
@@ -221,8 +225,7 @@ export default function displayFormattedNote(
             groupId: nextGroupId(),
             actorEmail,
             createdAt,
-            opIds: [opId],
-            opId,
+            opIds: [opId]
           };
         } else {
           if (createdAt > currentInsertGroup.createdAt) {
@@ -237,12 +240,13 @@ export default function displayFormattedNote(
             ops.splice(insertAt, 0, {
               insert: parts[i],
               attributes: { ...(component.attributes ?? {}) },
+              opId,
               _suggestionInsert: { ...currentInsertGroup },
             });
             insertAt++;
           }
           if (i < parts.length - 1) {
-            ops.splice(insertAt, 0, { insert: "\n" });
+            ops.splice(insertAt, 0, { insert: "\n", opId });
             insertAt++;
           }
         }
@@ -289,12 +293,29 @@ export default function displayFormattedNote(
 
           // actually remove because it was a pending operation
           if (op._suggestionInsert) {
-            const len = Math.min(op.insert.length, remaining);
-            if (len < op.insert.length) splitOpAt(cursor, len);
+            const insertOpLength = op.insert.length;
+            const overlapLength = Math.min(insertOpLength, remaining);
+
+            if (overlapLength < insertOpLength)
+              splitOpAt(cursor, overlapLength);
 
             ops.splice(cursor, 1);
-            remaining -= len;
-            logicalPos += len;
+            remaining -= overlapLength;
+            logicalPos += overlapLength;
+
+            await apiFetch(`notes/${noteId}/review/split`, {
+              method: "POST",
+              body: JSON.stringify({
+                insertOpId: op.opId,
+                deleteOpId: opId,
+                insertOpLength,
+                overlapLength,
+                deleteOpTotalLength: component.delete,
+                deleteConsumedBefore:
+                  component.delete - remaining - overlapLength,
+              }),
+            });
+
             continue;
           }
 

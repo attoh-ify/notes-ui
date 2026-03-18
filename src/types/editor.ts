@@ -1,6 +1,7 @@
 export type MutableOp = {
   insert: string;
   attributes?: Record<string, any>;
+  opId: string;
   _suggestionInsert?: SuggestionInsert;
   _suggestionDelete?: SuggestionDelete;
   _suggestionFormat?: SuggestionFormat;
@@ -11,7 +12,6 @@ export type SuggestionInsert = {
   actorEmail: string;
   createdAt: string;
   opIds: string[];
-  opId: string;
 };
 
 export type SuggestionDelete = {

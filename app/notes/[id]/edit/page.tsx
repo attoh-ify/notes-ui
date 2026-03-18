@@ -160,24 +160,37 @@ function EditContent() {
 
   useEffect(() => {
     const quill = quillRef.current;
-
     if (!revisionLog || !quill) return;
 
-    const baseOps = revisionLog.filter((op) => op.state === "COMMITTED");
-    const pendingOps = revisionLog.filter((op) => op.state === "PENDING");
+    let isCurrentRequest = true;
 
-    const applyDelta = displayFormattedNote(quill, baseOps, pendingOps);
+    const refreshReviewView = async () => {
+      const committedOps = revisionLog.filter((op) => op.state === "COMMITTED");
+      const pendingOps = revisionLog.filter((op) => op.state === "PENDING");
 
-    if (applyDelta !== null) {
-      setHasPendingSuggestions(true);
-      quill.updateContents(applyDelta, "api");
-      quill.root.addEventListener("click", handleClick);
-    }
+      const suggestionDelta = await displayFormattedNote(
+        quill,
+        noteId as string,
+        committedOps,
+        pendingOps,
+      );
+
+      if (isCurrentRequest && suggestionDelta !== null) {
+        setHasPendingSuggestions(true);
+        quill.updateContents(suggestionDelta, "api");
+
+        quill.root.removeEventListener("click", handleClick);
+        quill.root.addEventListener("click", handleClick);
+      }
+    };
+
+    refreshReviewView();
 
     return () => {
+      isCurrentRequest = false;
       quill.root.removeEventListener("click", handleClick);
     };
-  }, [revisionLog]);
+  }, [revisionLog, noteId]);
 
   const loadNoteAndJoin = useCallback(async () => {
     if (!noteId || !user) return;
