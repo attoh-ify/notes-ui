@@ -11,6 +11,7 @@ export type SuggestionInsert = {
   actorEmail: string;
   createdAt: string;
   opIds: string[];
+  opId: string;
 };
 
 export type SuggestionDelete = {

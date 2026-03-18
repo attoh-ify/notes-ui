@@ -10,9 +10,8 @@ import {
 export default function displayFormattedNote(
   quill: Quill,
   baseOps: TextOperation[],
-  pendingOps: TextOperation[]
+  pendingOps: TextOperation[],
 ): Delta | null {
-
   let baseDocument = new Delta();
   for (const op of baseOps) {
     baseDocument = baseDocument.compose(new Delta(op.delta.ops));
@@ -88,13 +87,23 @@ export default function displayFormattedNote(
     opIndex: number,
     actorEmail: string,
   ): SuggestionInsert | null {
-    const prev = ops[opIndex - 1];
-    if (!prev) return null;
+    let i = opIndex - 1;
+    while (i >= 0) {
+      const op = ops[i];
+      if (op._suggestionInsert?.actorEmail === actorEmail)
+        return op._suggestionInsert;
+      if (op.insert !== "\n") break;
+      i--;
+    }
 
-    if (prev.insert === "\n") return null;
-
-    if (prev._suggestionInsert?.actorEmail === actorEmail)
-      return prev._suggestionInsert;
+    let j = opIndex;
+    while (j < ops.length) {
+      const op = ops[j];
+      if (op._suggestionInsert?.actorEmail === actorEmail)
+        return op._suggestionInsert;
+      if (op.insert !== "\n") break;
+      j++;
+    }
 
     return null;
   }
@@ -167,13 +176,13 @@ export default function displayFormattedNote(
 
         if (!currentFormatGroup) {
           const prev = prevSuggestionFormat(opIndex, actorEmail);
-          prev?.opIds.push(opId)
+          prev?.opIds.push(opId);
           currentFormatGroup = prev ?? {
             groupId: nextGroupId(),
             actorEmail,
             createdAt,
             attributes: JSON.stringify(component.attributes),
-            opIds: [opId]
+            opIds: [opId],
           };
         }
 
@@ -207,12 +216,13 @@ export default function displayFormattedNote(
 
         if (!currentInsertGroup) {
           const prev = prevSuggestionInsert(insertAt, actorEmail);
-          prev?.opIds.push(opId)
+          prev?.opIds.push(opId);
           currentInsertGroup = prev ?? {
             groupId: nextGroupId(),
             actorEmail,
             createdAt,
-            opIds: [opId]
+            opIds: [opId],
+            opId,
           };
         } else {
           if (createdAt > currentInsertGroup.createdAt) {
@@ -251,12 +261,12 @@ export default function displayFormattedNote(
 
         if (!currentDeleteGroup) {
           const prev = prevSuggestionDelete(cursor, actorEmail);
-          prev?.opIds.push(opId)
+          prev?.opIds.push(opId);
           currentDeleteGroup = prev ?? {
             groupId: nextGroupId(),
             actorEmail,
             createdAt,
-            opIds: [opId]
+            opIds: [opId],
           };
         }
 
@@ -372,7 +382,7 @@ export default function displayFormattedNote(
         groupId: op._suggestionInsert.groupId,
         actorEmail: op._suggestionInsert.actorEmail,
         createdAt: op._suggestionInsert.createdAt,
-        opIds: op._suggestionInsert.opIds
+        opIds: op._suggestionInsert.opIds,
       };
     }
     if (op._suggestionFormat) {
@@ -386,7 +396,7 @@ export default function displayFormattedNote(
         actorEmail: op._suggestionFormat.actorEmail,
         createdAt: op._suggestionFormat.createdAt,
         attributes: op._suggestionFormat.attributes,
-        opIds: op._suggestionFormat.opIds
+        opIds: op._suggestionFormat.opIds,
       };
     }
     if (op._suggestionDelete) {
@@ -394,7 +404,7 @@ export default function displayFormattedNote(
         groupId: op._suggestionDelete.groupId,
         actorEmail: op._suggestionDelete.actorEmail,
         createdAt: op._suggestionDelete.createdAt,
-        opIds: op._suggestionDelete.opIds
+        opIds: op._suggestionDelete.opIds,
       };
     }
 
@@ -405,7 +415,11 @@ export default function displayFormattedNote(
         applyDelta.retain(len, attrs);
       }
     } else {
-      applyDelta.retain(len)
+      if (op.insert === "\n") {
+        applyDelta.insert(op.insert);
+      } else {
+        applyDelta.retain(len);
+      }
     }
   }
 

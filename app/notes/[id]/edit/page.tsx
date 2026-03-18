@@ -357,7 +357,7 @@ function EditContent() {
       reviewHistory.current[reviewHistory.current.length - 1];
     quillRef.current!.updateContents(inverseEntry.delta, "api");
 
-    const action = reviewHistory.current[reviewHistory.current.length - 1].type;
+    const action = inverseEntry.type;
     if (action === "REJECT") {
       rejectedChanges.current.pop();
     } else if (action === "ACCEPT") {
@@ -376,13 +376,25 @@ function EditContent() {
 
     if (els.length === 0) return null;
 
-    const firstBlot = (quill.constructor as any).find(els[0]);
-    if (!firstBlot) return null;
+    let minIndex = Infinity;
+    let maxEnd = -Infinity;
 
-    return {
-      index: quill.getIndex(firstBlot),
-      length: els.reduce((sum, el) => sum + (el.textContent?.length ?? 0), 0),
-    };
+    for (const el of els) {
+      const blot = (quill.constructor as any).find(el, true);
+      if (!blot) continue;
+
+      const index = quill.getIndex(blot);
+      const length = blot.length
+        ? blot.length()
+        : (el.textContent?.length ?? 0);
+
+      if (index < minIndex) minIndex = index;
+      if (index + length > maxEnd) maxEnd = index + length;
+    }
+
+    if (minIndex === Infinity) return null;
+
+    return { index: minIndex, length: maxEnd - minIndex };
   }
 
   function acceptChange(
@@ -408,10 +420,20 @@ function EditContent() {
       } else if (type === "delete") {
         quill.deleteText(range.index, range.length, "api");
       } else if (type === "format") {
+        const els = Array.from(
+          quill.root.querySelectorAll(`[data-group-id="${groupId}"]`),
+        ) as HTMLElement[];
+
+        const fmtAttrStr = els[0]?.getAttribute("data-format-attributes");
+        let fmtAttrs: Record<string, any> = {};
+        try {
+          fmtAttrs = fmtAttrStr ? JSON.parse(fmtAttrStr) : {};
+        } catch {}
+
         quill.formatText(
           range.index,
           range.length,
-          { "suggestion-format": null },
+          { ...fmtAttrs, "suggestion-format": null },
           "api",
         );
       }
@@ -423,6 +445,7 @@ function EditContent() {
     snapshotAndApply(() => {
       const quill = quillRef.current!;
       const range = getGroupRange(groupId);
+
       if (!range) return;
 
       if (type === "insert") {
@@ -607,7 +630,10 @@ function EditContent() {
 
   async function saveReviewChanges() {
     try {
-      const delta = rejectedChanges.current.length > 0 ? rejectedChanges.current.reduce((acc, d) => acc.compose(d)) : new Delta();
+      const delta =
+        rejectedChanges.current.length > 0
+          ? rejectedChanges.current.reduce((acc, d) => acc.compose(d))
+          : new Delta();
 
       let rejectedChange = new TextOperation(
         "",

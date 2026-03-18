@@ -107,7 +107,7 @@ export function registerFormats(QuillModule: typeof Quill) {
       const uniqueIds = [...new Set(ids)];
 
       node.setAttribute("data-group-id", data.groupId);
-      node.setAttribute("data-suggestion-type", "insert");
+      node.setAttribute("data-suggestion-type", "format");
       node.setAttribute("data-actor-email", data.actorEmail ?? "");
       node.setAttribute("data-created-at", data.createdAt ?? "");
       node.setAttribute("data-opIds", JSON.stringify(uniqueIds));
