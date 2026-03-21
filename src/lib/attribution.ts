@@ -1,3 +1,5 @@
+"use client";
+
 import Quill, { Delta } from "quill";
 import { TextOperation } from "./textOperation";
 import {
@@ -178,18 +180,6 @@ export default async function displayFormattedNote(
         let remaining = component.retain;
         let cursor = opIndex;
 
-        if (!currentFormatGroup) {
-          const prev = prevSuggestionFormat(opIndex, actorEmail);
-          prev?.opIds.push(opId);
-          currentFormatGroup = prev ?? {
-            groupId: nextGroupId(),
-            actorEmail,
-            createdAt,
-            attributes: JSON.stringify(component.attributes),
-            opIds: [opId],
-          };
-        }
-
         while (remaining > 0 && cursor < ops.length) {
           const op = ops[cursor];
           if (op.insert === "\n") {
@@ -200,6 +190,53 @@ export default async function displayFormattedNote(
 
           if (op.insert.length > remaining) {
             splitOpAt(cursor, remaining);
+          }
+
+          const chunkLen = ops[cursor].insert.length;
+
+          if (op._suggestionFormat) {
+            const existingAttrs = JSON.parse(
+              op._suggestionFormat.attributes ?? "{}",
+            );
+            const cancels =
+              Object.keys(existingAttrs).every(
+                (k) => component.attributes![k] === null,
+              ) &&
+              Object.keys(component.attributes).every(
+                (k) => component.attributes![k] === null,
+              );
+
+            if (cancels) {
+              const formatOpIds = op._suggestionFormat.opIds;
+              delete ops[cursor]._suggestionFormat;
+
+              await apiFetch(`notes/${noteId}/review/split/format`, {
+                method: "POST",
+                body: JSON.stringify({
+                  cancelledOpIds: formatOpIds,
+                  cancellingOpId: opId,
+                  opLength: chunkLen,
+                  totalLength: component.retain,
+                  consumedBefore: component.retain - remaining - chunkLen,
+                }),
+              });
+
+              remaining -= chunkLen;
+              cursor++;
+              continue;
+            }
+          }
+
+          if (!currentFormatGroup) {
+            const prev = prevSuggestionFormat(opIndex, actorEmail);
+            prev?.opIds.push(opId);
+            currentFormatGroup = prev ?? {
+              groupId: nextGroupId(),
+              actorEmail,
+              createdAt,
+              attributes: JSON.stringify(component.attributes),
+              opIds: [opId],
+            };
           }
 
           ops[cursor]._suggestionFormat = { ...currentFormatGroup };
@@ -225,7 +262,7 @@ export default async function displayFormattedNote(
             groupId: nextGroupId(),
             actorEmail,
             createdAt,
-            opIds: [opId]
+            opIds: [opId],
           };
         } else {
           if (createdAt > currentInsertGroup.createdAt) {
@@ -303,7 +340,7 @@ export default async function displayFormattedNote(
             remaining -= overlapLength;
             logicalPos += overlapLength;
 
-            await apiFetch(`notes/${noteId}/review/split`, {
+            await apiFetch(`notes/${noteId}/review/split/insert`, {
               method: "POST",
               body: JSON.stringify({
                 insertOpId: op.opId,
