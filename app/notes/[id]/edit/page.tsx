@@ -176,6 +176,7 @@ function EditContent() {
       );
 
       if (isCurrentRequest && suggestionDelta !== null) {
+        if (suggestionDelta.ops.length < 1) return;
         setHasPendingSuggestions(true);
         quill.updateContents(suggestionDelta, "api");
 
@@ -335,9 +336,9 @@ function EditContent() {
       if (!op.attributes) return op;
 
       const {
-        ["suggestion-format"]: _,
-        ["suggestion-delete"]: __,
-        ["suggestion-insert"]: ___,
+        ["suggestion-format"]: f,
+        ["suggestion-delete"]: d,
+        ["suggestion-insert"]: i,
         ...attrs
       } = op.attributes;
 
@@ -904,7 +905,7 @@ function EditContent() {
               <ReviewSidebarModal
                 open={showReviewSidebarModal}
                 hasPendingSuggestions={hasPendingSuggestions}
-                onClose={() => setShowExitReviewModal(true)}
+                onClose={hasPendingSuggestions ? () => setShowExitReviewModal(true) : () => handleExitReview()}
                 onSave={saveVersion}
               />
             )}

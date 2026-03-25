@@ -1,6 +1,7 @@
 "use client";
 
-import Quill, { Delta } from "quill";
+import { Delta } from "quill";
+import type Quill from "quill";
 import { TextOperation } from "./textOperation";
 import {
   MutableOp,
@@ -41,6 +42,7 @@ export default async function displayFormattedNote(
     const left: MutableOp = {
       insert: op.insert.slice(0, offset),
       opId: op.opId ?? "",
+      insertComponentIndex: op.insertComponentIndex,
       ...(op.attributes ? { attributes: { ...op.attributes } } : {}),
       ...(op._suggestionInsert
         ? { _suggestionInsert: { ...op._suggestionInsert } }
@@ -56,6 +58,7 @@ export default async function displayFormattedNote(
     const right: MutableOp = {
       insert: op.insert.slice(offset),
       opId: op.opId ?? "",
+      insertComponentIndex: op.insertComponentIndex,
       ...(op.attributes ? { attributes: { ...op.attributes } } : {}),
       ...(op._suggestionInsert
         ? { _suggestionInsert: { ...op._suggestionInsert } }
@@ -140,12 +143,12 @@ export default async function displayFormattedNote(
     return null;
   }
 
-  for (const op of committedDocument.ops) {
+  for (const [index, op] of committedDocument.ops.entries()) {
     if (typeof op.insert === "string") {
       ops.push(
         op.attributes
-          ? { insert: op.insert, opId: "", attributes: { ...op.attributes } }
-          : { insert: op.insert, opId: "" },
+          ? { insert: op.insert, opId: "", attributes: { ...op.attributes }, insertComponentIndex: index }
+          : { insert: op.insert, opId: "", insertComponentIndex: index },
       );
     }
   }
@@ -158,7 +161,7 @@ export default async function displayFormattedNote(
     let currentDeleteGroup: SuggestionDelete | null = null;
     let currentFormatGroup: SuggestionFormat | null = null;
 
-    for (const component of textOp.delta.ops) {
+    for (const [index, component] of textOp.delta.ops.entries()) {
       if (typeof component.retain === "number" && !component.attributes) {
         const isLast =
           component === textOp.delta.ops[textOp.delta.ops.length - 1];
@@ -278,12 +281,13 @@ export default async function displayFormattedNote(
               insert: parts[i],
               attributes: { ...(component.attributes ?? {}) },
               opId,
+              insertComponentIndex: index,
               _suggestionInsert: { ...currentInsertGroup },
             });
             insertAt++;
           }
           if (i < parts.length - 1) {
-            ops.splice(insertAt, 0, { insert: "\n", opId });
+            ops.splice(insertAt, 0, { insert: "\n", opId, insertComponentIndex: index });
             insertAt++;
           }
         }
@@ -312,6 +316,8 @@ export default async function displayFormattedNote(
         }
 
         let remaining = component.delete;
+        let newLineCount = 0;
+
         while (remaining > 0 && cursor < ops.length) {
           const op = ops[cursor];
 
@@ -325,34 +331,33 @@ export default async function displayFormattedNote(
             cursor++;
             remaining--;
             logicalPos++;
+            newLineCount++;
             continue;
           }
 
           // actually remove because it was a pending operation
           if (op._suggestionInsert) {
-            const insertOpLength = op.insert.length;
-            const overlapLength = Math.min(insertOpLength, remaining);
+            const overlapLength = Math.min(op.insert.length, remaining);
 
-            if (overlapLength < insertOpLength)
+            if (overlapLength < op.insert.length)
               splitOpAt(cursor, overlapLength);
 
             ops.splice(cursor, 1);
-            remaining -= overlapLength;
-            logicalPos += overlapLength;
-
+            
             await apiFetch(`notes/${noteId}/review/split/insert`, {
               method: "POST",
               body: JSON.stringify({
                 insertOpId: op.opId,
                 deleteOpId: opId,
-                insertOpLength,
-                overlapLength,
-                deleteOpTotalLength: component.delete,
-                deleteConsumedBefore:
-                  component.delete - remaining - overlapLength,
+                insertComponentIndex: op.insertComponentIndex,
+                overlapLength: overlapLength + newLineCount,
+                deleteComponentIndex: index,
               }),
             });
 
+            remaining -= overlapLength;
+            logicalPos += overlapLength;
+            newLineCount = 0;
             continue;
           }
 

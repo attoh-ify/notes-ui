@@ -2,6 +2,7 @@ export type MutableOp = {
   insert: string;
   attributes?: Record<string, any>;
   opId: string;
+  insertComponentIndex: number;
   _suggestionInsert?: SuggestionInsert;
   _suggestionDelete?: SuggestionDelete;
   _suggestionFormat?: SuggestionFormat;
