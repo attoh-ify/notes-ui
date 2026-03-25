@@ -100,6 +100,7 @@ export default function RevisionHistorySection({
               <th style={{ padding: "12px 16px" }}>Details</th>
               <th style={{ padding: "12px 16px" }}>Created At</th>
               <th style={{ padding: "12px 16px" }}>Action</th>
+              <th style={{ padding: "12px 16px" }}>Audit</th>
               <th style={{ padding: "12px 16px" }}>Download</th>
             </tr>
           </thead>
@@ -160,6 +161,20 @@ export default function RevisionHistorySection({
                       }}
                     >
                       View
+                    </button>
+                  </td>
+                  <td>
+                    <button
+                      onClick={() => router.push(`/notes/${noteId}/edit/note-setting/audit-trail/${v.versionNumber}`)}
+                      style={{
+                        color: "#3182CE",
+                        background: "none",
+                        border: "none",
+                        cursor: "pointer",
+                        fontWeight: "600",
+                      }}
+                    >
+                      Audit
                     </button>
                   </td>
                   <td>
