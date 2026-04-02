@@ -22,14 +22,28 @@ import {
   TooltipState,
 } from "../../../../src/types";
 import { AuditTooltip } from "@/components/AuditTooltip";
-import displayFormattedNote from "@/src/lib/attribution";
 import ExitReviewModal from "@/components/ExitReviewModal";
-import ReviewSidebarModal from "@/components/ReviewSidebarModal";
+import FormatSidebarModal from "@/components/FormatSidebarModal";
+import {
+  buildReviewProjection,
+  buildFormatOverlayDelta,
+  buildFormatOverlayClearDelta,
+  FormatSuggestionItem,
+} from "@/src/lib/attribution";
 
 type ReviewAction = "ACCEPT" | "REJECT";
+
+interface ReviewSnapshot {
+  editorContents: Delta;
+  formatSuggestions: FormatSuggestionItem[];
+  activeFormatId: string | null;
+  activeSuggestion: TooltipState | null;
+}
+
 interface ReviewEntry {
   type: ReviewAction;
-  delta: Delta;
+  before: ReviewSnapshot;
+  after: ReviewSnapshot;
 }
 
 function EditContent() {
@@ -38,14 +52,19 @@ function EditContent() {
   const router = useRouter();
 
   const [note, setNote] = useState<Note | null>(null);
-  const [collaborators, setCollaborators] = useState<{
-    [email: string]: string;
-  }>({});
+  const [collaborators, setCollaborators] = useState<Record<string, string>>(
+    {},
+  );
   const [isLoading, setIsloading] = useState(true);
   const [errorMessage, setErrorMessageMessage] = useState<string | null>(null);
 
   const [isReviewing, setIsReviewing] = useState<boolean>(false);
   const [revisionLog, setRevisionLog] = useState<TextOperation[] | null>(null);
+
+  const [formatSuggestions, setFormatSuggestions] = useState<
+    FormatSuggestionItem[]
+  >([]);
+  const [activeFormatId, setActiveFormatId] = useState<string | null>(null);
   const [activeSuggestion, setActiveSuggestion] = useState<TooltipState | null>(
     null,
   );
@@ -63,6 +82,22 @@ function EditContent() {
   const rejectedChanges = useRef<Delta[]>([]);
   const acceptedOps = useRef<string[][]>([]);
 
+  const formatSuggestionsRef = useRef<FormatSuggestionItem[]>([]);
+  const activeFormatIdRef = useRef<string | null>(null);
+  const activeSuggestionRef = useRef<TooltipState | null>(null);
+
+  useEffect(() => {
+    formatSuggestionsRef.current = formatSuggestions;
+  }, [formatSuggestions]);
+
+  useEffect(() => {
+    activeFormatIdRef.current = activeFormatId;
+  }, [activeFormatId]);
+
+  useEffect(() => {
+    activeSuggestionRef.current = activeSuggestion;
+  }, [activeSuggestion]);
+
   if (!docStateRef.current && user) {
     docStateRef.current = new DocState(user.email);
   }
@@ -70,9 +105,11 @@ function EditContent() {
   useEffect(() => {
     const quill = quillRef.current;
     if (!quill) return;
-    quill.root.querySelectorAll(".active").forEach((el) => {
-      el.classList.remove("active");
-    });
+
+    quill.root
+      .querySelectorAll(".active")
+      .forEach((el) => el.classList.remove("active"));
+
     if (activeSuggestion?.groupId) {
       quill.root
         .querySelectorAll(`[data-group-id="${activeSuggestion.groupId}"]`)
@@ -89,14 +126,13 @@ function EditContent() {
       !quillRef.current &&
       shouldShowEditor
     ) {
-      const initQuill = async () => {
-        const { default: QuillModule } = await import("quill");
-        const { default: QuillCursors } = await import("quill-cursors");
+      const init = async () => {
+        const { default: Q } = await import("quill");
+        const { default: QCursors } = await import("quill-cursors");
+        Q.register("modules/cursors", QCursors);
+        registerFormats(Q);
 
-        QuillModule.register("modules/cursors", QuillCursors);
-        registerFormats(QuillModule);
-
-        quillRef.current = new QuillModule(editorRef.current!, {
+        quillRef.current = new Q(editorRef.current!, {
           theme: "snow",
           readOnly: isReviewing,
           modules: {
@@ -129,32 +165,29 @@ function EditContent() {
           quillRef.current.setContents(docStateRef.current.document, "api");
         }
 
-        quillRef.current.on("text-change", (delta, _oldDelta, source) => {
+        quillRef.current.on("text-change", (delta, _old, source) => {
           if (source !== "user") return;
           const range = quillRef.current?.getSelection();
-          if (!range) return;
-          sendCursorChange(range.index ?? 0);
+          if (range) sendCursorChange(range.index ?? 0);
+
           docStateRef.current?.queueOperation(
             delta,
-            async (operation: TextOperation) => {
+            async (op: TextOperation) => {
               isSyncComplete.current = false;
               if (!stompClientRef.current?.connected) return;
-              await sendOperationToServer(operation);
+              await sendOperationToServer(op);
               isSyncComplete.current = true;
             },
           );
         });
 
-        quillRef.current.on(
-          "selection-change",
-          async (range, _oldRange, source) => {
-            if (source !== "user") return;
-            if (!range) return;
-            sendCursorChange(range.index ?? 0);
-          },
-        );
+        quillRef.current.on("selection-change", async (range, _old, source) => {
+          if (source !== "user" || !range) return;
+          sendCursorChange(range.index ?? 0);
+        });
       };
-      initQuill();
+
+      init();
     }
   }, [isLoading, isReviewing, note?.accessRole]);
 
@@ -162,55 +195,102 @@ function EditContent() {
     const quill = quillRef.current;
     if (!revisionLog || !quill) return;
 
-    let isCurrentRequest = true;
+    let cancelled = false;
 
-    const refreshReviewView = async () => {
+    const run = async () => {
       const committedOps = revisionLog.filter((op) => op.state === "COMMITTED");
       const pendingOps = revisionLog.filter((op) => op.state === "PENDING");
 
-      const suggestionDelta = await displayFormattedNote(
-        quill,
+      if (pendingOps.length === 0) {
+        let base = new Delta();
+        for (const op of committedOps) {
+          base = base.compose(new Delta(op.delta.ops));
+        }
+        quill.setContents(base, "api");
+        setFormatSuggestions([]);
+        setHasPendingSuggestions(false);
+        return;
+      }
+
+      if (cancelled) return;
+
+      const projection = await buildReviewProjection(
         noteId as string,
         committedOps,
         pendingOps,
       );
 
-      if (isCurrentRequest && suggestionDelta !== null) {
-        if (suggestionDelta.ops.length < 1) return;
-        setHasPendingSuggestions(true);
-        quill.updateContents(suggestionDelta, "api");
+      quill.setContents(projection.visualDelta, "api");
+      setFormatSuggestions(projection.formatSuggestions);
+      setHasPendingSuggestions(true);
 
-        quill.root.removeEventListener("click", handleClick);
-        quill.root.addEventListener("click", handleClick);
-      }
+      quill.root.removeEventListener("click", handleClick);
+      quill.root.addEventListener("click", handleClick);
     };
 
-    refreshReviewView();
+    run();
 
     return () => {
-      isCurrentRequest = false;
-      quill.root.removeEventListener("click", handleClick);
+      cancelled = true;
+      quillRef.current?.root.removeEventListener("click", handleClick);
     };
   }, [revisionLog, noteId]);
 
+  const activateFormatSuggestion = useCallback((groupId: string) => {
+    const quill = quillRef.current;
+    if (!quill) return;
+
+    const fmts = formatSuggestionsRef.current;
+    const prevId = activeFormatIdRef.current;
+
+    if (prevId) {
+      const prev = fmts.find((f) => f.groupId === prevId);
+      if (prev) quill.updateContents(buildFormatOverlayClearDelta(prev), "api");
+    }
+
+    if (prevId === groupId) {
+      setActiveFormatId(null);
+      setActiveSuggestion(null);
+      return;
+    }
+
+    const item = fmts.find((f) => f.groupId === groupId);
+    if (!item) return;
+
+    quill.updateContents(buildFormatOverlayDelta(item), "api");
+    setActiveFormatId(groupId);
+    setActiveSuggestion({
+      groupId: item.groupId,
+      type: "format",
+      actorEmail: item.actorEmail,
+      createdAt: item.createdAt,
+      opIds: item.opIds,
+    });
+  }, []);
+
   const loadNoteAndJoin = useCallback(async () => {
     if (!noteId || !user) return;
+
     try {
       const noteData = await apiFetch<Note>(`notes/${noteId}`, {
         method: "GET",
       });
       setNote(noteData);
+
       if (noteData.accessRole === "VIEWER") {
         router.push(`/notes/${noteId}`);
         return;
       }
+
       const joinData = await apiFetch<JoinResponse>(`notes/${noteId}/join`, {
         method: "GET",
       });
+
       if (joinData === null) {
         setIsReviewing(true);
         return;
       }
+
       docStateRef.current!.lastSyncedRevision = joinData.revision;
       docStateRef.current!.setDocument(new Delta(joinData.delta.ops || []));
       setCollaborators(joinData.collaborators);
@@ -231,6 +311,7 @@ function EditContent() {
 
   useEffect(() => {
     if (!noteId || isLoading) return;
+
     const client = Stomp.over(
       () => new SockJS(`${API_BASE_URL}/relay?noteId=${noteId}`),
     );
@@ -241,18 +322,23 @@ function EditContent() {
       client.subscribe(`/topic/note/${noteId}`, (message) => {
         const { type, payload } = JSON.parse(message.body);
         if (type === messageType.OPERATION) handleRemoteOperation(payload);
-        if (type === messageType.COLLABORATOR_JOIN)
+        if (type === messageType.COLLABORATOR_JOIN) {
           setCollaborators(payload.collaborators);
-        if (type === messageType.COLLABORATOR_CURSOR)
+        }
+        if (type === messageType.COLLABORATOR_CURSOR) {
           handleCursorChange(payload);
-        if (type === messageType.REVIEW_IN_PROGRESS)
+        }
+        if (type === messageType.REVIEW_IN_PROGRESS) {
           handleReviewInProgress(payload);
+        }
       });
+
       if (docStateRef.current?.sentOperation && !isSyncComplete.current) {
         sendOperationToServer(docStateRef.current.sentOperation);
         isSyncComplete.current = true;
       }
     });
+
     return () => {
       if (client.active) client.disconnect();
     };
@@ -260,12 +346,14 @@ function EditContent() {
 
   useEffect(() => {
     if (!user || !isReviewing) return;
-    async function fetchData() {
+
+    (async () => {
       try {
         const noteData = await apiFetch<Note>(`notes/${noteId}`, {
           method: "GET",
         });
         setNote(noteData);
+
         const logData = await apiFetch<TextOperation[]>(
           `notes/${noteData.id}/revision-log`,
           { method: "GET" },
@@ -276,13 +364,13 @@ function EditContent() {
       } finally {
         setIsloading(false);
       }
-    }
-    fetchData();
-  }, [user, isReviewing]);
+    })();
+  }, [user, isReviewing, noteId]);
 
   useEffect(() => {
     const quill = quillRef.current;
     if (!quill) return;
+
     const toolbar = editorRef.current?.previousSibling as HTMLElement;
     const isToolbar = toolbar?.classList.contains("ql-toolbar");
 
@@ -296,88 +384,86 @@ function EditContent() {
   }, [isReviewing, isLoading]);
 
   const handleClick = useCallback((e: Event) => {
-    const targetElement = (e as MouseEvent).target as HTMLElement;
-    const suggestionNode = targetElement.closest(
-      "[data-suggestion-type]",
-    ) as HTMLElement | null;
+    const target = (e as MouseEvent).target as HTMLElement;
+    const node = target.closest("[data-suggestion-type]") as HTMLElement | null;
 
-    if (!suggestionNode) {
+    if (!node) {
       setActiveSuggestion(null);
       return;
     }
 
-    const parentInsert = suggestionNode.closest(
-      '[data-suggestion-type="insert"]',
-    );
-    let effectiveSuggestion = parentInsert || suggestionNode;
+    const type = node.getAttribute("data-suggestion-type");
+    if (type === "format") return;
 
-    const type = effectiveSuggestion.getAttribute(
+    const parentInsert = node.closest('[data-suggestion-type="insert"]');
+    const effective = (parentInsert || node) as HTMLElement;
+
+    const suggestionType = effective.getAttribute(
       "data-suggestion-type",
     ) as TooltipState["type"];
-    const groupId = effectiveSuggestion.getAttribute("data-group-id")!;
-    const actorEmail = effectiveSuggestion.getAttribute("data-actor-email")!;
-    const createdAt = effectiveSuggestion.getAttribute("data-created-at")!;
-    const opIds = JSON.parse(effectiveSuggestion.getAttribute("data-opIds")!);
+    const groupId = effective.getAttribute("data-group-id")!;
+    const actorEmail = effective.getAttribute("data-actor-email")!;
+    const createdAt = effective.getAttribute("data-created-at")!;
+    const opIds = JSON.parse(effective.getAttribute("data-opIds") ?? "[]");
 
-    setActiveSuggestion((prev) => {
-      if (prev?.groupId === groupId) return null;
-      return {
-        groupId,
-        type,
-        actorEmail,
-        createdAt,
-        opIds,
-      };
-    });
+    setActiveSuggestion((prev) =>
+      prev?.groupId === groupId
+        ? null
+        : { groupId, type: suggestionType, actorEmail, createdAt, opIds },
+    );
   }, []);
 
-  function stripSuggestionAttributes(delta: Delta) {
-    const ops = delta.ops.map((op) => {
-      if (!op.attributes) return op;
+  function snapshotAndApply(fn: () => void, type: ReviewAction) {
+    const before = captureSnapshot();
+    fn();
+    const after = captureSnapshot();
 
-      const {
-        ["suggestion-format"]: f,
-        ["suggestion-delete"]: d,
-        ["suggestion-insert"]: i,
-        ...attrs
-      } = op.attributes;
-
-      return {
-        ...op,
-        attributes: Object.keys(attrs).length ? attrs : undefined,
-      };
+    reviewHistory.current.push({
+      type,
+      before,
+      after,
     });
 
-    return new Delta(ops);
-  }
-
-  function snapshotAndApply(applyChange: () => void, type: ReviewAction) {
-    const initialState = quillRef.current!.getContents();
-    applyChange();
-    const finalState = quillRef.current!.getContents();
-
-    const undo = finalState.diff(initialState);
     if (type === "REJECT") {
-      const change = stripSuggestionAttributes(initialState.diff(finalState));
-      rejectedChanges.current.push(change);
+      rejectedChanges.current.push(
+        stripSuggestionAttributes(
+          before.editorContents.diff(after.editorContents),
+        ),
+      );
     }
-
-    reviewHistory.current.push({ type, delta: undo });
   }
 
   async function undo() {
     if (reviewHistory.current.length === 0) return;
-    const inverseEntry =
-      reviewHistory.current[reviewHistory.current.length - 1];
-    quillRef.current!.updateContents(inverseEntry.delta, "api");
 
-    const action = inverseEntry.type;
-    if (action === "REJECT") {
+    const entry = reviewHistory.current[reviewHistory.current.length - 1];
+    restoreSnapshot(entry.before);
+
+    if (entry.type === "REJECT") {
       rejectedChanges.current.pop();
-    } else if (action === "ACCEPT") {
+    } else {
       acceptedOps.current.pop();
     }
+
     reviewHistory.current.pop();
+  }
+
+  function stripSuggestionAttributes(delta: Delta): Delta {
+    return new Delta(
+      delta.ops.map((op) => {
+        if (!op.attributes) return op;
+        const {
+          "suggestion-format": _f,
+          "suggestion-delete": _d,
+          "suggestion-insert": _i,
+          ...attrs
+        } = op.attributes;
+        return {
+          ...op,
+          attributes: Object.keys(attrs).length ? attrs : undefined,
+        };
+      }),
+    );
   }
 
   function getGroupRange(
@@ -390,25 +476,52 @@ function EditContent() {
 
     if (els.length === 0) return null;
 
-    let minIndex = Infinity;
+    let minIdx = Infinity;
     let maxEnd = -Infinity;
 
     for (const el of els) {
       const blot = (quill.constructor as any).find(el, true);
       if (!blot) continue;
-
-      const index = quill.getIndex(blot);
-      const length = blot.length
-        ? blot.length()
-        : (el.textContent?.length ?? 0);
-
-      if (index < minIndex) minIndex = index;
-      if (index + length > maxEnd) maxEnd = index + length;
+      const idx = quill.getIndex(blot);
+      const len = blot.length ? blot.length() : (el.textContent?.length ?? 0);
+      if (idx < minIdx) minIdx = idx;
+      if (idx + len > maxEnd) maxEnd = idx + len;
     }
 
-    if (minIndex === Infinity) return null;
+    return minIdx === Infinity
+      ? null
+      : { index: minIdx, length: maxEnd - minIdx };
+  }
 
-    return { index: minIndex, length: maxEnd - minIndex };
+  function markInsertGroupAccepted(groupId: string) {
+    setFormatSuggestions((prev) =>
+      prev.map((item) => ({
+        ...item,
+        dependsOnInsertGroupIds: item.dependsOnInsertGroupIds.filter(
+          (id) => id !== groupId,
+        ),
+      })),
+    );
+  }
+
+  function clearSuggestionInsertGroupFromContents(groupId: string) {
+    const quill = quillRef.current!;
+    const current = quill.getContents();
+
+    const nextOps = current.ops.map((op: any) => {
+      if (!op.attributes?.["suggestion-insert"]) return op;
+
+      const insertAttr = op.attributes["suggestion-insert"];
+      if (insertAttr?.groupId !== groupId) return op;
+
+      const { ["suggestion-insert"]: _removed, ...rest } = op.attributes;
+      return {
+        ...op,
+        attributes: Object.keys(rest).length > 0 ? rest : undefined,
+      };
+    });
+
+    quill.setContents(new Delta(nextOps), "api");
   }
 
   function acceptChange(
@@ -416,109 +529,135 @@ function EditContent() {
     type: "insert" | "delete" | "format",
     opIds: string[],
   ) {
+    if (type === "format") {
+      const item = formatSuggestionsRef.current.find(
+        (f) => f.groupId === groupId,
+      );
+      if (!item) return;
+      acceptFormatSuggestion(item);
+      setActiveSuggestion(null);
+      return;
+    }
+
     snapshotAndApply(() => {
-      const quill = quillRef.current!;
-      const range = getGroupRange(groupId);
+      const suspended = suspendActiveFormatOverlay();
 
-      acceptedOps.current.push(opIds);
+      try {
+        const quill = quillRef.current!;
+        const range = getGroupRange(groupId);
+        acceptedOps.current.push(opIds);
 
-      if (!range) return;
+        if (!range) return;
 
-      if (type === "insert") {
-        quill.formatText(
-          range.index,
-          range.length,
-          { "suggestion-insert": null },
-          "api",
-        );
-      } else if (type === "delete") {
-        quill.deleteText(range.index, range.length, "api");
-      } else if (type === "format") {
-        const els = Array.from(
-          quill.root.querySelectorAll(`[data-group-id="${groupId}"]`),
-        ) as HTMLElement[];
+        if (type === "insert") {
+          clearSuggestionInsertGroupFromContents(groupId);
+          markInsertGroupAccepted(groupId);
 
-        const fmtAttrStr = els[0]?.getAttribute("data-format-attributes");
-        let fmtAttrs: Record<string, any> = {};
-        try {
-          fmtAttrs = fmtAttrStr ? JSON.parse(fmtAttrStr) : {};
-        } catch {}
-
-        quill.formatText(
-          range.index,
-          range.length,
-          { ...fmtAttrs, "suggestion-format": null },
-          "api",
-        );
+          const activeId = activeFormatIdRef.current;
+          if (activeId) {
+            const activeItem = formatSuggestionsRef.current.find(
+              (f) => f.groupId === activeId,
+            );
+            if (activeItem) {
+              quill.updateContents(buildFormatOverlayDelta(activeItem), "api");
+            }
+          }
+        } else if (type === "delete") {
+          quill.deleteText(range.index, range.length, "api");
+        }
+      } finally {
+        restoreActiveFormatOverlay(suspended);
       }
     }, "ACCEPT");
+
     setActiveSuggestion(null);
   }
 
   function rejectChange(groupId: string, type: "insert" | "delete" | "format") {
+    if (type === "format") {
+      const item = formatSuggestionsRef.current.find(
+        (f) => f.groupId === groupId,
+      );
+      if (!item) return;
+      rejectFormatSuggestion(item);
+      setActiveSuggestion(null);
+      return;
+    }
+
     snapshotAndApply(() => {
-      const quill = quillRef.current!;
-      const range = getGroupRange(groupId);
+      const suspended = suspendActiveFormatOverlay();
 
-      if (!range) return;
+      try {
+        const quill = quillRef.current!;
+        const range = getGroupRange(groupId);
+        if (!range) return;
 
-      if (type === "insert") {
-        quill.deleteText(range.index, range.length, "api");
+        if (type === "insert") {
+          quill.deleteText(range.index, range.length, "api");
 
-        const charAfter = quill.getText(range.index, 1);
-        const charBefore =
-          range.index > 0 ? quill.getText(range.index - 1, 1) : "";
+          const after = quill.getText(range.index, 1);
+          const before =
+            range.index > 0 ? quill.getText(range.index - 1, 1) : "";
 
-        if (charAfter === "\n" && (range.index === 0 || charBefore === "\n")) {
-          quill.deleteText(range.index, 1, "api");
-        }
-      } else if (type === "delete") {
-        quill.formatText(
-          range.index,
-          range.length,
-          { "suggestion-delete": null },
-          "api",
-        );
-      } else if (type === "format") {
-        const els = Array.from(
-          quill.root.querySelectorAll(`[data-group-id="${groupId}"]`),
-        ) as HTMLElement[];
-
-        if (els.length === 0) return;
-
-        const firstEl = els[0];
-        const fmtAttrStr = firstEl.getAttribute("data-format-attributes");
-
-        if (fmtAttrStr) {
-          try {
-            const fmtAttrs = JSON.parse(fmtAttrStr);
-            const nulledAttrs: Record<string, null> = {};
-
-            for (const key of Object.keys(fmtAttrs)) {
-              nulledAttrs[key] = null;
-            }
-
-            nulledAttrs["suggestion-format" as any] = null;
-            quill.formatText(range.index, range.length, nulledAttrs, "api");
-          } catch {
-            quill.formatText(
-              range.index,
-              range.length,
-              { "suggestion-format": null },
-              "api",
-            );
+          if (after === "\n" && (range.index === 0 || before === "\n")) {
+            quill.deleteText(range.index, 1, "api");
           }
-        } else {
+
+          adjustFormatSuggestionsForRejectedInsert(
+            groupId,
+            range.index,
+            range.length,
+          );
+        } else if (type === "delete") {
           quill.formatText(
             range.index,
             range.length,
-            { "suggestion-format": null },
+            { "suggestion-delete": null },
             "api",
           );
         }
+      } finally {
+        restoreActiveFormatOverlay(suspended);
       }
     }, "REJECT");
+
     setActiveSuggestion(null);
+  }
+
+  function acceptFormatSuggestion(item: FormatSuggestionItem) {
+    if (!canActOnFormatSuggestion(item)) return;
+
+    snapshotAndApply(() => {
+      const quill = quillRef.current!;
+      quill.updateContents(buildFormatOverlayClearDelta(item), "api");
+      acceptedOps.current.push(item.opIds);
+      setFormatSuggestions((prev) =>
+        prev.filter((f) => f.groupId !== item.groupId),
+      );
+      setActiveFormatId(null);
+    }, "ACCEPT");
+  }
+
+  function rejectFormatSuggestion(item: FormatSuggestionItem) {
+    if (!canActOnFormatSuggestion(item)) return;
+
+    snapshotAndApply(() => {
+      const quill = quillRef.current!;
+      quill.updateContents(buildFormatOverlayClearDelta(item), "api");
+
+      const fmtAttrs = JSON.parse(item.attributes) as Record<string, any>;
+      const nulled: Record<string, any> = {};
+      for (const k of Object.keys(fmtAttrs)) nulled[k] = null;
+
+      for (const span of item.spans) {
+        quill.formatText(span.start, span.length, nulled, "api");
+      }
+
+      setFormatSuggestions((prev) =>
+        prev.filter((f) => f.groupId !== item.groupId),
+      );
+      setActiveFormatId(null);
+    }, "REJECT");
   }
 
   async function sendCursorChange(position: number) {
@@ -546,13 +685,14 @@ function EditContent() {
   function handleRemoteOperation(payload: TextOperation) {
     const { delta, actorEmail, revision, state, createdAt } = payload;
     const docState = docStateRef.current!;
+
     if (actorEmail === user!.email) {
       docState.acknowledgeOperation(revision, (pending) => {
         isSyncComplete.current = false;
         if (pending) sendOperationToServer(pending);
       });
     } else {
-      const deltaForQuill = docState.applyRemoteOperation({
+      const d = docState.applyRemoteOperation({
         opId: "",
         delta: new Delta(delta.ops || []),
         actorEmail,
@@ -560,7 +700,7 @@ function EditContent() {
         state,
         createdAt,
       });
-      quillRef.current?.updateContents(deltaForQuill, "api");
+      quillRef.current?.updateContents(d, "api");
     }
   }
 
@@ -590,7 +730,6 @@ function EditContent() {
   }
 
   async function saveVersion(comment: string) {
-    if (!quillRef.current) return;
     try {
       await saveReviewChanges();
       await apiFetch(`notes/${noteId}/versions`, {
@@ -619,18 +758,17 @@ function EditContent() {
 
   async function handleExitReview() {
     try {
-      await apiFetch(`notes/${noteId}/review/exit`, {
-        method: "GET",
-      });
-
+      await apiFetch(`notes/${noteId}/review/exit`, { method: "GET" });
       setRevisionLog(null);
+      setFormatSuggestions([]);
+      setActiveFormatId(null);
       setHasPendingSuggestions(false);
       setIsReviewing(false);
       setShowReviewSidebarModal(false);
       setActiveSuggestion(null);
       reviewHistory.current = [];
       rejectedChanges.current = [];
-
+      acceptedOps.current = [];
       await loadNoteAndJoin();
     } catch (err) {
       console.error("Failed to exit review:", err);
@@ -638,33 +776,42 @@ function EditContent() {
   }
 
   async function openSettings() {
-    saveNote();
+    await saveNote();
     router.push(`/notes/${noteId}/edit/note-setting`);
   }
 
   async function saveReviewChanges() {
     try {
+      const currentActive = activeFormatIdRef.current;
+      if (currentActive) {
+        const item = formatSuggestionsRef.current.find(
+          (f) => f.groupId === currentActive,
+        );
+        if (item) {
+          quillRef.current?.updateContents(
+            buildFormatOverlayClearDelta(item),
+            "api",
+          );
+        }
+      }
+
       const delta =
         rejectedChanges.current.length > 0
           ? rejectedChanges.current.reduce((acc, d) => acc.compose(d))
           : new Delta();
 
-      let rejectedChange = new TextOperation(
-        "",
-        delta,
-        user!.email,
-        0,
-        OperationState.PENDING,
-        new Date().toISOString().slice(0, 19),
-      );
-
-      let acceptedOpIds = [...new Set(acceptedOps.current.flat())];
-
       await apiFetch(`notes/${noteId}/review`, {
         method: "POST",
         body: JSON.stringify({
-          rejectedChange,
-          acceptedOpIds,
+          rejectedChange: new TextOperation(
+            "",
+            delta,
+            user!.email,
+            0,
+            OperationState.PENDING,
+            new Date().toISOString().slice(0, 19),
+          ),
+          acceptedOpIds: [...new Set(acceptedOps.current.flat())],
         }),
       });
 
@@ -674,19 +821,219 @@ function EditContent() {
     }
   }
 
+  function suspendActiveFormatOverlay(): FormatSuggestionItem | null {
+    const quill = quillRef.current;
+    if (!quill) return null;
+
+    const activeId = activeFormatIdRef.current;
+    if (!activeId) return null;
+
+    const activeItem =
+      formatSuggestionsRef.current.find((f) => f.groupId === activeId) ?? null;
+
+    if (activeItem) {
+      quill.updateContents(buildFormatOverlayClearDelta(activeItem), "api");
+    }
+
+    return activeItem;
+  }
+
+  function restoreActiveFormatOverlay(item: FormatSuggestionItem | null) {
+    const quill = quillRef.current;
+    if (!quill || !item) return;
+    quill.updateContents(buildFormatOverlayDelta(item), "api");
+  }
+
+  function isInsertGroupStillPending(groupId: string): boolean {
+    const quill = quillRef.current;
+    if (!quill) return false;
+
+    return !!quill.root.querySelector(
+      `[data-suggestion-type="insert"][data-group-id="${groupId}"]`,
+    );
+  }
+
+  function canActOnFormatSuggestion(item: FormatSuggestionItem): boolean {
+    return item.dependsOnInsertGroupIds.every(
+      (groupId) => !isInsertGroupStillPending(groupId),
+    );
+  }
+
+  function transformSpansAfterDeletion(
+    spans: { start: number; length: number }[],
+    deleteStart: number,
+    deleteLength: number,
+  ) {
+    const deleteEnd = deleteStart + deleteLength;
+    const next: { start: number; length: number }[] = [];
+
+    for (const span of spans) {
+      const spanStart = span.start;
+      const spanEnd = span.start + span.length;
+
+      if (spanEnd <= deleteStart) {
+        next.push({ ...span });
+        continue;
+      }
+
+      if (spanStart >= deleteEnd) {
+        next.push({
+          start: spanStart - deleteLength,
+          length: span.length,
+        });
+        continue;
+      }
+
+      const leftLen = Math.max(0, deleteStart - spanStart);
+      const rightLen = Math.max(0, spanEnd - deleteEnd);
+
+      if (leftLen > 0) {
+        next.push({
+          start: spanStart,
+          length: leftLen,
+        });
+      }
+
+      if (rightLen > 0) {
+        next.push({
+          start: deleteStart,
+          length: rightLen,
+        });
+      }
+    }
+
+    const merged: { start: number; length: number }[] = [];
+    for (const span of next) {
+      const last = merged[merged.length - 1];
+      if (last && last.start + last.length === span.start) {
+        last.length += span.length;
+      } else {
+        merged.push({ ...span });
+      }
+    }
+
+    return merged;
+  }
+
+  function adjustFormatSuggestionsForRejectedInsert(
+    groupId: string,
+    deleteStart: number,
+    deleteLength: number,
+  ) {
+    const current = formatSuggestionsRef.current;
+
+    const updated = current
+      .map((item) => {
+        const nextSpans = transformSpansAfterDeletion(
+          item.spans,
+          deleteStart,
+          deleteLength,
+        );
+
+        return {
+          ...item,
+          spans: nextSpans,
+          dependsOnInsertGroupIds: item.dependsOnInsertGroupIds.filter(
+            (id) => id !== groupId,
+          ),
+        };
+      })
+      .filter((item) => item.spans.length > 0);
+
+    setFormatSuggestions(refreshPreviewTextsFromEditor(updated));
+
+    const activeId = activeFormatIdRef.current;
+    if (!activeId) return;
+
+    const stillExists = updated.find((item) => item.groupId === activeId);
+    if (!stillExists) {
+      setActiveFormatId(null);
+      setActiveSuggestion(null);
+    } else {
+      setActiveSuggestion((prev) =>
+        prev && prev.groupId === stillExists.groupId
+          ? {
+              ...prev,
+              groupId: stillExists.groupId,
+              type: "format",
+              actorEmail: stillExists.actorEmail,
+              createdAt: stillExists.createdAt,
+              opIds: stillExists.opIds,
+            }
+          : prev,
+      );
+    }
+  }
+
+  function refreshPreviewTextsFromEditor(items: FormatSuggestionItem[]) {
+    const quill = quillRef.current;
+    if (!quill) return items;
+
+    return items.map((item) => {
+      const text = item.spans
+        .map((span) => quill.getText(span.start, span.length))
+        .join("")
+        .replace(/\n/g, " ")
+        .slice(0, 60);
+
+      return {
+        ...item,
+        previewText: text,
+      };
+    });
+  }
+
+  function cloneFormatSuggestions(
+    items: FormatSuggestionItem[],
+  ): FormatSuggestionItem[] {
+    return items.map((item) => ({
+      ...item,
+      opIds: [...item.opIds],
+      spans: item.spans.map((s) => ({ ...s })),
+      dependsOnInsertGroupIds: [...item.dependsOnInsertGroupIds],
+    }));
+  }
+
+  function captureSnapshot(): ReviewSnapshot {
+    return {
+      editorContents: quillRef.current!.getContents(),
+      formatSuggestions: cloneFormatSuggestions(formatSuggestionsRef.current),
+      activeFormatId: activeFormatIdRef.current,
+      activeSuggestion: activeSuggestionRef.current
+        ? {
+            ...activeSuggestionRef.current,
+            opIds: [...activeSuggestionRef.current.opIds],
+          }
+        : null,
+    };
+  }
+
+  function restoreSnapshot(snapshot: ReviewSnapshot) {
+    const quill = quillRef.current!;
+    quill.setContents(snapshot.editorContents, "api");
+    setFormatSuggestions(cloneFormatSuggestions(snapshot.formatSuggestions));
+    setActiveFormatId(null);
+    setActiveSuggestion(null);
+  }
+
   if (loadingUser)
     return <div className="container-wide">Checking session...</div>;
+
   if (!user) {
     router.push("/login");
     return null;
   }
+
   if (isLoading) return <div className="container-wide">Loading note...</div>;
-  if (errorMessage)
+
+  if (errorMessage) {
     return (
       <div className="container-wide" style={{ color: "red" }}>
         {errorMessage}
       </div>
     );
+  }
+
   if (!note) return <div className="container-wide">Note not found.</div>;
 
   return (
@@ -734,16 +1081,14 @@ function EditContent() {
                 <span style={{ color: "var(--textmuted)" }}>
                   Collaborators:{" "}
                 </span>
-                {Object.entries(collaborators).map(
-                  ([email, color], index, array) => (
-                    <span key={email} style={{ color, fontWeight: "600" }}>
-                      {email === user?.email ? "You" : email}
-                      {index < array.length - 1 && (
-                        <span style={{ color, marginLeft: "2px" }}>,</span>
-                      )}
-                    </span>
-                  ),
-                )}
+                {Object.entries(collaborators).map(([email, color], i, arr) => (
+                  <span key={email} style={{ color, fontWeight: "600" }}>
+                    {email === user?.email ? "You" : email}
+                    {i < arr.length - 1 && (
+                      <span style={{ color, marginLeft: "2px" }}>,</span>
+                    )}
+                  </span>
+                ))}
               </>
             ) : (
               <span style={{ color: "var(--textmuted)" }}>Working alone</span>
@@ -776,16 +1121,19 @@ function EditContent() {
                 View
               </button>
             )}
+
             {isOwner.current && !isReviewing && (
               <button className="btn-outline" onClick={handleReviewNote}>
                 Review
               </button>
             )}
+
             {!isReviewing && (
               <button className="btn-primary" onClick={saveNote}>
                 Save changes
               </button>
             )}
+
             {isReviewing && isOwner.current && (
               <button
                 className="btn-secondary"
@@ -813,27 +1161,25 @@ function EditContent() {
             marginBottom: "1rem",
             display: "flex",
             alignItems: "center",
-            justifyContent: "space-between",
+            gap: "8px",
             fontSize: "0.875rem",
             fontWeight: "500",
           }}
         >
-          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-            <span style={{ fontSize: "1.2rem" }}>📝</span>
-            <span>
-              {note.accessRole === "OWNER" ? (
-                <>
-                  <strong>Review Mode:</strong> You are reviewing proposed
-                  changes. Accept or reject them to update the master version.
-                </>
-              ) : (
-                <>
-                  <strong>Review in Progress:</strong> The owner is currently
-                  reviewing a proposed version of this note.
-                </>
-              )}
-            </span>
-          </div>
+          <span style={{ fontSize: "1.2rem" }}>📝</span>
+          <span>
+            {note.accessRole === "OWNER" ? (
+              <>
+                <strong>Review Mode:</strong> You are reviewing proposed
+                changes. Accept or reject them.
+              </>
+            ) : (
+              <>
+                <strong>Review in Progress:</strong> The owner is reviewing a
+                proposed version of this note.
+              </>
+            )}
+          </span>
         </div>
       )}
 
@@ -859,8 +1205,8 @@ function EditContent() {
           <p
             style={{ color: "var(--text-muted)", maxWidth: "400px", margin: 0 }}
           >
-            The owner is currently reviewing proposed changes. The editor will
-            be available once the review is complete.
+            The owner is reviewing proposed changes. The editor will be
+            available once review is complete.
           </p>
         </div>
       ) : (
@@ -892,8 +1238,7 @@ function EditContent() {
                   margin: 0,
                 }}
               >
-                All proposed changes have been reviewed. Exit review mode when
-                ready.
+                All changes have been reviewed.
               </p>
             </div>
           )}
@@ -902,10 +1247,19 @@ function EditContent() {
             style={{ display: "flex", gap: "1rem", alignItems: "flex-start" }}
           >
             {showReviewSidebarModal && isOwner.current && (
-              <ReviewSidebarModal
+              <FormatSidebarModal
                 open={showReviewSidebarModal}
                 hasPendingSuggestions={hasPendingSuggestions}
-                onClose={hasPendingSuggestions ? () => setShowExitReviewModal(true) : () => handleExitReview()}
+                formatSuggestions={formatSuggestions.filter(
+                  canActOnFormatSuggestion,
+                )}
+                activeFormatId={activeFormatId}
+                onActivateFormat={activateFormatSuggestion}
+                onClose={
+                  hasPendingSuggestions
+                    ? () => setShowExitReviewModal(true)
+                    : handleExitReview
+                }
                 onSave={saveVersion}
               />
             )}
@@ -918,7 +1272,6 @@ function EditContent() {
                 minHeight: "500px",
                 borderRadius: "8px",
                 padding: "2px",
-                transition: "border 0.2s ease",
                 border: isReviewing
                   ? "2px solid #fcd34b"
                   : "1px solid var(--border)",
@@ -939,7 +1292,6 @@ function EditContent() {
                   lineHeight: "1.6",
                   padding: "2rem",
                   border: "none",
-                  resize: "none",
                   cursor: isReviewing ? "default" : "text",
                 }}
               />

@@ -134,60 +134,49 @@ body {
 }
 
 .suggestion-insert {
-  background-color: #e3f2fd;
-  border: 1px solid #1976d2;
+  background-color: #dbeafe;   /* soft blue */
   border-radius: 2px;
-  padding: 0 2px;
+  padding: 0 1px;
   cursor: pointer;
-  transition:
-    background-color 0.15s,
-    box-shadow 0.15s;
+  transition: background-color 0.15s;
 }
 .suggestion-insert:hover {
-  background-color: #bbdefb;
+  background-color: #bfdbfe;
 }
 .suggestion-insert.active {
-  background-color: #90caf9;
-  box-shadow: 0 0 0 2px #1976d2;
+  background-color: #60a5fa;
 }
 
 .suggestion-delete {
   text-decoration: line-through;
-  text-decoration-color: #c62828;
-  background-color: #ffebee;
-  border: 1px solid #c62828;
+  text-decoration-color: #dc2626;
+  background-color: #fee2e2;   /* soft red */
   border-radius: 2px;
-  padding: 0 2px;
+  padding: 0 1px;
   cursor: pointer;
-  color: #c62828;
-  transition:
-    background-color 0.15s,
-    box-shadow 0.15s;
+  color: #b91c1c;
+  transition: background-color 0.15s;
 }
 .suggestion-delete:hover {
-  background-color: #ffcdd2;
+  background-color: #fecaca;
 }
 .suggestion-delete.active {
-  background-color: #ef9a9a;
-  box-shadow: 0 0 0 2px #c62828;
+  background-color: #f87171;
 }
 
+/* Format marker — invisible by default, only shown when activated from sidebar */
 .suggestion-format {
-  background-color: #fffde7;
-  border: 1px solid #f9a825;
+  background-color: #fef9c3;   /* soft yellow */
   border-radius: 2px;
-  padding: 0 2px;
+  padding: 0 1px;
   cursor: pointer;
-  transition:
-    background-color 0.15s,
-    box-shadow 0.15s;
+  transition: background-color 0.15s;
 }
 .suggestion-format:hover {
-  background-color: #fff9c4;
+  background-color: #fef08a;
 }
 .suggestion-format.active {
-  background-color: #ffe082;
-  box-shadow: 0 0 0 2px #f9a825;
+  background-color: #facc15;
 }
 
 /* .ql-toolbar {
