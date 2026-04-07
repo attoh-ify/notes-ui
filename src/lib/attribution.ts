@@ -318,6 +318,33 @@ function stripAttrsFromRuns(runs: ReviewRun[], indices: number[], attrs: Record<
   }
 }
 
+function isOnlyWhitespaceRetain(
+  runs: ReviewRun[],
+  logicalStart: number,
+  retainLength: number,
+): boolean {
+  const logicalEnd = logicalStart + retainLength;
+  let sawOverlap = false;
+
+  for (const run of runs) {
+    if (run.deleteSuggestion) continue;
+
+    const runStart = run.logicalStart;
+    const runEnd = run.logicalStart + run.text.length;
+
+    const overlaps = runEnd > logicalStart && runStart < logicalEnd;
+    if (!overlaps) continue;
+
+    sawOverlap = true;
+
+    if (!/^\s+$/.test(run.text)) {
+      return false;
+    }
+  }
+
+  return sawOverlap;
+}
+
 function isOnlyNewlineRetain(
   runs: ReviewRun[],
   logicalStart: number,
@@ -526,9 +553,27 @@ export async function buildReviewProjection(
         currentInsertGroup = null;
         currentDeleteGroup = null;
 
-        const newLineOnly = isOnlyNewlineRetain(runs, localLogPos, component.retain);
+        const newlineOnly = isOnlyNewlineRetain(runs, localLogPos, component.retain);
+        const whitespaceOnly = isOnlyWhitespaceRetain(runs, localLogPos, component.retain);
 
-        if (!newLineOnly) {
+        if ((newlineOnly || whitespaceOnly) && currentFormatGroup) {
+          const last = currentFormatGroup.spans[currentFormatGroup.spans.length - 1];
+
+          if (last && last.start + last.length === localLogPos) {
+            last.length += component.retain;
+          } else {
+            currentFormatGroup.spans.push({
+              start: localLogPos,
+              length: component.retain,
+            });
+          }
+
+          pendingFormatBridge = {
+            actorEmail,
+            attributes: currentFormatGroup.attributes,
+            groupId: currentFormatGroup.groupId,
+          };
+        } else {
           currentFormatGroup = null;
           pendingFormatBridge = null;
         }

@@ -34,17 +34,38 @@ import {
 
 type ReviewAction = "ACCEPT" | "REJECT";
 
-interface ReviewSnapshot {
-  editorContents: Delta;
-  formatSuggestions: FormatSuggestionItem[];
-  activeFormatId: string | null;
-  activeSuggestion: TooltipState | null;
-}
-
 interface ReviewEntry {
   type: ReviewAction;
-  before: ReviewSnapshot;
-  after: ReviewSnapshot;
+  undoDelta: Delta;
+  redoDelta: Delta;
+  beforeFormatSuggestions: FormatSuggestionItem[];
+  afterFormatSuggestions: FormatSuggestionItem[];
+  beforeActiveFormatId: string | null;
+  afterActiveFormatId: string | null;
+  beforeActiveSuggestion: TooltipState | null;
+  afterActiveSuggestion: TooltipState | null;
+}
+
+type RuntimeActionKind = "accept-insert" | "reject-insert";
+
+interface ReviewSegment {
+  id: string;
+  text: string;
+  attrs: Record<string, any>;
+  references: OpReference[];
+}
+
+interface RuntimeSnapshot {
+  segments: ReviewSegment[];
+  formatSuggestions: FormatSuggestionItem[];
+  activeSuggestion: TooltipState | null;
+  activeFormatId: string | null;
+}
+
+interface RuntimeActionEntry {
+  kind: RuntimeActionKind;
+  before: RuntimeSnapshot;
+  after: RuntimeSnapshot;
 }
 
 function EditContent() {
@@ -82,6 +103,9 @@ function EditContent() {
   const reviewHistory = useRef<ReviewEntry[]>([]);
   const rejectedChanges = useRef<Delta[]>([]);
   const acceptedReferences = useRef<OpReference[][]>([]);
+  const reviewSegmentsRef = useRef<ReviewSegment[]>([]);
+  const runtimeHistoryRef = useRef<RuntimeActionEntry[]>([]);
+  let _runtimeSegCtr = 0;
 
   const formatSuggestionsRef = useRef<FormatSuggestionItem[]>([]);
   const activeFormatIdRef = useRef<string | null>(null);
@@ -220,11 +244,13 @@ function EditContent() {
         committedOps,
         pendingOps,
       );
-      console.log(projection)
 
       quill.setContents(projection.visualDelta, "api");
       setFormatSuggestions(projection.formatSuggestions);
       setHasPendingSuggestions(true);
+
+      initializeRuntimeFromProjection(projection);
+      runtimeHistoryRef.current = [];
 
       quill.root.removeEventListener("click", handleClick);
       quill.root.addEventListener("click", handleClick);
@@ -414,31 +440,80 @@ function EditContent() {
     );
   }, []);
 
+  function cloneTooltipState(
+    tooltip: TooltipState | null,
+  ): TooltipState | null {
+    return tooltip
+      ? {
+          ...tooltip,
+          references: [...tooltip.references],
+        }
+      : null;
+  }
+
   function snapshotAndApply(fn: () => void, type: ReviewAction) {
-    const before = captureSnapshot();
+    const quill = quillRef.current!;
+    const beforeContents = quill.getContents();
+    const beforeFormatSuggestions = cloneFormatSuggestions(formatSuggestionsRef.current);
+    const beforeActiveFormatId = activeFormatIdRef.current;
+    const beforeActiveSuggestion = cloneTooltipState(activeSuggestionRef.current);
+
     fn();
-    const after = captureSnapshot();
+
+    const afterContents = quill.getContents();
+    const afterFormatSuggestions = cloneFormatSuggestions(formatSuggestionsRef.current);
+    const afterActiveFormatId = activeFormatIdRef.current;
+    const afterActiveSuggestion = cloneTooltipState(activeSuggestionRef.current);
+
+    const redoDelta = beforeContents.diff(afterContents);
+    const undoDelta = afterContents.diff(beforeContents);
 
     reviewHistory.current.push({
       type,
-      before,
-      after,
+      undoDelta,
+      redoDelta,
+      beforeFormatSuggestions,
+      afterFormatSuggestions,
+      beforeActiveFormatId,
+      afterActiveFormatId,
+      beforeActiveSuggestion,
+      afterActiveSuggestion,
     });
 
     if (type === "REJECT") {
-      rejectedChanges.current.push(
-        stripSuggestionAttributes(
-          before.editorContents.diff(after.editorContents),
-        ),
-      );
+      rejectedChanges.current.push(stripSuggestionAttributes(redoDelta));
     }
   }
 
   async function undo() {
+
+    if (runtimeHistoryRef.current.length > 0) {
+      const entry = runtimeHistoryRef.current.pop()!;
+      restoreRuntimeSnapshot(entry.before);
+
+      if (entry.kind === "accept-insert") {
+        acceptedReferences.current.pop();
+      } else if (entry.kind === "reject-insert") {
+        rejectedChanges.current.pop();
+      }
+
+      return;
+    }
+
     if (reviewHistory.current.length === 0) return;
 
     const entry = reviewHistory.current[reviewHistory.current.length - 1];
-    restoreSnapshot(entry.before);
+    const quill = quillRef.current!;
+    const suspended = suspendActiveFormatOverlay();
+
+    try {
+      quill.updateContents(entry.undoDelta, "api");
+      setFormatSuggestions(cloneFormatSuggestions(entry.beforeFormatSuggestions));
+      setActiveFormatId(entry.beforeActiveFormatId);
+      setActiveSuggestion(cloneTooltipState(entry.beforeActiveSuggestion));
+    } finally {
+      restoreActiveFormatOverlay(suspended);
+    }
 
     if (entry.type === "REJECT") {
       rejectedChanges.current.pop();
@@ -494,25 +569,6 @@ function EditContent() {
       : { index: minIdx, length: maxEnd - minIdx };
   }
 
-  function markInsertGroupAccepted(groupId: string) {
-    setFormatSuggestions((prev) =>
-      prev.map((item) => ({
-        ...item,
-        dependsOnInsertGroupIds: item.dependsOnInsertGroupIds.filter(
-          (id) => id !== groupId,
-        ),
-      })),
-    );
-  }
-
-  function clearSuggestionInsertGroupFromContents(groupId: string) {
-    const quill = quillRef.current!;
-    const range = getGroupRange(groupId);
-    if (!range) return;
-
-    quill.formatText(range.index, range.length, { "suggestion-insert": null }, "api");
-  }
-
   function acceptChange(
     groupId: string,
     type: "insert" | "delete" | "format",
@@ -533,14 +589,21 @@ function EditContent() {
 
       try {
         const quill = quillRef.current!;
-        const range = getGroupRange(groupId);
         acceptedReferences.current.push(references);
 
-        if (!range) return;
-
         if (type === "insert") {
-          clearSuggestionInsertGroupFromContents(groupId);
-          markInsertGroupAccepted(groupId);
+          const before = captureRuntimeSnapshot();
+
+          removeInsertSuggestionFromSegments(groupId);
+          refreshEditorFromRuntime();
+          updateFormatSuggestionsAfterInsertAccept(groupId);
+
+          const after = captureRuntimeSnapshot();
+          runtimeHistoryRef.current.push({
+            kind: "accept-insert",
+            before: cloneRuntimeSnapshot(before),
+            after: cloneRuntimeSnapshot(after),
+          });
 
           const activeId = activeFormatIdRef.current;
           if (activeId) {
@@ -552,6 +615,10 @@ function EditContent() {
             }
           }
         } else if (type === "delete") {
+          const range = getGroupRange(groupId);
+
+          if (!range) return;
+
           quill.deleteText(range.index, range.length, "api");
         }
       } finally {
@@ -559,7 +626,9 @@ function EditContent() {
       }
     }, "ACCEPT");
 
-    setActiveSuggestion(null);
+    setActiveSuggestion((prev) =>
+      prev?.groupId === groupId ? null : prev,
+    );
   }
 
   function rejectChange(groupId: string, type: "insert" | "delete" | "format") {
@@ -582,21 +651,36 @@ function EditContent() {
         if (!range) return;
 
         if (type === "insert") {
-          quill.deleteText(range.index, range.length, "api");
+          const runtimeRange = findInsertGroupRangeInRuntime(groupId);
+          const before = captureRuntimeSnapshot();
 
-          const after = quill.getText(range.index, 1);
-          const before =
-            range.index > 0 ? quill.getText(range.index - 1, 1) : "";
+          if (!runtimeRange) return;
 
-          if (after === "\n" && (range.index === 0 || before === "\n")) {
-            quill.deleteText(range.index, 1, "api");
-          }
+          deleteInsertGroupSegments(groupId);
+          refreshEditorFromRuntime();
 
-          adjustFormatSuggestionsForRejectedInsert(
-            groupId,
-            range.index,
-            range.length,
-          );
+          const updated = formatSuggestionsRef.current
+            .map((item) => ({
+              ...item,
+              spans: transformSpansAfterRuntimeInsertRemoval(
+                item.spans,
+                runtimeRange.index,
+                runtimeRange.length,
+              ),
+              dependsOnInsertGroupIds: item.dependsOnInsertGroupIds.filter(
+                (id) => id !== groupId,
+              ),
+            }))
+            .filter((item) => item.spans.length > 0);
+
+          setFormatSuggestions(refreshPreviewTextsAgainstRuntime(updated));
+
+          const after = captureRuntimeSnapshot();
+          runtimeHistoryRef.current.push({
+            kind: "reject-insert",
+            before: cloneRuntimeSnapshot(before),
+            after: cloneRuntimeSnapshot(after),
+          });
         } else if (type === "delete") {
           quill.formatText(
             range.index,
@@ -610,7 +694,9 @@ function EditContent() {
       }
     }, "REJECT");
 
-    setActiveSuggestion(null);
+    setActiveSuggestion((prev) =>
+      prev?.groupId === groupId ? null : prev,
+    );
   }
 
   function acceptFormatSuggestion(item: FormatSuggestionItem) {
@@ -848,7 +934,198 @@ function EditContent() {
     );
   }
 
-  function transformSpansAfterDeletion(
+  function cloneFormatSuggestions(
+    items: FormatSuggestionItem[],
+  ): FormatSuggestionItem[] {
+    return items.map((item) => ({
+      ...item,
+      references: [...item.references],
+      spans: item.spans.map((s) => ({ ...s })),
+      dependsOnInsertGroupIds: [...item.dependsOnInsertGroupIds],
+    }));
+  }
+
+  function closeAuditTooltip() {
+    const quill = quillRef.current;
+
+    if (
+      quill &&
+      activeSuggestionRef.current?.type === "format" &&
+      activeFormatIdRef.current
+    ) {
+      const activeItem = formatSuggestionsRef.current.find(
+        (f) => f.groupId === activeFormatIdRef.current,
+      );
+
+      if (activeItem) {
+        quill.updateContents(buildFormatOverlayClearDelta(activeItem), "api");
+      }
+
+      setActiveFormatId(null);
+    }
+
+    setActiveSuggestion(null);
+  }
+
+  function nextRuntimeSegmentId() {
+    _runtimeSegCtr += 1;
+    return `seg_${_runtimeSegCtr}`;
+  }
+
+  function cloneSegments(items: ReviewSegment[]): ReviewSegment[] {
+    return items.map((s) => ({
+      ...s,
+      attrs: { ...s.attrs },
+      references: [...s.references],
+    }));
+  }
+
+  function cloneRuntimeSnapshot(snapshot: RuntimeSnapshot): RuntimeSnapshot {
+    return {
+      segments: cloneSegments(snapshot.segments),
+      formatSuggestions: cloneFormatSuggestions(snapshot.formatSuggestions),
+      activeSuggestion: snapshot.activeSuggestion
+        ? {
+            ...snapshot.activeSuggestion,
+            references: [...snapshot.activeSuggestion.references],
+          }
+        : null,
+      activeFormatId: snapshot.activeFormatId,
+    };
+  }
+
+  function deltaToSegments(delta: Delta): ReviewSegment[] {
+    const ops = delta.ops ?? [];
+
+    return ops
+      .filter((op: any) => typeof op.insert === "string")
+      .map((op: any) => ({
+        id: nextRuntimeSegmentId(),
+        text: op.insert,
+        attrs: { ...(op.attributes ?? {}) },
+        references: [...(op.attributes?.["suggestion-insert"]?.references ?? [])],
+    }));
+  }
+
+  function mergeAdjacentSegments(segments: ReviewSegment[]): ReviewSegment[] {
+    const merged: ReviewSegment[] = [];
+
+    for (const seg of segments) {
+      const last = merged[merged.length - 1];
+
+      const canMerge =
+        !!last &&
+        JSON.stringify(last.attrs ?? {}) === JSON.stringify(seg.attrs ?? {}) &&
+        JSON.stringify(last.references ?? []) === JSON.stringify(seg.references ?? []);
+
+      if (canMerge) {
+        last.text += seg.text;
+      } else {
+        merged.push({
+          ...seg,
+          attrs: { ...seg.attrs },
+          references: [...seg.references],
+        });
+      }
+    }
+
+    return merged;
+  }
+
+  function segmentsToDelta(segments: ReviewSegment[]): Delta {
+    const delta = new Delta();
+
+    for (const seg of segments) {
+      if (Object.keys(seg.attrs).length > 0) {
+        delta.insert(seg.text, seg.attrs);
+      } else {
+        delta.insert(seg.text);
+      }
+    }
+
+    return delta;
+  }
+
+  function captureRuntimeSnapshot(): RuntimeSnapshot {
+    return {
+      segments: cloneSegments(reviewSegmentsRef.current),
+      formatSuggestions: cloneFormatSuggestions(formatSuggestionsRef.current),
+      activeSuggestion: activeSuggestionRef.current
+        ? {
+            ...activeSuggestionRef.current,
+            references: [...activeSuggestionRef.current.references],
+          }
+        : null,
+      activeFormatId: activeFormatIdRef.current,
+    };
+  }
+
+  function restoreRuntimeSnapshot(snapshot: RuntimeSnapshot) {
+    reviewSegmentsRef.current = cloneSegments(snapshot.segments);
+
+    const nextDelta = segmentsToDelta(reviewSegmentsRef.current);
+    quillRef.current!.setContents(nextDelta, "api");
+
+    setFormatSuggestions(cloneFormatSuggestions(snapshot.formatSuggestions));
+    setActiveSuggestion(
+      snapshot.activeSuggestion
+        ? {
+            ...snapshot.activeSuggestion,
+            references: [...snapshot.activeSuggestion.references],
+          }
+        : null,
+    );
+    setActiveFormatId(snapshot.activeFormatId);
+  }
+
+  function initializeRuntimeFromProjection(projection: {
+    visualDelta: Delta;
+    formatSuggestions: FormatSuggestionItem[];
+  }) {
+    reviewSegmentsRef.current = deltaToSegments(projection.visualDelta);
+  }
+
+  function removeInsertSuggestionFromSegments(groupId: string) {
+    reviewSegmentsRef.current = mergeAdjacentSegments(
+      reviewSegmentsRef.current.map((seg) => {
+        const insertAttr = seg.attrs["suggestion-insert"];
+        if (!insertAttr || insertAttr.groupId !== groupId) return seg;
+
+        const { ["suggestion-insert"]: _removed, ...rest } = seg.attrs;
+        return {
+          ...seg,
+          attrs: Object.keys(rest).length > 0 ? rest : {},
+        };
+      }),
+    );
+  }
+
+  function deleteInsertGroupSegments(groupId: string) {
+    reviewSegmentsRef.current = mergeAdjacentSegments(
+      reviewSegmentsRef.current.filter((seg) => {
+        const insertAttr = seg.attrs["suggestion-insert"];
+        return !(insertAttr && insertAttr.groupId === groupId);
+      }),
+    );
+  }
+
+  function refreshEditorFromRuntime() {
+    const nextDelta = segmentsToDelta(reviewSegmentsRef.current);
+    quillRef.current!.setContents(nextDelta, "api");
+  }
+
+  function updateFormatSuggestionsAfterInsertAccept(groupId: string) {
+    setFormatSuggestions((prev) =>
+      prev.map((item) => ({
+        ...item,
+        dependsOnInsertGroupIds: item.dependsOnInsertGroupIds.filter(
+          (id) => id !== groupId,
+        ),
+      })),
+    );
+  }
+
+  function transformSpansAfterRuntimeInsertRemoval(
     spans: { start: number; length: number }[],
     deleteStart: number,
     deleteLength: number,
@@ -877,17 +1154,10 @@ function EditContent() {
       const rightLen = Math.max(0, spanEnd - deleteEnd);
 
       if (leftLen > 0) {
-        next.push({
-          start: spanStart,
-          length: leftLen,
-        });
+        next.push({ start: spanStart, length: leftLen });
       }
-
       if (rightLen > 0) {
-        next.push({
-          start: deleteStart,
-          length: rightLen,
-        });
+        next.push({ start: deleteStart, length: rightLen });
       }
     }
 
@@ -904,63 +1174,37 @@ function EditContent() {
     return merged;
   }
 
-  function adjustFormatSuggestionsForRejectedInsert(
-    groupId: string,
-    deleteStart: number,
-    deleteLength: number,
-  ) {
-    const current = formatSuggestionsRef.current;
+  function findInsertGroupRangeInRuntime(groupId: string): { index: number; length: number } | null {
+    let cursor = 0;
+    let start = -1;
+    let end = -1;
 
-    const updated = current
-      .map((item) => {
-        const nextSpans = transformSpansAfterDeletion(
-          item.spans,
-          deleteStart,
-          deleteLength,
-        );
+    for (const seg of reviewSegmentsRef.current) {
+      const len = seg.text.length;
+      const insertAttr = seg.attrs["suggestion-insert"];
 
-        return {
-          ...item,
-          spans: nextSpans,
-          dependsOnInsertGroupIds: item.dependsOnInsertGroupIds.filter(
-            (id) => id !== groupId,
-          ),
-        };
-      })
-      .filter((item) => item.spans.length > 0);
+      if (insertAttr?.groupId === groupId) {
+        if (start === -1) start = cursor;
+        end = cursor + len;
+      }
 
-    setFormatSuggestions(refreshPreviewTextsFromEditor(updated));
-
-    const activeId = activeFormatIdRef.current;
-    if (!activeId) return;
-
-    const stillExists = updated.find((item) => item.groupId === activeId);
-    if (!stillExists) {
-      setActiveFormatId(null);
-      setActiveSuggestion(null);
-    } else {
-      setActiveSuggestion((prev) =>
-        prev && prev.groupId === stillExists.groupId
-          ? {
-              ...prev,
-              groupId: stillExists.groupId,
-              type: "format",
-              actorEmail: stillExists.actorEmail,
-              createdAt: stillExists.createdAt,
-              references: stillExists.references,
-            }
-          : prev,
-      );
+      cursor += len;
     }
+
+    if (start === -1 || end === -1) return null;
+    return { index: start, length: end - start };
   }
 
-  function refreshPreviewTextsFromEditor(items: FormatSuggestionItem[]) {
-    const quill = quillRef.current;
-    if (!quill) return items;
+  function refreshPreviewTextsAgainstRuntime(items: FormatSuggestionItem[]) {
+    const delta = segmentsToDelta(reviewSegmentsRef.current);
+    const temp = quillRef.current!;
+    const current = temp.getContents();
 
-    return items.map((item) => {
+    temp.setContents(delta, "api");
+
+    const refreshed = items.map((item) => {
       const text = item.spans
-        .map((span) => quill.getText(span.start, span.length))
+        .map((span) => temp.getText(span.start, span.length))
         .join("")
         .replace(/\n/g, " ↵ ")
         .slice(0, 60);
@@ -970,62 +1214,10 @@ function EditContent() {
         previewText: text,
       };
     });
+
+    temp.setContents(current, "api");
+    return refreshed;
   }
-
-  function cloneFormatSuggestions(
-    items: FormatSuggestionItem[],
-  ): FormatSuggestionItem[] {
-    return items.map((item) => ({
-      ...item,
-      references: [...item.references],
-      spans: item.spans.map((s) => ({ ...s })),
-      dependsOnInsertGroupIds: [...item.dependsOnInsertGroupIds],
-    }));
-  }
-
-  function captureSnapshot(): ReviewSnapshot {
-    return {
-      editorContents: quillRef.current!.getContents(),
-      formatSuggestions: cloneFormatSuggestions(formatSuggestionsRef.current),
-      activeFormatId: activeFormatIdRef.current,
-      activeSuggestion: activeSuggestionRef.current
-        ? {
-            ...activeSuggestionRef.current,
-            references: [...activeSuggestionRef.current.references],
-          }
-        : null,
-    };
-  }
-
-  function restoreSnapshot(snapshot: ReviewSnapshot) {
-    const quill = quillRef.current!;
-    quill.setContents(snapshot.editorContents, "api");
-    setFormatSuggestions(cloneFormatSuggestions(snapshot.formatSuggestions));
-    setActiveFormatId(null);
-    setActiveSuggestion(null);
-  }
-
-  function closeAuditTooltip() {
-  const quill = quillRef.current;
-
-  if (
-    quill &&
-    activeSuggestionRef.current?.type === "format" &&
-    activeFormatIdRef.current
-  ) {
-    const activeItem = formatSuggestionsRef.current.find(
-      (f) => f.groupId === activeFormatIdRef.current,
-    );
-
-    if (activeItem) {
-      quill.updateContents(buildFormatOverlayClearDelta(activeItem), "api");
-    }
-
-    setActiveFormatId(null);
-  }
-
-  setActiveSuggestion(null);
-}
 
   if (loadingUser)
     return <div className="container-wide">Checking session...</div>;
