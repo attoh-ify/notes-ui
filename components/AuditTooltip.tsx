@@ -1,8 +1,9 @@
+import { OpReference } from "@/src/lib/attribution";
 import { TooltipState, TYPE_CONFIG } from "@/src/types";
 
 interface AuditTooltipProps {
   tooltip: TooltipState;
-  onAccept: (groupId: string, type: "insert" | "delete" | "format", opIds: string[]) => void;
+  onAccept: (groupId: string, type: "insert" | "delete" | "format", opIds: OpReference[]) => void;
   onReject: (groupId: string, type: "insert" | "delete" | "format") => void;
   onClose: () => void;
 }
@@ -64,7 +65,7 @@ export function AuditTooltip({ tooltip, onAccept, onReject, onClose }: AuditTool
 
       <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
         <button
-          onClick={() => onAccept(tooltip.groupId, tooltip.type, tooltip.opIds)}
+          onClick={() => onAccept(tooltip.groupId, tooltip.type, tooltip.references)}
           style={{ background: config.color, color: "#fff", border: "none", borderRadius: "6px", padding: "9px 0", cursor: "pointer", fontWeight: 600, fontSize: "0.82rem", width: "100%" }}
         >
           ✓ Accept change

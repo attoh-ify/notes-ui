@@ -2,8 +2,8 @@ import type Quill from "quill";
 
 let formatsRegistered = false;
 
-const getJsonObject = (node: HTMLElement, opIds: string, fallback: any) => {
-  const val = node.getAttribute(opIds);
+const getJsonObject = (node: HTMLElement, references: string, fallback: any) => {
+  const val = node.getAttribute(references);
   try {
     return val ? JSON.parse(val) : fallback;
   } catch {
@@ -25,18 +25,18 @@ export function registerFormats(QuillModule: typeof Quill) {
       groupId: string;
       actorEmail: string;
       createdAt: string;
-      opIds: string;
+      references: string;
     }) {
       const node = super.create();
 
-      const ids = Array.isArray(data.opIds) ? data.opIds : [];
+      const ids = Array.isArray(data.references) ? data.references : [];
       const uniqueIds = [...new Set(ids)];
 
       node.setAttribute("data-group-id", data.groupId);
       node.setAttribute("data-suggestion-type", "insert");
       node.setAttribute("data-actor-email", data.actorEmail ?? "");
       node.setAttribute("data-created-at", data.createdAt ?? "");
-      node.setAttribute("data-opIds", JSON.stringify(uniqueIds));
+      node.setAttribute("data-references", JSON.stringify(uniqueIds));
       node.classList.add("suggestion-insert");
       return node;
     }
@@ -46,7 +46,7 @@ export function registerFormats(QuillModule: typeof Quill) {
         groupId: node.getAttribute("data-group-id") ?? "",
         actorEmail: node.getAttribute("data-actor-email") ?? "",
         createdAt: node.getAttribute("data-created-at") ?? "",
-        opIds: getJsonObject(node, "data-opIds", []),
+        references: getJsonObject(node, "data-references", []),
       };
     }
   }
@@ -59,18 +59,18 @@ export function registerFormats(QuillModule: typeof Quill) {
       groupId: string;
       actorEmail: string;
       createdAt: string;
-      opIds: string;
+      references: string;
     }) {
       const node = super.create();
       
-      const ids = Array.isArray(data.opIds) ? data.opIds : [];
+      const ids = Array.isArray(data.references) ? data.references : [];
       const uniqueIds = [...new Set(ids)];
 
       node.setAttribute("data-group-id", data.groupId);
       node.setAttribute("data-suggestion-type", "delete");
       node.setAttribute("data-actor-email", data.actorEmail ?? "");
       node.setAttribute("data-created-at", data.createdAt ?? "");
-      node.setAttribute("data-opIds", JSON.stringify(uniqueIds));
+      node.setAttribute("data-references", JSON.stringify(uniqueIds));
       node.classList.add("suggestion-delete");
       return node;
     }
@@ -80,7 +80,7 @@ export function registerFormats(QuillModule: typeof Quill) {
         groupId: node.getAttribute("data-group-id") ?? "",
         actorEmail: node.getAttribute("data-actor-email") ?? "",
         createdAt: node.getAttribute("data-created-at") ?? "",
-        opIds: getJsonObject(node, "data-opIds", []),
+        references: getJsonObject(node, "data-references", []),
       };
     }
   }
@@ -94,7 +94,7 @@ export function registerFormats(QuillModule: typeof Quill) {
       actorEmail: string;
       createdAt: string;
       attributes: string;
-      opIds: string;
+      references: string;
     }) {
       const attrString =
         typeof data.attributes === "object"
@@ -103,14 +103,14 @@ export function registerFormats(QuillModule: typeof Quill) {
 
       const node = super.create();
 
-      const ids = Array.isArray(data.opIds) ? data.opIds : [];
+      const ids = Array.isArray(data.references) ? data.references : [];
       const uniqueIds = [...new Set(ids)];
 
       node.setAttribute("data-group-id", data.groupId);
       node.setAttribute("data-suggestion-type", "format");
       node.setAttribute("data-actor-email", data.actorEmail ?? "");
       node.setAttribute("data-created-at", data.createdAt ?? "");
-      node.setAttribute("data-opIds", JSON.stringify(uniqueIds));
+      node.setAttribute("data-references", JSON.stringify(uniqueIds));
       node.setAttribute("data-format-attributes", attrString ?? "{}");
       node.classList.add("suggestion-format");
       return node;
@@ -121,7 +121,7 @@ export function registerFormats(QuillModule: typeof Quill) {
         groupId: node.getAttribute("data-group-id") ?? "",
         actorEmail: node.getAttribute("data-actor-email") ?? "",
         createdAt: node.getAttribute("data-created-at") ?? "",
-        opIds: getJsonObject(node, "data-opIds", []),
+        references: getJsonObject(node, "data-references", []),
         attributes: getJsonObject(node, "data-format-attributes", {}),
       };
     }

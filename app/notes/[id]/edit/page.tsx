@@ -29,6 +29,7 @@ import {
   buildFormatOverlayDelta,
   buildFormatOverlayClearDelta,
   FormatSuggestionItem,
+  OpReference,
 } from "@/src/lib/attribution";
 
 type ReviewAction = "ACCEPT" | "REJECT";
@@ -80,7 +81,7 @@ function EditContent() {
   const isOwner = useRef<boolean>(false);
   const reviewHistory = useRef<ReviewEntry[]>([]);
   const rejectedChanges = useRef<Delta[]>([]);
-  const acceptedOps = useRef<string[][]>([]);
+  const acceptedReferences = useRef<OpReference[][]>([]);
 
   const formatSuggestionsRef = useRef<FormatSuggestionItem[]>([]);
   const activeFormatIdRef = useRef<string | null>(null);
@@ -219,6 +220,7 @@ function EditContent() {
         committedOps,
         pendingOps,
       );
+      console.log(projection)
 
       quill.setContents(projection.visualDelta, "api");
       setFormatSuggestions(projection.formatSuggestions);
@@ -249,8 +251,7 @@ function EditContent() {
     }
 
     if (prevId === groupId) {
-      setActiveFormatId(null);
-      setActiveSuggestion(null);
+      closeAuditTooltip();
       return;
     }
 
@@ -264,7 +265,7 @@ function EditContent() {
       type: "format",
       actorEmail: item.actorEmail,
       createdAt: item.createdAt,
-      opIds: item.opIds,
+      references: item.references,
     });
   }, []);
 
@@ -404,12 +405,12 @@ function EditContent() {
     const groupId = effective.getAttribute("data-group-id")!;
     const actorEmail = effective.getAttribute("data-actor-email")!;
     const createdAt = effective.getAttribute("data-created-at")!;
-    const opIds = JSON.parse(effective.getAttribute("data-opIds") ?? "[]");
+    const references = JSON.parse(effective.getAttribute("data-references") ?? "[]");
 
     setActiveSuggestion((prev) =>
       prev?.groupId === groupId
         ? null
-        : { groupId, type: suggestionType, actorEmail, createdAt, opIds },
+        : { groupId, type: suggestionType, actorEmail, createdAt, references },
     );
   }, []);
 
@@ -442,7 +443,7 @@ function EditContent() {
     if (entry.type === "REJECT") {
       rejectedChanges.current.pop();
     } else {
-      acceptedOps.current.pop();
+      acceptedReferences.current.pop();
     }
 
     reviewHistory.current.pop();
@@ -506,28 +507,16 @@ function EditContent() {
 
   function clearSuggestionInsertGroupFromContents(groupId: string) {
     const quill = quillRef.current!;
-    const current = quill.getContents();
+    const range = getGroupRange(groupId);
+    if (!range) return;
 
-    const nextOps = current.ops.map((op: any) => {
-      if (!op.attributes?.["suggestion-insert"]) return op;
-
-      const insertAttr = op.attributes["suggestion-insert"];
-      if (insertAttr?.groupId !== groupId) return op;
-
-      const { ["suggestion-insert"]: _removed, ...rest } = op.attributes;
-      return {
-        ...op,
-        attributes: Object.keys(rest).length > 0 ? rest : undefined,
-      };
-    });
-
-    quill.setContents(new Delta(nextOps), "api");
+    quill.formatText(range.index, range.length, { "suggestion-insert": null }, "api");
   }
 
   function acceptChange(
     groupId: string,
     type: "insert" | "delete" | "format",
-    opIds: string[],
+    references: OpReference[],
   ) {
     if (type === "format") {
       const item = formatSuggestionsRef.current.find(
@@ -535,7 +524,7 @@ function EditContent() {
       );
       if (!item) return;
       acceptFormatSuggestion(item);
-      setActiveSuggestion(null);
+      closeAuditTooltip();
       return;
     }
 
@@ -545,7 +534,7 @@ function EditContent() {
       try {
         const quill = quillRef.current!;
         const range = getGroupRange(groupId);
-        acceptedOps.current.push(opIds);
+        acceptedReferences.current.push(references);
 
         if (!range) return;
 
@@ -580,7 +569,7 @@ function EditContent() {
       );
       if (!item) return;
       rejectFormatSuggestion(item);
-      setActiveSuggestion(null);
+      closeAuditTooltip();
       return;
     }
 
@@ -630,7 +619,7 @@ function EditContent() {
     snapshotAndApply(() => {
       const quill = quillRef.current!;
       quill.updateContents(buildFormatOverlayClearDelta(item), "api");
-      acceptedOps.current.push(item.opIds);
+      acceptedReferences.current.push(item.references);
       setFormatSuggestions((prev) =>
         prev.filter((f) => f.groupId !== item.groupId),
       );
@@ -768,7 +757,7 @@ function EditContent() {
       setActiveSuggestion(null);
       reviewHistory.current = [];
       rejectedChanges.current = [];
-      acceptedOps.current = [];
+      acceptedReferences.current = [];
       await loadNoteAndJoin();
     } catch (err) {
       console.error("Failed to exit review:", err);
@@ -811,7 +800,7 @@ function EditContent() {
             OperationState.PENDING,
             new Date().toISOString().slice(0, 19),
           ),
-          acceptedOpIds: [...new Set(acceptedOps.current.flat())],
+          acceptedReferences: [...new Set(acceptedReferences.current.flat())],
         }),
       });
 
@@ -958,7 +947,7 @@ function EditContent() {
               type: "format",
               actorEmail: stillExists.actorEmail,
               createdAt: stillExists.createdAt,
-              opIds: stillExists.opIds,
+              references: stillExists.references,
             }
           : prev,
       );
@@ -973,7 +962,7 @@ function EditContent() {
       const text = item.spans
         .map((span) => quill.getText(span.start, span.length))
         .join("")
-        .replace(/\n/g, " ")
+        .replace(/\n/g, " ↵ ")
         .slice(0, 60);
 
       return {
@@ -988,7 +977,7 @@ function EditContent() {
   ): FormatSuggestionItem[] {
     return items.map((item) => ({
       ...item,
-      opIds: [...item.opIds],
+      references: [...item.references],
       spans: item.spans.map((s) => ({ ...s })),
       dependsOnInsertGroupIds: [...item.dependsOnInsertGroupIds],
     }));
@@ -1002,7 +991,7 @@ function EditContent() {
       activeSuggestion: activeSuggestionRef.current
         ? {
             ...activeSuggestionRef.current,
-            opIds: [...activeSuggestionRef.current.opIds],
+            references: [...activeSuggestionRef.current.references],
           }
         : null,
     };
@@ -1015,6 +1004,28 @@ function EditContent() {
     setActiveFormatId(null);
     setActiveSuggestion(null);
   }
+
+  function closeAuditTooltip() {
+  const quill = quillRef.current;
+
+  if (
+    quill &&
+    activeSuggestionRef.current?.type === "format" &&
+    activeFormatIdRef.current
+  ) {
+    const activeItem = formatSuggestionsRef.current.find(
+      (f) => f.groupId === activeFormatIdRef.current,
+    );
+
+    if (activeItem) {
+      quill.updateContents(buildFormatOverlayClearDelta(activeItem), "api");
+    }
+
+    setActiveFormatId(null);
+  }
+
+  setActiveSuggestion(null);
+}
 
   if (loadingUser)
     return <div className="container-wide">Checking session...</div>;
@@ -1324,7 +1335,7 @@ function EditContent() {
           tooltip={activeSuggestion}
           onAccept={acceptChange}
           onReject={rejectChange}
-          onClose={() => setActiveSuggestion(null)}
+          onClose={closeAuditTooltip}
         />
       )}
     </main>
