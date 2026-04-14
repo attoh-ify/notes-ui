@@ -150,17 +150,40 @@ body {
 .suggestion-delete {
   text-decoration: line-through;
   text-decoration-color: #dc2626;
-  background-color: #fee2e2;   /* soft red */
+  background-color: #fee2e2;
   border-radius: 2px;
   padding: 0 1px;
   cursor: pointer;
   color: #b91c1c;
   transition: background-color 0.15s;
 }
+
 .suggestion-delete:hover {
   background-color: #fecaca;
 }
+
 .suggestion-delete.active {
+  background-color: #f87171;
+}
+
+.suggestion-delete-newline {
+  display: inline-block;
+  padding: 0 3px;
+  margin: 0 1px;
+  border-radius: 3px;
+  background-color: #fee2e2;
+  color: #b91c1c;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.15s;
+  text-decoration: none !important;
+}
+
+.suggestion-delete-newline:hover {
+  background-color: #fecaca;
+}
+
+.suggestion-delete-newline.active {
   background-color: #f87171;
 }
 

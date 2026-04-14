@@ -30,6 +30,7 @@ import {
   buildFormatOverlayClearDelta,
   FormatSuggestionItem,
   OpReference,
+  OpReferenceResponse,
 } from "@/src/lib/attribution";
 
 type ReviewAction = "ACCEPT" | "REJECT";
@@ -44,6 +45,7 @@ interface ReviewEntry {
   afterActiveFormatId: string | null;
   beforeActiveSuggestion: TooltipState | null;
   afterActiveSuggestion: TooltipState | null;
+  runtimeSnapshotBefore: RuntimeSnapshot;
 }
 
 type RuntimeActionKind = "accept-insert" | "reject-insert";
@@ -136,14 +138,19 @@ function EditContent() {
       .forEach((el) => el.classList.remove("active"));
 
     if (activeSuggestion?.groupId) {
+      console.log(`[HIGHLIGHT] Activating highlight for groupId=${activeSuggestion.groupId} type=${activeSuggestion.type}`);
       quill.root
         .querySelectorAll(`[data-group-id="${activeSuggestion.groupId}"]`)
         .forEach((el) => el.classList.add("active"));
+    } else {
+      console.log(`[HIGHLIGHT] Cleared all active highlights (no active suggestion)`);
     }
   }, [activeSuggestion]);
 
   useEffect(() => {
     const shouldShowEditor = !isReviewing || note?.accessRole === "OWNER";
+
+    console.log(`[EDITOR_INIT] isLoading=${isLoading} isReviewing=${isReviewing} accessRole="${note?.accessRole ?? "unknown"}" shouldShowEditor=${shouldShowEditor} quillAlreadyMounted=${!!quillRef.current}`);
 
     if (
       !isLoading &&
@@ -152,6 +159,7 @@ function EditContent() {
       shouldShowEditor
     ) {
       const init = async () => {
+        console.log(`[EDITOR_INIT] Mounting Quill editor — isReviewing=${isReviewing}`);
         const { default: Q } = await import("quill");
         const { default: QCursors } = await import("quill-cursors");
         Q.register("modules/cursors", QCursors);
@@ -186,7 +194,10 @@ function EditContent() {
           placeholder: "Start typing...",
         });
 
+        console.log(`[EDITOR_INIT] Quill mounted successfully — readOnly=${isReviewing}`);
+
         if (docStateRef.current?.document) {
+          console.log(`[EDITOR_INIT] Setting initial document contents from docState`);
           quillRef.current.setContents(docStateRef.current.document, "api");
         }
 
@@ -195,11 +206,16 @@ function EditContent() {
           const range = quillRef.current?.getSelection();
           if (range) sendCursorChange(range.index ?? 0);
 
+          console.log(`[TEXT_CHANGE] User-triggered text change — deltaOpCount=${delta.ops.length}`);
           docStateRef.current?.queueOperation(
             delta,
             async (op: TextOperation) => {
               isSyncComplete.current = false;
-              if (!stompClientRef.current?.connected) return;
+              if (!stompClientRef.current?.connected) {
+                console.log(`[TEXT_CHANGE] STOMP not connected — operation queued but not sent`);
+                return;
+              }
+              console.log(`[TEXT_CHANGE] Sending operation to server — revision=${op.revision}`);
               await sendOperationToServer(op);
               isSyncComplete.current = true;
             },
@@ -218,7 +234,10 @@ function EditContent() {
 
   useEffect(() => {
     const quill = quillRef.current;
-    if (!revisionLog || !quill) return;
+    if (!revisionLog || !quill) {
+      console.log(`[REVISION_LOG_EFFECT] Skipping — revisionLog=${revisionLog === null ? "null" : "present"} quill=${quill ? "present" : "null"}`);
+      return;
+    }
 
     let cancelled = false;
 
@@ -226,7 +245,10 @@ function EditContent() {
       const committedOps = revisionLog.filter((op) => op.state === "COMMITTED");
       const pendingOps = revisionLog.filter((op) => op.state === "PENDING");
 
+      console.log(`[REVISION_LOG_EFFECT] Processing revisionLog — committedCount=${committedOps.length} pendingCount=${pendingOps.length}`);
+
       if (pendingOps.length === 0) {
+        console.log(`[REVISION_LOG_EFFECT] No pending ops — setting plain committed document, clearing format suggestions`);
         let base = new Delta();
         for (const op of committedOps) {
           base = base.compose(new Delta(op.delta.ops));
@@ -237,23 +259,35 @@ function EditContent() {
         return;
       }
 
-      if (cancelled) return;
+      if (cancelled) {
+        console.log(`[REVISION_LOG_EFFECT] Effect was cancelled before projection completed`);
+        return;
+      }
 
+      console.log(`[REVISION_LOG_EFFECT] Calling buildReviewProjection — noteId=${noteId}`);
       const projection = await buildReviewProjection(
         noteId as string,
         committedOps,
         pendingOps,
       );
 
+      if (projection.visualDelta.ops.length === 0) {
+        console.log(`[REVISION_LOG_EFFECT] visualDelta is empty — skipping setContents`);
+        return;
+      }
+
+      console.log(`[REVISION_LOG_EFFECT] Applying visualDelta to Quill — opCount=${projection.visualDelta.ops.length} formatSuggestionCount=${projection.formatSuggestions.length}`);
       quill.setContents(projection.visualDelta, "api");
       setFormatSuggestions(projection.formatSuggestions);
       setHasPendingSuggestions(true);
 
       initializeRuntimeFromProjection(projection);
       runtimeHistoryRef.current = [];
+      console.log(`[REVISION_LOG_EFFECT] Runtime initialized from projection — segmentCount=${reviewSegmentsRef.current.length}`);
 
       quill.root.removeEventListener("click", handleClick);
       quill.root.addEventListener("click", handleClick);
+      console.log(`[REVISION_LOG_EFFECT] Click handler (re)attached to Quill root`);
     };
 
     run();
@@ -261,29 +295,45 @@ function EditContent() {
     return () => {
       cancelled = true;
       quillRef.current?.root.removeEventListener("click", handleClick);
+      console.log(`[REVISION_LOG_EFFECT] Cleanup — cancelled=true, click handler removed`);
     };
   }, [revisionLog, noteId]);
 
   const activateFormatSuggestion = useCallback((groupId: string) => {
     const quill = quillRef.current;
-    if (!quill) return;
+    if (!quill) {
+      console.log(`[ACTIVATE_FORMAT] Cannot activate — Quill not mounted`);
+      return;
+    }
 
     const fmts = formatSuggestionsRef.current;
     const prevId = activeFormatIdRef.current;
 
+    console.log(`[ACTIVATE_FORMAT] Activating groupId=${groupId} prevActiveId="${prevId ?? "none"}"`);
+
     if (prevId) {
       const prev = fmts.find((f) => f.groupId === prevId);
-      if (prev) quill.updateContents(buildFormatOverlayClearDelta(prev), "api");
+      if (prev) {
+        console.log(`[ACTIVATE_FORMAT] Clearing overlay for previously active groupId=${prevId}`);
+        quill.updateContents(buildFormatOverlayClearDelta(prev), "api");
+      } else {
+        console.log(`[ACTIVATE_FORMAT] WARNING — prevId=${prevId} not found in formatSuggestions, could not clear overlay`);
+      }
     }
 
     if (prevId === groupId) {
+      console.log(`[ACTIVATE_FORMAT] Same groupId clicked again — toggling OFF, closing tooltip`);
       closeAuditTooltip();
       return;
     }
 
     const item = fmts.find((f) => f.groupId === groupId);
-    if (!item) return;
+    if (!item) {
+      console.log(`[ACTIVATE_FORMAT] WARNING — groupId=${groupId} not found in formatSuggestions`);
+      return;
+    }
 
+    console.log(`[ACTIVATE_FORMAT] Applying overlay for groupId=${groupId} actor=${item.actorEmail} spanCount=${item.spans.length}`);
     quill.updateContents(buildFormatOverlayDelta(item), "api");
     setActiveFormatId(groupId);
     setActiveSuggestion({
@@ -296,15 +346,22 @@ function EditContent() {
   }, []);
 
   const loadNoteAndJoin = useCallback(async () => {
-    if (!noteId || !user) return;
+    if (!noteId || !user) {
+      console.log(`[LOAD_NOTE] Skipping — noteId="${noteId}" user="${user?.email ?? "null"}"`);
+      return;
+    }
+
+    console.log(`[LOAD_NOTE] Loading note noteId=${noteId} for user=${user.email}`);
 
     try {
       const noteData = await apiFetch<Note>(`notes/${noteId}`, {
         method: "GET",
       });
       setNote(noteData);
+      console.log(`[LOAD_NOTE] Fetched note — title="${noteData.title}" accessRole="${noteData.accessRole}" ownerEmail="${noteData.ownerEmail}"`);
 
       if (noteData.accessRole === "VIEWER") {
+        console.log(`[LOAD_NOTE] User is VIEWER — redirecting to view-only page`);
         router.push(`/notes/${noteId}`);
         return;
       }
@@ -314,18 +371,22 @@ function EditContent() {
       });
 
       if (joinData === null) {
+        console.log(`[LOAD_NOTE] joinData is null — review is already in progress, entering review mode`);
         setIsReviewing(true);
         return;
       }
 
+      console.log(`[LOAD_NOTE] Joined note — revision=${joinData.revision} collaboratorCount=${Object.keys(joinData.collaborators).length}`);
       docStateRef.current!.lastSyncedRevision = joinData.revision;
       docStateRef.current!.setDocument(new Delta(joinData.delta.ops || []));
       setCollaborators(joinData.collaborators);
 
       if (noteData.accessRole === "OWNER") {
         isOwner.current = true;
+        console.log(`[LOAD_NOTE] User is OWNER`);
       }
     } catch (err: any) {
+      console.log(`[LOAD_NOTE] ERROR — ${err.message}`);
       setErrorMessageMessage(err.message || "Failed to load note");
     } finally {
       setIsloading(false);
@@ -337,7 +398,12 @@ function EditContent() {
   }, [loadNoteAndJoin]);
 
   useEffect(() => {
-    if (!noteId || isLoading) return;
+    if (!noteId || isLoading) {
+      console.log(`[STOMP_INIT] Skipping STOMP setup — noteId="${noteId}" isLoading=${isLoading}`);
+      return;
+    }
+
+    console.log(`[STOMP_INIT] Connecting to STOMP for noteId=${noteId}`);
 
     const client = Stomp.over(
       () => new SockJS(`${API_BASE_URL}/relay?noteId=${noteId}`),
@@ -346,33 +412,46 @@ function EditContent() {
     stompClientRef.current = client;
 
     client.connect({}, () => {
+      console.log(`[STOMP_INIT] Connected — subscribing to /topic/note/${noteId}`);
       client.subscribe(`/topic/note/${noteId}`, (message) => {
         const { type, payload } = JSON.parse(message.body);
+        console.log(`[STOMP_MSG] Received type=${type}`);
         if (type === messageType.OPERATION) handleRemoteOperation(payload);
         if (type === messageType.COLLABORATOR_JOIN) {
+          console.log(`[STOMP_MSG] Collaborator joined — updating collaborators`);
           setCollaborators(payload.collaborators);
         }
         if (type === messageType.COLLABORATOR_CURSOR) {
           handleCursorChange(payload);
         }
         if (type === messageType.REVIEW_IN_PROGRESS) {
+          console.log(`[STOMP_MSG] Review in progress message received`);
           handleReviewInProgress(payload);
         }
       });
 
       if (docStateRef.current?.sentOperation && !isSyncComplete.current) {
+        console.log(`[STOMP_INIT] Reconnected with unsent operation — resending`);
         sendOperationToServer(docStateRef.current.sentOperation);
         isSyncComplete.current = true;
       }
     });
 
     return () => {
-      if (client.active) client.disconnect();
+      if (client.active) {
+        console.log(`[STOMP_INIT] Disconnecting STOMP client`);
+        client.disconnect();
+      }
     };
   }, [noteId, isLoading]);
 
   useEffect(() => {
-    if (!user || !isReviewing) return;
+    if (!user || !isReviewing) {
+      console.log(`[REVIEW_LOG_FETCH] Skipping — user="${user?.email ?? "null"}" isReviewing=${isReviewing}`);
+      return;
+    }
+
+    console.log(`[REVIEW_LOG_FETCH] Entering review mode — fetching revision log for noteId=${noteId}`);
 
     (async () => {
       try {
@@ -380,13 +459,19 @@ function EditContent() {
           method: "GET",
         });
         setNote(noteData);
+        console.log(`[REVIEW_LOG_FETCH] Fetched note — title="${noteData.title}" accessRole="${noteData.accessRole}"`);
 
         const logData = await apiFetch<TextOperation[]>(
           `notes/${noteData.id}/revision-log`,
           { method: "GET" },
         );
+        console.log(`[REVIEW_LOG_FETCH] Fetched revision log — opCount=${logData.length}`);
+        const committedCount = logData.filter(op => op.state === "COMMITTED").length;
+        const pendingCount = logData.filter(op => op.state === "PENDING").length;
+        console.log(`[REVIEW_LOG_FETCH] committedCount=${committedCount} pendingCount=${pendingCount}`);
         setRevisionLog(logData);
       } catch (err: any) {
+        console.log(`[REVIEW_LOG_FETCH] ERROR — ${err.message}`);
         setErrorMessageMessage(err.message || "Failed to fetch note data");
       } finally {
         setIsloading(false);
@@ -396,31 +481,94 @@ function EditContent() {
 
   useEffect(() => {
     const quill = quillRef.current;
-    if (!quill) return;
+    if (!quill) {
+      console.log(`[REVIEW_MODE_TOGGLE] Quill not mounted yet — skip toggle`);
+      return;
+    }
 
     const toolbar = editorRef.current?.previousSibling as HTMLElement;
     const isToolbar = toolbar?.classList.contains("ql-toolbar");
 
+    console.log(`[REVIEW_MODE_TOGGLE] isReviewing=${isReviewing} toolbarFound=${isToolbar}`);
+
     if (isReviewing) {
       quill.enable(false);
       if (isToolbar) toolbar.style.display = "none";
+      console.log(`[REVIEW_MODE_TOGGLE] Editor DISABLED for review — toolbar hidden`);
     } else {
       quill.enable(true);
       if (isToolbar) toolbar.style.display = "block";
+      console.log(`[REVIEW_MODE_TOGGLE] Editor ENABLED for editing — toolbar shown`);
     }
   }, [isReviewing, isLoading]);
+
+  useEffect(() => {
+    const quill = quillRef.current;
+    if (!quill) return;
+
+    let hoveredGroupId: string | null = null;
+
+    const setGroupHoverState = (groupId: string | null, isActive: boolean) => {
+      if (!groupId) return;
+      quill.root
+        .querySelectorAll(`[data-group-id="${groupId}"]`)
+        .forEach((el) => {
+          if (isActive) el.classList.add("active");
+          else el.classList.remove("active");
+        });
+    };
+
+    const onMouseOver = (e: Event) => {
+      const target = e.target as HTMLElement;
+      const node = target.closest("[data-group-id]") as HTMLElement | null;
+      const nextGroupId = node?.getAttribute("data-group-id") ?? null;
+
+      if (hoveredGroupId === nextGroupId) return;
+
+      if (hoveredGroupId && hoveredGroupId !== activeSuggestionRef.current?.groupId) {
+        setGroupHoverState(hoveredGroupId, false);
+      }
+
+      hoveredGroupId = nextGroupId;
+
+      if (hoveredGroupId && hoveredGroupId !== activeSuggestionRef.current?.groupId) {
+        setGroupHoverState(hoveredGroupId, true);
+        console.log(`[HOVER] Hovering groupId=${hoveredGroupId}`);
+      }
+    };
+
+    const onMouseLeave = () => {
+      if (hoveredGroupId && hoveredGroupId !== activeSuggestionRef.current?.groupId) {
+        setGroupHoverState(hoveredGroupId, false);
+        console.log(`[HOVER] Left groupId=${hoveredGroupId}`);
+      }
+      hoveredGroupId = null;
+    };
+
+    quill.root.addEventListener("mouseover", onMouseOver);
+    quill.root.addEventListener("mouseleave", onMouseLeave);
+
+    return () => {
+      quill.root.removeEventListener("mouseover", onMouseOver);
+      quill.root.removeEventListener("mouseleave", onMouseLeave);
+    };
+  }, []);
 
   const handleClick = useCallback((e: Event) => {
     const target = (e as MouseEvent).target as HTMLElement;
     const node = target.closest("[data-suggestion-type]") as HTMLElement | null;
 
     if (!node) {
+      console.log(`[CLICK] Clicked outside any suggestion node — clearing active suggestion`);
       setActiveSuggestion(null);
       return;
     }
 
     const type = node.getAttribute("data-suggestion-type");
-    if (type === "format") return;
+    if (type === "format") {
+      console.log(`[CLICK] Clicked on format suggestion node — handled by sidebar, not tooltip`);
+      return;
+    }
 
     const parentInsert = node.closest('[data-suggestion-type="insert"]');
     const effective = (parentInsert || node) as HTMLElement;
@@ -433,11 +581,13 @@ function EditContent() {
     const createdAt = effective.getAttribute("data-created-at")!;
     const references = JSON.parse(effective.getAttribute("data-references") ?? "[]");
 
-    setActiveSuggestion((prev) =>
-      prev?.groupId === groupId
-        ? null
-        : { groupId, type: suggestionType, actorEmail, createdAt, references },
-    );
+    console.log(`[CLICK] Clicked on suggestion — type=${suggestionType} groupId=${groupId} actor=${actorEmail}`);
+
+    setActiveSuggestion((prev) => {
+      const next = prev?.groupId === groupId ? null : { groupId, type: suggestionType, actorEmail, createdAt, references };
+      console.log(`[CLICK] Toggling activeSuggestion — was="${prev?.groupId ?? "none"}" now="${next?.groupId ?? "none"}"`);
+      return next;
+    });
   }, []);
 
   function cloneTooltipState(
@@ -457,6 +607,11 @@ function EditContent() {
     const beforeFormatSuggestions = cloneFormatSuggestions(formatSuggestionsRef.current);
     const beforeActiveFormatId = activeFormatIdRef.current;
     const beforeActiveSuggestion = cloneTooltipState(activeSuggestionRef.current);
+    const runtimeSnapshotBefore = captureRuntimeSnapshot();
+
+    console.log(`\n[SNAPSHOT] Action=${type} — capturing state BEFORE fn()`);
+    console.log(`[SNAPSHOT] beforeFormatSuggestionCount=${beforeFormatSuggestions.length} beforeActiveFormatId="${beforeActiveFormatId ?? "none"}" beforeActiveSuggestionGroupId="${beforeActiveSuggestion?.groupId ?? "none"}"`);
+    console.log(`[SNAPSHOT] runtimeSegmentCountBefore=${runtimeSnapshotBefore.segments.length}`);
 
     fn();
 
@@ -468,6 +623,10 @@ function EditContent() {
     const redoDelta = beforeContents.diff(afterContents);
     const undoDelta = afterContents.diff(beforeContents);
 
+    console.log(`[SNAPSHOT] State AFTER fn() — afterFormatSuggestionCount=${afterFormatSuggestions.length}`);
+    console.log(`[SNAPSHOT] redoDelta opCount=${redoDelta.ops.length} undoDelta opCount=${undoDelta.ops.length}`);
+    console.log(`[SNAPSHOT] Pushing to reviewHistory — historyLength will be=${reviewHistory.current.length + 1}`);
+
     reviewHistory.current.push({
       type,
       undoDelta,
@@ -478,50 +637,56 @@ function EditContent() {
       afterActiveFormatId,
       beforeActiveSuggestion,
       afterActiveSuggestion,
+      runtimeSnapshotBefore,
     });
 
     if (type === "REJECT") {
-      rejectedChanges.current.push(stripSuggestionAttributes(redoDelta));
+      const stripped = stripSuggestionAttributes(redoDelta);
+      rejectedChanges.current.push(stripped);
+      console.log(`[SNAPSHOT] REJECT — pushed stripped redoDelta to rejectedChanges, total=${rejectedChanges.current.length}`);
     }
   }
 
   async function undo() {
+    console.log(`\n[UNDO] Triggered — historyLength=${reviewHistory.current.length}`);
 
-    if (runtimeHistoryRef.current.length > 0) {
-      const entry = runtimeHistoryRef.current.pop()!;
-      restoreRuntimeSnapshot(entry.before);
-
-      if (entry.kind === "accept-insert") {
-        acceptedReferences.current.pop();
-      } else if (entry.kind === "reject-insert") {
-        rejectedChanges.current.pop();
-      }
-
+    if (reviewHistory.current.length === 0) {
+      console.log(`[UNDO] History is empty — nothing to undo`);
       return;
     }
 
-    if (reviewHistory.current.length === 0) return;
-
     const entry = reviewHistory.current[reviewHistory.current.length - 1];
+    console.log(`[UNDO] Reverting action type=${entry.type} — restoring runtimeSnapshot with segmentCount=${entry.runtimeSnapshotBefore.segments.length} formatSuggestionCount=${entry.runtimeSnapshotBefore.formatSuggestions.length}`);
+
     const quill = quillRef.current!;
     const suspended = suspendActiveFormatOverlay();
 
     try {
-      quill.updateContents(entry.undoDelta, "api");
-      setFormatSuggestions(cloneFormatSuggestions(entry.beforeFormatSuggestions));
-      setActiveFormatId(entry.beforeActiveFormatId);
-      setActiveSuggestion(cloneTooltipState(entry.beforeActiveSuggestion));
+      reviewSegmentsRef.current = cloneSegments(entry.runtimeSnapshotBefore.segments);
+      console.log(`[UNDO] Runtime segments restored — segmentCount=${reviewSegmentsRef.current.length}`);
+
+      refreshEditorFromRuntime();
+      console.log(`[UNDO] Editor refreshed from restored runtime segments`);
+
+      setFormatSuggestions(cloneFormatSuggestions(entry.runtimeSnapshotBefore.formatSuggestions));
+      setActiveFormatId(entry.runtimeSnapshotBefore.activeFormatId);
+      setActiveSuggestion(cloneTooltipState(entry.runtimeSnapshotBefore.activeSuggestion));
+
+      console.log(`[UNDO] State fully restored — restoredFormatCount=${entry.runtimeSnapshotBefore.formatSuggestions.length} restoredActiveFormatId="${entry.runtimeSnapshotBefore.activeFormatId ?? "none"}" restoredActiveSuggestionGroupId="${entry.runtimeSnapshotBefore.activeSuggestion?.groupId ?? "none"}"`);
     } finally {
       restoreActiveFormatOverlay(suspended);
     }
 
     if (entry.type === "REJECT") {
       rejectedChanges.current.pop();
+      console.log(`[UNDO] Popped last rejectedChange — remaining=${rejectedChanges.current.length}`);
     } else {
       acceptedReferences.current.pop();
+      console.log(`[UNDO] Popped last acceptedReferences — remaining=${acceptedReferences.current.length}`);
     }
 
     reviewHistory.current.pop();
+    console.log(`[UNDO] Popped history entry — historyLength now=${reviewHistory.current.length}`);
   }
 
   function stripSuggestionAttributes(delta: Delta): Delta {
@@ -531,6 +696,7 @@ function EditContent() {
         const {
           "suggestion-format": _f,
           "suggestion-delete": _d,
+          "suggestion-delete-newline": _dn,
           "suggestion-insert": _i,
           ...attrs
         } = op.attributes;
@@ -550,23 +716,31 @@ function EditContent() {
       quill.root.querySelectorAll(`[data-group-id="${groupId}"]`),
     ) as HTMLElement[];
 
-    if (els.length === 0) return null;
+    console.log(`[GET_GROUP_RANGE] groupId=${groupId} — found ${els.length} DOM element(s)`);
+
+    if (els.length === 0) {
+      console.log(`[GET_GROUP_RANGE] groupId=${groupId} — no elements found, returning null`);
+      return null;
+    }
 
     let minIdx = Infinity;
     let maxEnd = -Infinity;
 
     for (const el of els) {
       const blot = (quill.constructor as any).find(el, true);
-      if (!blot) continue;
+      if (!blot) {
+        console.log(`[GET_GROUP_RANGE] groupId=${groupId} — DOM element found but no blot resolved`);
+        continue;
+      }
       const idx = quill.getIndex(blot);
       const len = blot.length ? blot.length() : (el.textContent?.length ?? 0);
       if (idx < minIdx) minIdx = idx;
       if (idx + len > maxEnd) maxEnd = idx + len;
     }
 
-    return minIdx === Infinity
-      ? null
-      : { index: minIdx, length: maxEnd - minIdx };
+    const result = minIdx === Infinity ? null : { index: minIdx, length: maxEnd - minIdx };
+    console.log(`[GET_GROUP_RANGE] groupId=${groupId} — result index=${result?.index ?? "null"} length=${result?.length ?? "null"}`);
+    return result;
   }
 
   function acceptChange(
@@ -574,11 +748,17 @@ function EditContent() {
     type: "insert" | "delete" | "format",
     references: OpReference[],
   ) {
+    console.log(`\n[ACCEPT] Triggered — groupId=${groupId} type=${type} referenceCount=${references.length}`);
+
     if (type === "format") {
+      console.log(`[ACCEPT] Format suggestion — delegating to acceptFormatSuggestion`);
       const item = formatSuggestionsRef.current.find(
         (f) => f.groupId === groupId,
       );
-      if (!item) return;
+      if (!item) {
+        console.log(`[ACCEPT] WARNING — format groupId=${groupId} not found in formatSuggestions`);
+        return;
+      }
       acceptFormatSuggestion(item);
       closeAuditTooltip();
       return;
@@ -590,13 +770,20 @@ function EditContent() {
       try {
         const quill = quillRef.current!;
         acceptedReferences.current.push(references);
+        console.log(`[ACCEPT] Pushed references to acceptedReferences — total=${acceptedReferences.current.length}`);
 
         if (type === "insert") {
+          console.log(`[ACCEPT] INSERT accept — groupId=${groupId}`);
           const before = captureRuntimeSnapshot();
 
           removeInsertSuggestionFromSegments(groupId);
+          console.log(`[ACCEPT] Removed insert suggestion from segments — remaining segmentCount=${reviewSegmentsRef.current.length}`);
+
           refreshEditorFromRuntime();
+          console.log(`[ACCEPT] Editor refreshed after insert accept`);
+
           updateFormatSuggestionsAfterInsertAccept(groupId);
+          console.log(`[ACCEPT] Format suggestions updated — removed dependency on insertGroupId=${groupId}`);
 
           const after = captureRuntimeSnapshot();
           runtimeHistoryRef.current.push({
@@ -604,6 +791,7 @@ function EditContent() {
             before: cloneRuntimeSnapshot(before),
             after: cloneRuntimeSnapshot(after),
           });
+          console.log(`[ACCEPT] Runtime history entry pushed — kind=accept-insert`);
 
           const activeId = activeFormatIdRef.current;
           if (activeId) {
@@ -611,14 +799,20 @@ function EditContent() {
               (f) => f.groupId === activeId,
             );
             if (activeItem) {
+              console.log(`[ACCEPT] Reapplying active format overlay for groupId=${activeId} after insert accept`);
               quill.updateContents(buildFormatOverlayDelta(activeItem), "api");
             }
           }
         } else if (type === "delete") {
+          console.log(`[ACCEPT] DELETE accept — groupId=${groupId} — removing range from Quill`);
           const range = getGroupRange(groupId);
 
-          if (!range) return;
+          if (!range) {
+            console.log(`[ACCEPT] WARNING — could not find DOM range for delete groupId=${groupId}`);
+            return;
+          }
 
+          console.log(`[ACCEPT] Deleting Quill range index=${range.index} length=${range.length}`);
           quill.deleteText(range.index, range.length, "api");
         }
       } finally {
@@ -629,14 +823,21 @@ function EditContent() {
     setActiveSuggestion((prev) =>
       prev?.groupId === groupId ? null : prev,
     );
+    console.log(`[ACCEPT] Done — cleared activeSuggestion if it matched groupId=${groupId}`);
   }
 
   function rejectChange(groupId: string, type: "insert" | "delete" | "format") {
+    console.log(`\n[REJECT] Triggered — groupId=${groupId} type=${type}`);
+
     if (type === "format") {
+      console.log(`[REJECT] Format suggestion — delegating to rejectFormatSuggestion`);
       const item = formatSuggestionsRef.current.find(
         (f) => f.groupId === groupId,
       );
-      if (!item) return;
+      if (!item) {
+        console.log(`[REJECT] WARNING — format groupId=${groupId} not found in formatSuggestions`);
+        return;
+      }
       rejectFormatSuggestion(item);
       closeAuditTooltip();
       return;
@@ -648,18 +849,36 @@ function EditContent() {
       try {
         const quill = quillRef.current!;
         const range = getGroupRange(groupId);
-        if (!range) return;
+        if (!range) {
+          console.log(`[REJECT] WARNING — could not find DOM range for groupId=${groupId} type=${type}`);
+          return;
+        }
 
         if (type === "insert") {
+          console.log(`[REJECT] INSERT reject — groupId=${groupId}`);
           const runtimeRange = findInsertGroupRangeInRuntime(groupId);
           const before = captureRuntimeSnapshot();
 
-          if (!runtimeRange) return;
+          if (!runtimeRange) {
+            console.log(`[REJECT] WARNING — runtimeRange not found for insertGroupId=${groupId}`);
+            return;
+          }
+
+          console.log(`[REJECT] runtimeRange index=${runtimeRange.index} length=${runtimeRange.length}`);
+
+          const removedText = getRuntimeTextInRange(runtimeRange.index, runtimeRange.length);
+          console.log(`[REJECT] removedText="${removedText}"`);
 
           deleteInsertGroupSegments(groupId);
-          refreshEditorFromRuntime();
+          console.log(`[REJECT] Deleted insert group segments for groupId=${groupId} — remaining segmentCount=${reviewSegmentsRef.current.length}`);
 
-          const updated = formatSuggestionsRef.current
+          normalizeLineBreaksAfterRejectedInsert(runtimeRange, removedText);
+          console.log(`[REJECT] Normalized line breaks after rejected insert`);
+
+          refreshEditorFromRuntime();
+          console.log(`[REJECT] Editor refreshed after insert reject`);
+
+          const updated = formatSuggestions
             .map((item) => ({
               ...item,
               spans: transformSpansAfterRuntimeInsertRemoval(
@@ -673,6 +892,8 @@ function EditContent() {
             }))
             .filter((item) => item.spans.length > 0);
 
+          console.log(`[REJECT] Updated format suggestions — before=${formatSuggestions.length} after=${updated.length}`);
+
           setFormatSuggestions(refreshPreviewTextsAgainstRuntime(updated));
 
           const after = captureRuntimeSnapshot();
@@ -681,11 +902,19 @@ function EditContent() {
             before: cloneRuntimeSnapshot(before),
             after: cloneRuntimeSnapshot(after),
           });
+          console.log(`[REJECT] Runtime history entry pushed — kind=reject-insert`);
         } else if (type === "delete") {
+          console.log(
+            `[REJECT] DELETE reject — clearing suggestion-delete + suggestion-delete-newline for groupId=${groupId} range index=${range.index} length=${range.length}`
+          );
+
           quill.formatText(
             range.index,
             range.length,
-            { "suggestion-delete": null },
+            {
+              "suggestion-delete": null,
+              "suggestion-delete-newline": null,
+            },
             "api",
           );
         }
@@ -697,40 +926,68 @@ function EditContent() {
     setActiveSuggestion((prev) =>
       prev?.groupId === groupId ? null : prev,
     );
+    console.log(`[REJECT] Done — cleared activeSuggestion if it matched groupId=${groupId}`);
   }
 
   function acceptFormatSuggestion(item: FormatSuggestionItem) {
-    if (!canActOnFormatSuggestion(item)) return;
+    console.log(`\n[ACCEPT_FORMAT] groupId=${item.groupId} actor=${item.actorEmail} spanCount=${item.spans.length}`);
+
+    const canAct = canActOnFormatSuggestion(item);
+    console.log(`[ACCEPT_FORMAT] canAct=${canAct} dependsOnInsertGroupIds="${item.dependsOnInsertGroupIds.join(",")}"`);
+
+    if (!canAct) {
+      console.log(`[ACCEPT_FORMAT] BLOCKED — still pending insert group(s) that must be resolved first`);
+      return;
+    }
 
     snapshotAndApply(() => {
       const quill = quillRef.current!;
+      console.log(`[ACCEPT_FORMAT] Clearing overlay for groupId=${item.groupId}`);
       quill.updateContents(buildFormatOverlayClearDelta(item), "api");
       acceptedReferences.current.push(item.references);
-      setFormatSuggestions((prev) =>
-        prev.filter((f) => f.groupId !== item.groupId),
-      );
+      console.log(`[ACCEPT_FORMAT] Pushed references — total acceptedReferences=${acceptedReferences.current.length}`);
+      setFormatSuggestions((prev) => {
+        const next = prev.filter((f) => f.groupId !== item.groupId);
+        console.log(`[ACCEPT_FORMAT] Removed groupId=${item.groupId} from formatSuggestions — remaining=${next.length}`);
+        return next;
+      });
       setActiveFormatId(null);
     }, "ACCEPT");
   }
 
   function rejectFormatSuggestion(item: FormatSuggestionItem) {
-    if (!canActOnFormatSuggestion(item)) return;
+    console.log(`\n[REJECT_FORMAT] groupId=${item.groupId} actor=${item.actorEmail} attrKeys="${Object.keys(JSON.parse(item.attributes)).join(",")}"`);
+
+    const canAct = canActOnFormatSuggestion(item);
+    console.log(`[REJECT_FORMAT] canAct=${canAct} dependsOnInsertGroupIds="${item.dependsOnInsertGroupIds.join(",")}"`);
+
+    if (!canAct) {
+      console.log(`[REJECT_FORMAT] BLOCKED — still pending insert group(s) that must be resolved first`);
+      return;
+    }
 
     snapshotAndApply(() => {
       const quill = quillRef.current!;
+      console.log(`[REJECT_FORMAT] Clearing overlay then nulling attrs for groupId=${item.groupId}`);
       quill.updateContents(buildFormatOverlayClearDelta(item), "api");
 
       const fmtAttrs = JSON.parse(item.attributes) as Record<string, any>;
       const nulled: Record<string, any> = {};
       for (const k of Object.keys(fmtAttrs)) nulled[k] = null;
 
+      const nulledKeys = Object.keys(nulled).join(",");
+      console.log(`[REJECT_FORMAT] Nulling attrs "${nulledKeys}" over ${item.spans.length} span(s)`);
+
       for (const span of item.spans) {
+        console.log(`[REJECT_FORMAT] Applying null attrs at span start=${span.start} length=${span.length}`);
         quill.formatText(span.start, span.length, nulled, "api");
       }
 
-      setFormatSuggestions((prev) =>
-        prev.filter((f) => f.groupId !== item.groupId),
-      );
+      setFormatSuggestions((prev) => {
+        const next = prev.filter((f) => f.groupId !== item.groupId);
+        console.log(`[REJECT_FORMAT] Removed groupId=${item.groupId} — remaining=${next.length}`);
+        return next;
+      });
       setActiveFormatId(null);
     }, "REJECT");
   }
@@ -745,6 +1002,7 @@ function EditContent() {
 
   function handleCursorChange(payload: CursorPayload) {
     if (isReviewing || payload.actorEmail === user!.email) return;
+    console.log(`[CURSOR] Remote cursor update from actor=${payload.actorEmail} position=${payload.position}`);
     const cursor = quillRef.current!.getModule("cursors") as CursorModule;
     cursor.createCursor(
       payload.actorEmail,
@@ -761,12 +1019,19 @@ function EditContent() {
     const { delta, actorEmail, revision, state, createdAt } = payload;
     const docState = docStateRef.current!;
 
+    console.log(`[REMOTE_OP] Received from actor=${actorEmail} revision=${revision} state=${state}`);
+
     if (actorEmail === user!.email) {
+      console.log(`[REMOTE_OP] This is our own op echoed back — acknowledging revision=${revision}`);
       docState.acknowledgeOperation(revision, (pending) => {
         isSyncComplete.current = false;
-        if (pending) sendOperationToServer(pending);
+        if (pending) {
+          console.log(`[REMOTE_OP] Sending next pending operation after ack`);
+          sendOperationToServer(pending);
+        }
       });
     } else {
+      console.log(`[REMOTE_OP] Foreign op from actor=${actorEmail} — transforming and applying`);
       const d = docState.applyRemoteOperation({
         opId: "",
         delta: new Delta(delta.ops || []),
@@ -780,7 +1045,11 @@ function EditContent() {
   }
 
   async function sendOperationToServer(operation: TextOperation) {
-    if (isReviewing) return;
+    if (isReviewing) {
+      console.log(`[SEND_OP] Skipped — currently in review mode`);
+      return;
+    }
+    console.log(`[SEND_OP] Sending operation to server — revision=${operation.revision}`);
     await apiFetch(`notes/${noteId}/enqueue`, {
       method: "POST",
       body: JSON.stringify(
@@ -797,43 +1066,57 @@ function EditContent() {
   }
 
   async function saveNote() {
+    console.log(`[SAVE_NOTE] Saving note noteId=${noteId}`);
     try {
       await apiFetch(`notes/${noteId}/save`, { method: "POST" });
+      console.log(`[SAVE_NOTE] Save successful`);
     } catch (err: any) {
+      console.log(`[SAVE_NOTE] ERROR — ${err.message}`);
       setErrorMessageMessage(err.message || "Failed to save note");
     }
   }
 
   async function saveVersion(comment: string) {
+    console.log(`[SAVE_VERSION] Saving version with comment="${comment}"`);
     try {
       await saveReviewChanges();
       await apiFetch(`notes/${noteId}/versions`, {
         method: "POST",
         body: JSON.stringify({ comment }),
       });
+      console.log(`[SAVE_VERSION] Version saved successfully`);
     } catch (err: any) {
+      console.log(`[SAVE_VERSION] ERROR — ${err.message}`);
       setErrorMessageMessage(err.message || "Failed to save version");
     }
   }
 
   async function handleReviewNote() {
+    console.log(`[REVIEW_NOTE] Saving note then triggering review for noteId=${noteId}`);
     await saveNote();
     await apiFetch(`notes/${noteId}/review`, { method: "GET" });
+    console.log(`[REVIEW_NOTE] Review triggered`);
   }
 
   function handleReviewInProgress(payload: ReviewInProgressResponse) {
+    console.log(`[REVIEW_IN_PROGRESS] state=${payload.state} isOwner=${isOwner.current} currentUserEmail=${user?.email ?? "null"} ownerEmail=${note?.ownerEmail ?? "unknown"}`);
+
     if (payload.state === false && note?.ownerEmail !== user?.email) {
+      console.log(`[REVIEW_IN_PROGRESS] Review ended and current user is NOT owner — unmounting Quill ref`);
       quillRef.current = null;
     }
     setIsReviewing(payload.state);
     if (isOwner.current && payload.state === true) {
+      console.log(`[REVIEW_IN_PROGRESS] Owner entered review — showing sidebar modal`);
       setShowReviewSidebarModal(true);
     }
   }
 
   async function handleExitReview() {
+    console.log(`[EXIT_REVIEW] Exiting review mode for noteId=${noteId}`);
     try {
       await apiFetch(`notes/${noteId}/review/exit`, { method: "GET" });
+      console.log(`[EXIT_REVIEW] Exit API call successful — resetting all review state`);
       setRevisionLog(null);
       setFormatSuggestions([]);
       setActiveFormatId(null);
@@ -844,9 +1127,10 @@ function EditContent() {
       reviewHistory.current = [];
       rejectedChanges.current = [];
       acceptedReferences.current = [];
+      console.log(`[EXIT_REVIEW] State cleared — reloading note`);
       await loadNoteAndJoin();
     } catch (err) {
-      console.error("Failed to exit review:", err);
+      console.log(`[EXIT_REVIEW] ERROR — ${err}`);
     }
   }
 
@@ -855,7 +1139,30 @@ function EditContent() {
     router.push(`/notes/${noteId}/edit/note-setting`);
   }
 
+  const mergeOpReferences = (refs: OpReference[]): OpReferenceResponse[] => {
+    const mergedMap = new Map<string, Set<number>>();
+
+    for (const ref of refs) {
+      if (!mergedMap.has(ref.opId)) {
+        mergedMap.set(ref.opId, new Set([ref.componentIndex]));
+      } else {
+        const existingIndexes = mergedMap.get(ref.opId)!;
+        existingIndexes.add(ref.componentIndex);
+      }
+    }
+
+    const result = Array.from(mergedMap.entries()).map(([opId, indexSet]) => ({
+      opId,
+      componentIndexes: Array.from(indexSet).sort((a, b) => a - b),
+    }));
+
+    console.log(`[MERGE_OP_REFS] Merged ${refs.length} raw refs into ${result.length} unique opId(s)`);
+    return result;
+  };
+
   async function saveReviewChanges() {
+    console.log(`\n[SAVE_REVIEW] Saving review changes — rejectedChangesCount=${rejectedChanges.current.length} acceptedReferenceGroupCount=${acceptedReferences.current.length}`);
+
     try {
       const currentActive = activeFormatIdRef.current;
       if (currentActive) {
@@ -863,6 +1170,7 @@ function EditContent() {
           (f) => f.groupId === currentActive,
         );
         if (item) {
+          console.log(`[SAVE_REVIEW] Clearing active format overlay for groupId=${currentActive} before save`);
           quillRef.current?.updateContents(
             buildFormatOverlayClearDelta(item),
             "api",
@@ -875,6 +1183,12 @@ function EditContent() {
           ? rejectedChanges.current.reduce((acc, d) => acc.compose(d))
           : new Delta();
 
+      console.log(`[SAVE_REVIEW] Composed rejected delta — opCount=${delta.ops.length}`);
+
+      const flatRefs = acceptedReferences.current.flat();
+      const mergedRefs = mergeOpReferences(flatRefs);
+      console.log(`[SAVE_REVIEW] Sending to API — flatRefCount=${flatRefs.length} mergedRefCount=${mergedRefs.length}`);
+
       await apiFetch(`notes/${noteId}/review`, {
         method: "POST",
         body: JSON.stringify({
@@ -886,13 +1200,14 @@ function EditContent() {
             OperationState.PENDING,
             new Date().toISOString().slice(0, 19),
           ),
-          acceptedReferences: [...new Set(acceptedReferences.current.flat())],
+          acceptedReferences: mergedRefs,
         }),
       });
 
+      console.log(`[SAVE_REVIEW] API call successful — calling handleExitReview`);
       handleExitReview();
     } catch (err) {
-      console.error("Failed to save changes:", err);
+      console.log(`[SAVE_REVIEW] ERROR — ${err}`);
     }
   }
 
@@ -901,13 +1216,19 @@ function EditContent() {
     if (!quill) return null;
 
     const activeId = activeFormatIdRef.current;
-    if (!activeId) return null;
+    if (!activeId) {
+      console.log(`[OVERLAY_SUSPEND] No active format overlay to suspend`);
+      return null;
+    }
 
     const activeItem =
       formatSuggestionsRef.current.find((f) => f.groupId === activeId) ?? null;
 
     if (activeItem) {
+      console.log(`[OVERLAY_SUSPEND] Suspending overlay for groupId=${activeId}`);
       quill.updateContents(buildFormatOverlayClearDelta(activeItem), "api");
+    } else {
+      console.log(`[OVERLAY_SUSPEND] activeId=${activeId} not found in formatSuggestions — nothing to clear`);
     }
 
     return activeItem;
@@ -915,7 +1236,11 @@ function EditContent() {
 
   function restoreActiveFormatOverlay(item: FormatSuggestionItem | null) {
     const quill = quillRef.current;
-    if (!quill || !item) return;
+    if (!quill || !item) {
+      if (!item) console.log(`[OVERLAY_RESTORE] No item to restore`);
+      return;
+    }
+    console.log(`[OVERLAY_RESTORE] Restoring overlay for groupId=${item.groupId}`);
     quill.updateContents(buildFormatOverlayDelta(item), "api");
   }
 
@@ -923,15 +1248,19 @@ function EditContent() {
     const quill = quillRef.current;
     if (!quill) return false;
 
-    return !!quill.root.querySelector(
+    const found = !!quill.root.querySelector(
       `[data-suggestion-type="insert"][data-group-id="${groupId}"]`,
     );
+    console.log(`[IS_INSERT_PENDING] groupId=${groupId} — stillPending=${found}`);
+    return found;
   }
 
   function canActOnFormatSuggestion(item: FormatSuggestionItem): boolean {
-    return item.dependsOnInsertGroupIds.every(
+    const canAct = item.dependsOnInsertGroupIds.every(
       (groupId) => !isInsertGroupStillPending(groupId),
     );
+    console.log(`[CAN_ACT_FORMAT] groupId=${item.groupId} dependsOnCount=${item.dependsOnInsertGroupIds.length} canAct=${canAct}`);
+    return canAct;
   }
 
   function cloneFormatSuggestions(
@@ -958,12 +1287,14 @@ function EditContent() {
       );
 
       if (activeItem) {
+        console.log(`[CLOSE_TOOLTIP] Clearing format overlay for groupId=${activeFormatIdRef.current}`);
         quill.updateContents(buildFormatOverlayClearDelta(activeItem), "api");
       }
 
       setActiveFormatId(null);
     }
 
+    console.log(`[CLOSE_TOOLTIP] Setting activeSuggestion=null`);
     setActiveSuggestion(null);
   }
 
@@ -996,15 +1327,17 @@ function EditContent() {
 
   function deltaToSegments(delta: Delta): ReviewSegment[] {
     const ops = delta.ops ?? [];
-
-    return ops
+    const segments = ops
       .filter((op: any) => typeof op.insert === "string")
       .map((op: any) => ({
         id: nextRuntimeSegmentId(),
         text: op.insert,
         attrs: { ...(op.attributes ?? {}) },
         references: [...(op.attributes?.["suggestion-insert"]?.references ?? [])],
-    }));
+      }));
+
+    console.log(`[DELTA_TO_SEGMENTS] Converted delta with ${ops.length} ops into ${segments.length} segment(s)`);
+    return segments;
   }
 
   function mergeAdjacentSegments(segments: ReviewSegment[]): ReviewSegment[] {
@@ -1060,32 +1393,16 @@ function EditContent() {
     };
   }
 
-  function restoreRuntimeSnapshot(snapshot: RuntimeSnapshot) {
-    reviewSegmentsRef.current = cloneSegments(snapshot.segments);
-
-    const nextDelta = segmentsToDelta(reviewSegmentsRef.current);
-    quillRef.current!.setContents(nextDelta, "api");
-
-    setFormatSuggestions(cloneFormatSuggestions(snapshot.formatSuggestions));
-    setActiveSuggestion(
-      snapshot.activeSuggestion
-        ? {
-            ...snapshot.activeSuggestion,
-            references: [...snapshot.activeSuggestion.references],
-          }
-        : null,
-    );
-    setActiveFormatId(snapshot.activeFormatId);
-  }
-
   function initializeRuntimeFromProjection(projection: {
     visualDelta: Delta;
     formatSuggestions: FormatSuggestionItem[];
   }) {
     reviewSegmentsRef.current = deltaToSegments(projection.visualDelta);
+    console.log(`[INIT_RUNTIME] Initialized runtime from projection — segmentCount=${reviewSegmentsRef.current.length}`);
   }
 
   function removeInsertSuggestionFromSegments(groupId: string) {
+    const before = reviewSegmentsRef.current.length;
     reviewSegmentsRef.current = mergeAdjacentSegments(
       reviewSegmentsRef.current.map((seg) => {
         const insertAttr = seg.attrs["suggestion-insert"];
@@ -1098,31 +1415,37 @@ function EditContent() {
         };
       }),
     );
+    console.log(`[REMOVE_INSERT_FROM_SEGMENTS] groupId=${groupId} — segmentCount before=${before} after=${reviewSegmentsRef.current.length}`);
   }
 
   function deleteInsertGroupSegments(groupId: string) {
+    const before = reviewSegmentsRef.current.length;
     reviewSegmentsRef.current = mergeAdjacentSegments(
       reviewSegmentsRef.current.filter((seg) => {
         const insertAttr = seg.attrs["suggestion-insert"];
         return !(insertAttr && insertAttr.groupId === groupId);
       }),
     );
+    console.log(`[DELETE_INSERT_SEGMENTS] groupId=${groupId} — segmentCount before=${before} after=${reviewSegmentsRef.current.length}`);
   }
 
   function refreshEditorFromRuntime() {
     const nextDelta = segmentsToDelta(reviewSegmentsRef.current);
+    console.log(`[REFRESH_EDITOR] Calling setContents from ${reviewSegmentsRef.current.length} runtime segment(s) — deltaOpCount=${nextDelta.ops.length}`);
     quillRef.current!.setContents(nextDelta, "api");
   }
 
   function updateFormatSuggestionsAfterInsertAccept(groupId: string) {
-    setFormatSuggestions((prev) =>
-      prev.map((item) => ({
+    setFormatSuggestions((prev) => {
+      const next = prev.map((item) => ({
         ...item,
         dependsOnInsertGroupIds: item.dependsOnInsertGroupIds.filter(
           (id) => id !== groupId,
         ),
-      })),
-    );
+      }));
+      console.log(`[UPDATE_FORMAT_AFTER_ACCEPT] Removed insertGroupId=${groupId} from all dependencies — formatCount=${next.length}`);
+      return next;
+    });
   }
 
   function transformSpansAfterRuntimeInsertRemoval(
@@ -1191,14 +1514,17 @@ function EditContent() {
       cursor += len;
     }
 
-    if (start === -1 || end === -1) return null;
-    return { index: start, length: end - start };
+    const result = (start === -1 || end === -1) ? null : { index: start, length: end - start };
+    console.log(`[FIND_INSERT_RANGE] groupId=${groupId} — found=${result !== null} index=${result?.index ?? "null"} length=${result?.length ?? "null"}`);
+    return result;
   }
 
   function refreshPreviewTextsAgainstRuntime(items: FormatSuggestionItem[]) {
     const delta = segmentsToDelta(reviewSegmentsRef.current);
     const temp = quillRef.current!;
     const current = temp.getContents();
+
+    console.log(`[REFRESH_PREVIEW_TEXTS] Refreshing preview for ${items.length} format suggestion(s) against current runtime`);
 
     temp.setContents(delta, "api");
 
@@ -1209,6 +1535,8 @@ function EditContent() {
         .replace(/\n/g, " ↵ ")
         .slice(0, 60);
 
+      console.log(`[REFRESH_PREVIEW_TEXTS] groupId=${item.groupId} new previewText="${text}"`);
+
       return {
         ...item,
         previewText: text,
@@ -1217,6 +1545,219 @@ function EditContent() {
 
     temp.setContents(current, "api");
     return refreshed;
+  }
+
+  function getRuntimePlainText(): string {
+    return reviewSegmentsRef.current.map((seg) => seg.text).join("");
+  }
+
+  function getRuntimeTextInRange(start: number, length: number): string {
+    const end = start + length;
+    let cursor = 0;
+    let out = "";
+
+    for (const seg of reviewSegmentsRef.current) {
+      const segStart = cursor;
+      const segEnd = cursor + seg.text.length;
+
+      if (segEnd <= start) {
+        cursor = segEnd;
+        continue;
+      }
+
+      if (segStart >= end) break;
+
+      const sliceStart = Math.max(start, segStart) - segStart;
+      const sliceEnd = Math.min(end, segEnd) - segStart;
+      out += seg.text.slice(sliceStart, sliceEnd);
+
+      cursor = segEnd;
+    }
+
+    return out;
+  }
+
+  function removeRuntimeCharAt(index: number) {
+    if (index < 0) {
+      console.log(`[REMOVE_CHAR_AT] index=${index} is negative — skipping`);
+      return;
+    }
+
+    let cursor = 0;
+
+    for (let i = 0; i < reviewSegmentsRef.current.length; i++) {
+      const seg = reviewSegmentsRef.current[i];
+      const segStart = cursor;
+      const segEnd = cursor + seg.text.length;
+
+      if (index >= segEnd) {
+        cursor = segEnd;
+        continue;
+      }
+
+      const offset = index - segStart;
+      if (offset < 0 || offset >= seg.text.length) {
+        console.log(`[REMOVE_CHAR_AT] index=${index} offset=${offset} out of bounds for seg text="${seg.text}" — skipping`);
+        return;
+      }
+
+      const removedChar = seg.text[offset];
+      console.log(`[REMOVE_CHAR_AT] Removing char="${removedChar === "\n" ? "\\n" : removedChar}" at index=${index} from segment text="${seg.text}"`);
+
+      if (seg.text.length === 1) {
+        reviewSegmentsRef.current.splice(i, 1);
+      } else if (offset === 0) {
+        reviewSegmentsRef.current[i] = {
+          ...seg,
+          text: seg.text.slice(1),
+        };
+      } else if (offset === seg.text.length - 1) {
+        reviewSegmentsRef.current[i] = {
+          ...seg,
+          text: seg.text.slice(0, -1),
+        };
+      } else {
+        const left = {
+          ...seg,
+          text: seg.text.slice(0, offset),
+        };
+        const right = {
+          ...seg,
+          id: nextRuntimeSegmentId(),
+          text: seg.text.slice(offset + 1),
+        };
+
+        reviewSegmentsRef.current.splice(i, 1, left, right);
+      }
+
+      reviewSegmentsRef.current = mergeAdjacentSegments(reviewSegmentsRef.current);
+      console.log(`[REMOVE_CHAR_AT] Done — segmentCount now=${reviewSegmentsRef.current.length}`);
+      return;
+    }
+
+    console.log(`[REMOVE_CHAR_AT] index=${index} exceeded all segments — nothing removed`);
+  }
+
+  function insertRuntimeTextAt(index: number, text: string, attrs: Record<string, any> = {}) {
+    if (!text) {
+      console.log(`[INSERT_RUNTIME_TEXT_AT] Empty text — skipping`);
+      return;
+    }
+
+    const displayText = text === "\n" ? "\\n" : text;
+    console.log(`[INSERT_RUNTIME_TEXT_AT] Inserting "${displayText}" at index=${index}`);
+
+    let cursor = 0;
+
+    for (let i = 0; i < reviewSegmentsRef.current.length; i++) {
+      const seg = reviewSegmentsRef.current[i];
+      const segStart = cursor;
+      const segEnd = cursor + seg.text.length;
+
+      if (index > segEnd) {
+        cursor = segEnd;
+        continue;
+      }
+
+      if (index === segStart) {
+        reviewSegmentsRef.current.splice(i, 0, {
+          id: nextRuntimeSegmentId(),
+          text,
+          attrs,
+          references: [],
+        });
+        reviewSegmentsRef.current = mergeAdjacentSegments(reviewSegmentsRef.current);
+        console.log(`[INSERT_RUNTIME_TEXT_AT] Inserted at segStart — segmentCount=${reviewSegmentsRef.current.length}`);
+        return;
+      }
+
+      if (index === segEnd) {
+        reviewSegmentsRef.current.splice(i + 1, 0, {
+          id: nextRuntimeSegmentId(),
+          text,
+          attrs,
+          references: [],
+        });
+        reviewSegmentsRef.current = mergeAdjacentSegments(reviewSegmentsRef.current);
+        console.log(`[INSERT_RUNTIME_TEXT_AT] Inserted at segEnd — segmentCount=${reviewSegmentsRef.current.length}`);
+        return;
+      }
+
+      if (index > segStart && index < segEnd) {
+        const offset = index - segStart;
+
+        const left = { ...seg, text: seg.text.slice(0, offset) };
+        const inserted = { id: nextRuntimeSegmentId(), text, attrs, references: [] };
+        const right = { ...seg, id: nextRuntimeSegmentId(), text: seg.text.slice(offset) };
+
+        reviewSegmentsRef.current.splice(i, 1, left, inserted, right);
+        reviewSegmentsRef.current = mergeAdjacentSegments(reviewSegmentsRef.current);
+        console.log(`[INSERT_RUNTIME_TEXT_AT] Inserted inside segment at offset=${offset} — segmentCount=${reviewSegmentsRef.current.length}`);
+        return;
+      }
+    }
+
+    reviewSegmentsRef.current.push({
+      id: nextRuntimeSegmentId(),
+      text,
+      attrs,
+      references: [],
+    });
+    reviewSegmentsRef.current = mergeAdjacentSegments(reviewSegmentsRef.current);
+    console.log(`[INSERT_RUNTIME_TEXT_AT] Appended at end — segmentCount=${reviewSegmentsRef.current.length}`);
+  }
+
+  function normalizeLineBreaksAfterRejectedInsert(
+    removedRange: { index: number; length: number },
+    removedText: string,
+  ) {
+    const boundary = removedRange.index;
+    const currentText = getRuntimePlainText();
+
+    const charBefore = boundary > 0 ? currentText[boundary - 1] : null;
+    const charAfter = boundary < currentText.length ? currentText[boundary] : null;
+
+    const removedHadNewline = removedText.includes("\n");
+    const beforeHasVisibleText = boundary > 0;
+    const afterHasVisibleText = boundary < currentText.length;
+
+    const beforeIsText = charBefore !== null && charBefore !== "\n";
+    const afterIsText = charAfter !== null && charAfter !== "\n";
+
+    const charBeforeDisplay = charBefore === null ? "null" : charBefore === "\n" ? "\\n" : charBefore;
+    const charAfterDisplay = charAfter === null ? "null" : charAfter === "\n" ? "\\n" : charAfter;
+
+    console.log(`[NORMALIZE_LINEBREAKS] boundary=${boundary} charBefore="${charBeforeDisplay}" charAfter="${charAfterDisplay}" removedHadNewline=${removedHadNewline} beforeHasVisibleText=${beforeHasVisibleText} afterHasVisibleText=${afterHasVisibleText}`);
+
+    // Case 1: two newlines meet after deletion -> collapse to one
+    if (charBefore === "\n" && charAfter === "\n") {
+      console.log(`[NORMALIZE_LINEBREAKS] CASE 1 — double newline at boundary — removing one at index=${boundary}`);
+      removeRuntimeCharAt(boundary);
+      return;
+    }
+
+    // Case 2: deleted first line content, leaving a leading newline
+    if (boundary === 0 && charAfter === "\n") {
+      console.log(`[NORMALIZE_LINEBREAKS] CASE 2 — leading newline at position 0 — removing it`);
+      removeRuntimeCharAt(0);
+      return;
+    }
+
+    // Case 3: deleted last line content, leaving a trailing newline
+    if (boundary === currentText.length && charBefore === "\n") {
+      console.log(`[NORMALIZE_LINEBREAKS] CASE 3 — trailing newline at end — removing at index=${boundary - 1}`);
+      removeRuntimeCharAt(boundary - 1);
+      return;
+    }
+
+    // Case 4: removed block was between two non-empty text regions and contained line break(s)
+    if (removedHadNewline && beforeHasVisibleText && afterHasVisibleText && beforeIsText && afterIsText) {
+      console.log(`[NORMALIZE_LINEBREAKS] CASE 4 — removed cross-line content, two surviving text regions — inserting separator newline at boundary=${boundary}`);
+      insertRuntimeTextAt(boundary, "\n");
+      return;
+    }
+
+    console.log(`[NORMALIZE_LINEBREAKS] No normalization case matched — no change made`);
   }
 
   if (loadingUser)

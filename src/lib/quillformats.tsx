@@ -62,7 +62,7 @@ export function registerFormats(QuillModule: typeof Quill) {
       references: string;
     }) {
       const node = super.create();
-      
+
       const ids = Array.isArray(data.references) ? data.references : [];
       const uniqueIds = [...new Set(ids)];
 
@@ -72,10 +72,46 @@ export function registerFormats(QuillModule: typeof Quill) {
       node.setAttribute("data-created-at", data.createdAt ?? "");
       node.setAttribute("data-references", JSON.stringify(uniqueIds));
       node.classList.add("suggestion-delete");
+
       return node;
     }
 
     static formats(node: HTMLElement): SuggestionDelete {
+      return {
+        groupId: node.getAttribute("data-group-id") ?? "",
+        actorEmail: node.getAttribute("data-actor-email") ?? "",
+        createdAt: node.getAttribute("data-created-at") ?? "",
+        references: getJsonObject(node, "data-references", []),
+      };
+    }
+  }
+
+  class SuggestionDeleteNewline extends Inline {
+    static blotName = "suggestion-delete-newline";
+    static tagName = "span";
+
+    static create(data: {
+      groupId: string;
+      actorEmail: string;
+      createdAt: string;
+      references: string;
+    }) {
+      const node = super.create();
+
+      const ids = Array.isArray(data.references) ? data.references : [];
+      const uniqueIds = [...new Set(ids)];
+
+      node.setAttribute("data-group-id", data.groupId);
+      node.setAttribute("data-suggestion-type", "delete");
+      node.setAttribute("data-actor-email", data.actorEmail ?? "");
+      node.setAttribute("data-created-at", data.createdAt ?? "");
+      node.setAttribute("data-references", JSON.stringify(uniqueIds));
+      node.classList.add("suggestion-delete-newline");
+
+      return node;
+    }
+
+    static formats(node: HTMLElement): SuggestionDeleteNewline {
       return {
         groupId: node.getAttribute("data-group-id") ?? "",
         actorEmail: node.getAttribute("data-actor-email") ?? "",
@@ -129,5 +165,6 @@ export function registerFormats(QuillModule: typeof Quill) {
 
   QuillModule.register(SuggestionInsert, true);
   QuillModule.register(SuggestionDelete, true);
+  QuillModule.register(SuggestionDeleteNewline, true);
   QuillModule.register(SuggestionFormat, true);
 }
