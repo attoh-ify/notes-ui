@@ -57,6 +57,7 @@ export interface FormatSuggestionItem {
 export interface ReviewRun {
   text: string;
   baseAttributes: Record<string, any>;
+  suggestionAttributes: Record<string, any>;
   logicalStart: number;
   opId: string;
   insertComponentIndex: number;
@@ -129,6 +130,7 @@ function splitAt(runs: ReviewRun[], idx: number, offset: number): number {
     {
       ...r, text: r.text.slice(0, offset),
       baseAttributes: { ...r.baseAttributes },
+      suggestionAttributes: { ...r.suggestionAttributes },
       insertSuggestion: r.insertSuggestion ? { ...r.insertSuggestion } : undefined,
       deleteSuggestion: r.deleteSuggestion ? { ...r.deleteSuggestion } : undefined,
       logicalStart: r.logicalStart,
@@ -136,6 +138,7 @@ function splitAt(runs: ReviewRun[], idx: number, offset: number): number {
     {
       ...r, text: r.text.slice(offset),
       baseAttributes: { ...r.baseAttributes },
+      suggestionAttributes: { ...r.suggestionAttributes },
       insertSuggestion: r.insertSuggestion ? { ...r.insertSuggestion } : undefined,
       deleteSuggestion: r.deleteSuggestion ? { ...r.deleteSuggestion } : undefined,
       logicalStart: r.logicalStart + offset,
@@ -145,6 +148,32 @@ function splitAt(runs: ReviewRun[], idx: number, offset: number): number {
 }
 
 // ─── Format span helpers ───────────────────────────────────────────────────────
+
+function findAdjacentSpanIndex(
+  spans: FormatSuggestionSpan[],
+  spanStart: number,
+): number {
+  return spans.findIndex(
+    (s) => s.start + s.length === spanStart
+  );
+}
+
+function extendOrAddSpan(
+  spans: FormatSuggestionSpan[],
+  spanStart: number,
+  spanLen: number,
+): FormatSuggestionSpan[] {
+  const next = spans.map((s) => ({ ...s }));
+  const adjacentIdx = findAdjacentSpanIndex(next, spanStart);
+
+  if (adjacentIdx !== -1) {
+    next[adjacentIdx].length += spanLen;
+  } else {
+    next.push({ start: spanStart, length: spanLen });
+  }
+
+  return mergeAdjacentSpans(next);
+}
 
 function shiftFormatSpansForInsert(
   formatSuggestions: FormatSuggestionItem[],
@@ -203,8 +232,10 @@ function shiftFormatSpansForInsert(
 }
 
 function mergeAdjacentSpans(spans: FormatSuggestionSpan[]): FormatSuggestionSpan[] {
+  const sorted = [...spans].sort((a, b) => a.start - b.start);
   const merged: FormatSuggestionSpan[] = [];
-  for (const span of spans) {
+
+  for (const span of sorted) {
     const last = merged[merged.length - 1];
     if (last && last.start + last.length === span.start) {
       last.length += span.length;
@@ -212,6 +243,7 @@ function mergeAdjacentSpans(spans: FormatSuggestionSpan[]): FormatSuggestionSpan
       merged.push({ ...span });
     }
   }
+
   return merged;
 }
 
@@ -304,7 +336,9 @@ function collectInsertGroupRunsWithAttrs(
   for (let i = 0; i < runs.length; i++) {
     const run = runs[i];
     if (!run.insertSuggestion || run.insertSuggestion.groupId !== groupId) continue;
-    const carried = intersectAttrs(run.baseAttributes, attrs);
+    const effectiveAttrs = getEffectiveAttrs(run);
+
+    const carried = intersectAttrs(effectiveAttrs, attrs);
     if (Object.keys(carried).length === 0) continue;
     indices.push(i);
     start = Math.min(start, run.logicalStart);
@@ -320,38 +354,26 @@ function collectInsertGroupRunsWithAttrs(
   return { indices, start, end };
 }
 
-function stripAttrsFromRuns(runs: ReviewRun[], indices: number[], attrs: Record<string, any>) {
-  const attrKeys = Object.keys(attrs).join(",");
-  for (const idx of indices) {
-    console.log(`[STRIP_ATTRS_FROM_RUNS] runIdx=${idx} text="${runs[idx].text}" stripping keys="${attrKeys}"`);
-    runs[idx].baseAttributes = subtractAttrs(runs[idx].baseAttributes, attrs);
-  }
-}
-
-function isOnlyWhitespaceRetain(
+function stripAttrsFromRuns(
   runs: ReviewRun[],
-  logicalStart: number,
-  retainLength: number,
-): boolean {
-  let { idx: runIdx, offset } = findRunPos(runs, logicalStart);
-  let remaining = retainLength;
-  let sawOverlap = false;
+  indices: number[],
+  attrs: Record<string, any>,
+) {
+  const attrKeys = Object.keys(attrs).join(",");
 
-  for (let i = runIdx; i < runs.length && remaining > 0; i++) {
-    const run = runs[i];
-    if (run.deleteSuggestion) continue;
+  for (const idx of indices) {
+    console.log(
+      `[STRIP_ATTRS_FROM_RUNS] runIdx=${idx} text="${runs[idx].text}" stripping keys="${attrKeys}"`
+    );
 
-    sawOverlap = true;
-    const lenToCheck = Math.min(run.text.length - offset, remaining);
-    if (!/^\s+$/.test(run.text.slice(offset, offset + lenToCheck))) {
-      return false;
+    for (const key of Object.keys(attrs)) {
+      if (key in runs[idx].suggestionAttributes) {
+        delete runs[idx].suggestionAttributes[key];
+      } else if (key in runs[idx].baseAttributes) {
+        delete runs[idx].baseAttributes[key];
+      }
     }
-
-    remaining -= lenToCheck;
-    offset = 0;
   }
-
-  return sawOverlap;
 }
 
 function isOnlyNewlineRetain(
@@ -380,35 +402,65 @@ function isOnlyNewlineRetain(
   return sawOverlap;
 }
 
+function getEffectiveAttrs(run: ReviewRun | null | undefined): Record<string, any> {
+  if (!run) return {};
+  return {
+    ...run.baseAttributes,
+    ...(run.suggestionAttributes ?? {}),
+  };
+}
+
 // ─── Visual delta build ────────────────────────────────────────────────────────
 
 function applyFormatSuggestionAttrsToRuns(
   runs: ReviewRun[],
   formatSuggestions: FormatSuggestionItem[],
 ): ReviewRun[] {
-  console.log(`[APPLY_FORMAT_ATTRS_TO_RUNS] Applying ${formatSuggestions.length} format suggestion(s) onto ${runs.length} run(s)`);
+  console.log(
+    `[APPLY_FORMAT_ATTRS_TO_RUNS] Applying ${formatSuggestions.length} format suggestion(s) onto ${runs.length} run(s)`
+  );
 
-  const cloned = runs.map(r => ({
+  const cloned = runs.map((r) => ({
     ...r,
     baseAttributes: { ...r.baseAttributes },
-    insertSuggestion: r.insertSuggestion ? { ...r.insertSuggestion, references: [...r.insertSuggestion.references] } : undefined,
-    deleteSuggestion: r.deleteSuggestion ? { ...r.deleteSuggestion, references: [...r.deleteSuggestion.references] } : undefined,
+    suggestionAttributes: { ...r.suggestionAttributes },
+    insertSuggestion: r.insertSuggestion
+      ? {
+          ...r.insertSuggestion,
+          references: [...r.insertSuggestion.references],
+        }
+      : undefined,
+    deleteSuggestion: r.deleteSuggestion
+      ? {
+          ...r.deleteSuggestion,
+          references: [...r.deleteSuggestion.references],
+        }
+      : undefined,
   }));
 
   for (const fmt of formatSuggestions) {
     let fmtAttrs: Record<string, any> = {};
-    try { fmtAttrs = JSON.parse(fmt.attributes); } catch {}
+    try {
+      fmtAttrs = JSON.parse(fmt.attributes);
+    } catch {}
+
     if (Object.keys(fmtAttrs).length === 0) {
-      console.log(`[APPLY_FORMAT_ATTRS_TO_RUNS] groupId=${fmt.groupId} — skipping, no parseable attributes`);
+      console.log(
+        `[APPLY_FORMAT_ATTRS_TO_RUNS] groupId=${fmt.groupId} — skipping, no parseable attributes`
+      );
       continue;
     }
 
     const attrKeys = Object.keys(fmtAttrs).join(",");
-    console.log(`[APPLY_FORMAT_ATTRS_TO_RUNS] groupId=${fmt.groupId} attrKeys="${attrKeys}" spanCount=${fmt.spans.length}`);
+    console.log(
+      `[APPLY_FORMAT_ATTRS_TO_RUNS] groupId=${fmt.groupId} attrKeys="${attrKeys}" spanCount=${fmt.spans.length}`
+    );
 
     for (const span of fmt.spans) {
-      let left = 0, right = cloned.length - 1;
+      let left = 0;
+      let right = cloned.length - 1;
       let startIdx = cloned.length;
+
       while (left <= right) {
         const mid = (left + right) >> 1;
         if (cloned[mid].logicalStart + cloned[mid].text.length <= span.start) {
@@ -424,8 +476,15 @@ function applyFormatSuggestionAttrsToRuns(
         if (run.deleteSuggestion) continue;
         if (run.logicalStart >= span.start + span.length) break;
         if (run.logicalStart + run.text.length <= span.start) continue;
-        console.log(`[APPLY_FORMAT_ATTRS_TO_RUNS] groupId=${fmt.groupId} applying attrs to run text="${run.text}" logicalStart=${run.logicalStart}`);
-        cloned[i].baseAttributes = { ...cloned[i].baseAttributes, ...fmtAttrs };
+
+        console.log(
+          `[APPLY_FORMAT_ATTRS_TO_RUNS] groupId=${fmt.groupId} applying attrs to run text="${run.text}" logicalStart=${run.logicalStart}`
+        );
+
+        cloned[i].suggestionAttributes = {
+          ...(cloned[i].suggestionAttributes ?? {}),
+          ...fmtAttrs,
+        };
       }
     }
   }
@@ -441,11 +500,23 @@ function buildVisualDelta(runs: ReviewRun[]): Delta {
 
   for (const run of runs) {
     const last = collapsed[collapsed.length - 1];
+    const lastEffectiveAttrs = last
+      ? {
+          ...last.baseAttributes,
+          ...(last.suggestionAttributes ?? {}),
+        }
+      : {};
+
+    const runEffectiveAttrs = {
+      ...run.baseAttributes,
+      ...(run.suggestionAttributes ?? {}),
+    };
+
     const canMerge =
       !!last &&
       run.text !== "\n" &&
       last.text !== "\n" &&
-      attrsEq(last.baseAttributes, run.baseAttributes) &&
+      attrsEq(lastEffectiveAttrs, runEffectiveAttrs) &&
       last.insertSuggestion?.groupId === run.insertSuggestion?.groupId &&
       last.deleteSuggestion?.groupId === run.deleteSuggestion?.groupId;
 
@@ -473,8 +544,13 @@ function buildVisualDelta(runs: ReviewRun[]): Delta {
       collapsed.push({
         ...run,
         baseAttributes: { ...run.baseAttributes },
-        insertSuggestion: run.insertSuggestion ? { ...run.insertSuggestion, references: [...run.insertSuggestion.references] } : undefined,
-        deleteSuggestion: run.deleteSuggestion ? { ...run.deleteSuggestion, references: [...run.deleteSuggestion.references] } : undefined,
+        suggestionAttributes: { ...(run.suggestionAttributes ?? {}) },
+        insertSuggestion: run.insertSuggestion
+          ? { ...run.insertSuggestion, references: [...run.insertSuggestion.references] }
+          : undefined,
+        deleteSuggestion: run.deleteSuggestion
+          ? { ...run.deleteSuggestion, references: [...run.deleteSuggestion.references] }
+          : undefined,
       });
     }
   }
@@ -482,7 +558,10 @@ function buildVisualDelta(runs: ReviewRun[]): Delta {
   console.log(`[BUILD_VISUAL_DELTA] Collapsed ${runs.length} runs into ${collapsed.length} ops`);
 
   for (const run of collapsed) {
-    const attrs: Record<string, any> = { ...run.baseAttributes };
+    const attrs: Record<string, any> = {
+      ...run.baseAttributes,
+      ...(run.suggestionAttributes ?? {}),
+    };
 
     if (run.insertSuggestion) {
       attrs["suggestion-insert"] = {
@@ -522,6 +601,45 @@ function buildVisualDelta(runs: ReviewRun[]): Delta {
 
   console.log(`[BUILD_VISUAL_DELTA] Done. Final op count=${delta.ops.length}`);
   return delta;
+}
+
+function findAdjacentFormatGroupByBoundary(
+  formatSuggestions: FormatSuggestionItem[],
+  attrStr: string,
+  boundaryPos: number,
+): FormatSuggestionItem | null {
+  return (
+    formatSuggestions.find((f) => {
+      if (f.attributes !== attrStr) return false;
+      return f.spans.some((s) => s.start + s.length === boundaryPos);
+    }) ?? null
+  );
+}
+
+function extendFormatGroupAtBoundary(
+  group: FormatSuggestionItem,
+  boundaryPos: number,
+  insertLength: number,
+  opId: string,
+  compIdx: number,
+  currentInsertGroupId: string,
+): void {
+  const idx = group.spans.findIndex(
+    (s) => s.start + s.length === boundaryPos
+  );
+
+  if (idx !== -1) {
+    group.spans[idx].length += insertLength;
+    group.spans = mergeAdjacentSpans(group.spans.map((s) => ({ ...s })));
+  }
+
+  if (!group.references.some((ref) => ref.opId === opId && ref.componentIndex === compIdx)) {
+    group.references.push({ opId, componentIndex: compIdx });
+  }
+
+  if (!group.dependsOnInsertGroupIds.includes(currentInsertGroupId)) {
+    group.dependsOnInsertGroupIds.push(currentInsertGroupId);
+  }
 }
 
 // ─── Main projection builder ───────────────────────────────────────────────────
@@ -567,6 +685,7 @@ export async function buildReviewProjection(
           runs.push({
             text: parts[i],
             baseAttributes: { ...(op.attributes ?? {}) },
+            suggestionAttributes: {},
             logicalStart: seedPos,
             opId: "",
             insertComponentIndex: idx,
@@ -577,6 +696,7 @@ export async function buildReviewProjection(
           runs.push({
             text: "\n",
             baseAttributes: {},
+            suggestionAttributes: {},
             logicalStart: seedPos,
             opId: "",
             insertComponentIndex: idx,
@@ -629,17 +749,20 @@ export async function buildReviewProjection(
           const { absPos: nextAbsPos } = findRunPos(runs, localLogPos + component.retain);
           const absLength = nextAbsPos - absPos;
 
-          const last = currentFormatGroup.spans[currentFormatGroup.spans.length - 1];
+          console.log(
+            `[RETAIN_PLAIN] opId=${opId} compIdx=${compIdx} — newline-only retain bridging format group=${currentFormatGroup.groupId} absPos=${absPos} absLength=${absLength}`
+          );
 
-          console.log(`[RETAIN_PLAIN] opId=${opId} compIdx=${compIdx} — newline-only retain bridging format group=${currentFormatGroup.groupId} absPos=${absPos} absLength=${absLength}`);
+          const beforeSpanCount = currentFormatGroup.spans.length;
+          currentFormatGroup.spans = extendOrAddSpan(
+            currentFormatGroup.spans,
+            absPos,
+            absLength,
+          );
 
-          if (last && last.start + last.length === absPos) {
-            last.length += absLength;
-            console.log(`[RETAIN_PLAIN] Extended last span of formatGroup=${currentFormatGroup.groupId} by ${absLength}`);
-          } else {
-            currentFormatGroup.spans.push({ start: absPos, length: absLength });
-            console.log(`[RETAIN_PLAIN] Added new span to formatGroup=${currentFormatGroup.groupId} start=${absPos} length=${absLength}`);
-          }
+          console.log(
+            `[RETAIN_PLAIN] formatGroup=${currentFormatGroup.groupId} spanCount ${beforeSpanCount} -> ${currentFormatGroup.spans.length} after newline bridge`
+          );
 
           pendingFormatBridge = {
             actorEmail,
@@ -733,11 +856,11 @@ export async function buildReviewProjection(
               fmtAttrs = {};
             }
 
-            const baseBeforeSuggestion = subtractAttrs(target.baseAttributes, fmtAttrs);
+            const baseAttrs = { ...(target.baseAttributes ?? {}) };
             const cancelledKeys = pickCancelledFormatKeys(
               fmtAttrs,
               rawIncomingAttrs,
-              baseBeforeSuggestion,
+              baseAttrs,
             );
 
             const cancelledKeyNames = Object.keys(cancelledKeys).join(",");
@@ -784,21 +907,17 @@ export async function buildReviewProjection(
               console.log(`[RETAIN_FORMAT] opId=${opId} — formatGroup=${fmt.groupId} fully cancelled and removed from list`);
             }
 
-            // Restore base attributes after cancellation
             for (const key of Object.keys(cancelledKeys)) {
-              const prevValue = baseBeforeSuggestion[key];
-              if (prevValue === undefined) {
-                delete target.baseAttributes[key];
-                console.log(`[RETAIN_FORMAT] opId=${opId} cursor=${cursor} — restored key="${key}" to UNDEFINED on run text="${target.text}"`);
-              } else {
-                target.baseAttributes[key] = prevValue;
-                console.log(`[RETAIN_FORMAT] opId=${opId} cursor=${cursor} — restored key="${key}" to previous value on run text="${target.text}"`);
-              }
+              if (!target.suggestionAttributes) continue;
+              delete target.suggestionAttributes[key];
               delete rawIncomingAttrs[key];
             }
           }
 
-          target.baseAttributes = applyDeltaAttrs(target.baseAttributes, rawIncomingAttrs);
+          target.suggestionAttributes = applyDeltaAttrs(
+            target.suggestionAttributes ?? {},
+            rawIncomingAttrs,
+          );
 
           const suggestionAttrs = stripNullAttrs(rawIncomingAttrs);
           const attrStr = JSON.stringify(suggestionAttrs);
@@ -808,15 +927,11 @@ export async function buildReviewProjection(
 
           if (Object.keys(suggestionAttrs).length > 0) {
             if (!currentFormatGroup) {
-              let existing = formatSuggestions.find(
-                (f) =>
-                  f.actorEmail === actorEmail &&
-                  f.attributes === attrStr &&
-                  f.spans.length > 0 &&
-                  f.spans[f.spans.length - 1].start +
-                    f.spans[f.spans.length - 1].length ===
-                    spanStart,
-              );
+              let existing = formatSuggestions.find((f) => {
+                if (f.actorEmail !== actorEmail) return false;
+                if (f.attributes !== attrStr) return false;
+                return findAdjacentSpanIndex(f.spans, spanStart) !== -1;
+              });
 
               if (existing) {
                 console.log(`[RETAIN_FORMAT] opId=${opId} cursor=${cursor} — found ADJACENT existing format group=${existing.groupId}, continuing it`);
@@ -871,13 +986,24 @@ export async function buildReviewProjection(
               currentFormatGroup.references.push({ opId, componentIndex: compIdx });
             }
 
-            const last = currentFormatGroup.spans[currentFormatGroup.spans.length - 1];
-            if (last && last.start + last.length === spanStart) {
-              last.length += spanLen;
-              console.log(`[RETAIN_FORMAT] opId=${opId} cursor=${cursor} — extended span of formatGroup=${currentFormatGroup.groupId} newLength=${last.length}`);
+            const adjacentIdx = findAdjacentSpanIndex(currentFormatGroup.spans, spanStart);
+
+            if (adjacentIdx !== -1) {
+              currentFormatGroup.spans[adjacentIdx].length += spanLen;
+              currentFormatGroup.spans = mergeAdjacentSpans(
+                currentFormatGroup.spans.map((s) => ({ ...s }))
+              );
+              console.log(
+                `[RETAIN_FORMAT] opId=${opId} cursor=${cursor} — extended adjacent span index=${adjacentIdx} of formatGroup=${currentFormatGroup.groupId}`
+              );
             } else {
               currentFormatGroup.spans.push({ start: spanStart, length: spanLen });
-              console.log(`[RETAIN_FORMAT] opId=${opId} cursor=${cursor} — added new span to formatGroup=${currentFormatGroup.groupId} start=${spanStart} length=${spanLen}`);
+              currentFormatGroup.spans = mergeAdjacentSpans(
+                currentFormatGroup.spans.map((s) => ({ ...s }))
+              );
+              console.log(
+                `[RETAIN_FORMAT] opId=${opId} cursor=${cursor} — added new span to formatGroup=${currentFormatGroup.groupId} start=${spanStart} length=${spanLen}`
+              );
             }
 
             pendingFormatBridge = {
@@ -966,73 +1092,201 @@ export async function buildReviewProjection(
         // Track which format suggestion groups were extended so we don't double-shift them
         const extendedGroupIds = new Set<string>();
 
+        // ── First: extend any already-existing adjacent format suggestion from another actor ──
+        for (const [key, value] of Object.entries({ ...ownAttrs })) {
+          const singleAttr = JSON.stringify({ [key]: value });
+
+          const existingAdjGroup = findAdjacentFormatGroupByBoundary(
+            formatSuggestions,
+            singleAttr,
+            localLogPos
+          );
+
+          if (!existingAdjGroup) continue;
+
+          extendFormatGroupAtBoundary(
+            existingAdjGroup,
+            localLogPos,
+            insertText.length,
+            opId,
+            compIdx,
+            currentInsertGroup.groupId,
+          );
+
+          extendedGroupIds.add(existingAdjGroup.groupId);
+          delete ownAttrs[key];
+
+          console.log(
+            `[INSERT] opId=${opId} compIdx=${compIdx} — EXTENDED existing adjacent format group=${existingAdjGroup.groupId} for key="${key}" at boundary=${localLogPos}; remaining ownAttrKeys="${Object.keys(ownAttrs).join(",")}"`
+          );
+        }
         // ── Check prev neighbor for inherited attrs (different actor) ──
+        const prevEffectiveAttrs = getEffectiveAttrs(prevRun)
+
+        const nextEffectiveAttrs = getEffectiveAttrs(nextRun);
+
         if (
+          Object.keys(ownAttrs).length > 0 &&
           prevRun?.insertSuggestion &&
           prevRun.insertSuggestion.actorEmail !== actorEmail &&
-          Object.keys(prevRun.baseAttributes).length > 0
+          Object.keys(prevEffectiveAttrs).length > 0
         ) {
-          const inherited = intersectAttrs(ownAttrs, prevRun.baseAttributes);
+          const inherited = intersectAttrs(ownAttrs, prevEffectiveAttrs);
+          console.log(
+            `[INSERT] opId=${opId} compIdx=${compIdx} after inheritance remaining ownAttrKeys="${Object.keys(ownAttrs).join(",")}"`
+          );
           const inheritedKeys = Object.keys(inherited).join(",");
           console.log(`[INSERT] opId=${opId} compIdx=${compIdx} — checking PREV neighbor for inherited attrs from actor=${prevRun.insertSuggestion.actorEmail} inheritedKeys="${inheritedKeys}"`);
 
           if (Object.keys(inherited).length > 0) {
-            const ownerEmail = prevRun.insertSuggestion.actorEmail;
             const attrStr = JSON.stringify(inherited);
-            const prevGroup = collectInsertGroupRunsWithAttrs(runs, prevRun.insertSuggestion.groupId, inherited);
+            const prevGroup = collectInsertGroupRunsWithAttrs(
+              runs,
+              prevRun.insertSuggestion.groupId,
+              inherited,
+            );
 
             if (prevGroup) {
               const spanStart = prevGroup.start;
               const spanEnd = localLogPos + insertText.length;
 
-              console.log(`[INSERT] opId=${opId} compIdx=${compIdx} — creating/extending inherited-attr format suggestion from prevGroup owner=${ownerEmail} spanStart=${spanStart} spanEnd=${spanEnd}`);
+              // First try to extend an already-existing adjacent format suggestion
+              let existingFormatOwnerGroup = formatSuggestions.find((f) => {
+                if (f.attributes !== attrStr) return false;
+                return f.spans.some((s) => s.start + s.length === localLogPos);
+              });
 
-              let existing = formatSuggestions.find(f =>
-                f.actorEmail === ownerEmail && f.attributes === attrStr &&
-                f.spans.length > 0 && f.spans[f.spans.length - 1].start === spanStart
-              );
+              if (existingFormatOwnerGroup) {
+                const targetIdx = existingFormatOwnerGroup.spans.findIndex(
+                  (s) => s.start + s.length === localLogPos
+                );
 
-              if (existing) {
-                const last = existing.spans[existing.spans.length - 1];
-                last.length = Math.max(last.length, spanEnd - spanStart);
-                if (!existing.references.some((ref) => ref.opId === opId && ref.componentIndex === compIdx)) existing.references.push({ opId, componentIndex: compIdx });
-                if (!existing.dependsOnInsertGroupIds.includes(prevRun.insertSuggestion.groupId))
-                  existing.dependsOnInsertGroupIds.push(prevRun.insertSuggestion.groupId);
-                if (!existing.dependsOnInsertGroupIds.includes(currentInsertGroup.groupId))
-                  existing.dependsOnInsertGroupIds.push(currentInsertGroup.groupId);
-                extendedGroupIds.add(existing.groupId);
-                console.log(`[INSERT] opId=${opId} compIdx=${compIdx} — EXTENDED existing inherited-attr format group=${existing.groupId} from prev neighbor`);
+                if (targetIdx !== -1) {
+                  existingFormatOwnerGroup.spans[targetIdx].length += insertText.length;
+                  existingFormatOwnerGroup.spans = mergeAdjacentSpans(
+                    existingFormatOwnerGroup.spans.map((s) => ({ ...s }))
+                  );
+                }
+
+                if (
+                  !existingFormatOwnerGroup.references.some(
+                    (ref) => ref.opId === opId && ref.componentIndex === compIdx
+                  )
+                ) {
+                  existingFormatOwnerGroup.references.push({ opId, componentIndex: compIdx });
+                }
+
+                if (
+                  !existingFormatOwnerGroup.dependsOnInsertGroupIds.includes(
+                    currentInsertGroup.groupId
+                  )
+                ) {
+                  existingFormatOwnerGroup.dependsOnInsertGroupIds.push(
+                    currentInsertGroup.groupId
+                  );
+                }
+
+                extendedGroupIds.add(existingFormatOwnerGroup.groupId);
+
+                console.log(
+                  `[INSERT] opId=${opId} compIdx=${compIdx} — EXTENDED adjacent existing format group=${existingFormatOwnerGroup.groupId} from prev neighbor`
+                );
               } else {
-                const g: FormatSuggestionItem = {
-                  groupId: nextId(),
-                  actorEmail: ownerEmail,
-                  createdAt: prevRun.insertSuggestion.createdAt,
-                  attributes: attrStr,
-                  references: [...prevRun.insertSuggestion.references, { opId, componentIndex: compIdx }],
-                  spans: [{ start: spanStart, length: spanEnd - spanStart }],
-                  previewText: "",
-                  dependsOnInsertGroupIds: [prevRun.insertSuggestion.groupId, currentInsertGroup.groupId],
-                };
-                formatSuggestions.push(g);
-                extendedGroupIds.add(g.groupId);
-                console.log(`[INSERT] opId=${opId} compIdx=${compIdx} — CREATED inherited-attr format group=${g.groupId} from prev neighbor attrKeys="${inheritedKeys}"`);
+                // Fall back only if no existing format group was found
+                const ownerEmail = prevRun.insertSuggestion.actorEmail;
+
+                let existing = formatSuggestions.find(
+                  (f) =>
+                    f.actorEmail === ownerEmail &&
+                    f.attributes === attrStr &&
+                    f.spans.some((s) => s.start === spanStart)
+                );
+
+                if (existing) {
+                  const targetIdx = existing.spans.findIndex((s) => s.start === spanStart);
+                  if (targetIdx !== -1) {
+                    existing.spans[targetIdx].length = Math.max(
+                      existing.spans[targetIdx].length,
+                      spanEnd - spanStart,
+                    );
+                    existing.spans = mergeAdjacentSpans(
+                      existing.spans.map((s) => ({ ...s }))
+                    );
+                  }
+
+                  if (
+                    !existing.references.some(
+                      (ref) => ref.opId === opId && ref.componentIndex === compIdx
+                    )
+                  ) {
+                    existing.references.push({ opId, componentIndex: compIdx });
+                  }
+
+                  if (
+                    !existing.dependsOnInsertGroupIds.includes(prevRun.insertSuggestion.groupId)
+                  ) {
+                    existing.dependsOnInsertGroupIds.push(prevRun.insertSuggestion.groupId);
+                  }
+
+                  if (
+                    !existing.dependsOnInsertGroupIds.includes(currentInsertGroup.groupId)
+                  ) {
+                    existing.dependsOnInsertGroupIds.push(currentInsertGroup.groupId);
+                  }
+
+                  extendedGroupIds.add(existing.groupId);
+
+                  console.log(
+                    `[INSERT] opId=${opId} compIdx=${compIdx} — EXTENDED fallback inherited-attr format group=${existing.groupId} from prev neighbor`
+                  );
+                } else {
+                  const g: FormatSuggestionItem = {
+                    groupId: nextId(),
+                    actorEmail: ownerEmail,
+                    createdAt: prevRun.insertSuggestion.createdAt,
+                    attributes: attrStr,
+                    references: [
+                      ...prevRun.insertSuggestion.references,
+                      { opId, componentIndex: compIdx },
+                    ],
+                    spans: [{ start: spanStart, length: spanEnd - spanStart }],
+                    previewText: "",
+                    dependsOnInsertGroupIds: [
+                      prevRun.insertSuggestion.groupId,
+                      currentInsertGroup.groupId,
+                    ],
+                  };
+
+                  formatSuggestions.push(g);
+                  extendedGroupIds.add(g.groupId);
+
+                  console.log(
+                    `[INSERT] opId=${opId} compIdx=${compIdx} — CREATED fallback inherited-attr format group=${g.groupId} from prev neighbor`
+                  );
+                }
               }
 
               stripAttrsFromRuns(runs, prevGroup.indices, inherited);
               ownAttrs = subtractAttrs(ownAttrs, inherited);
-              const remainingAttrKeys = Object.keys(ownAttrs).join(",");
-              console.log(`[INSERT] opId=${opId} compIdx=${compIdx} — stripped inherited attrs from prev runs, remaining ownAttrKeys="${remainingAttrKeys}"`);
+
+              console.log(
+                `[INSERT] opId=${opId} compIdx=${compIdx} — stripped inherited attrs from prev runs, remaining ownAttrKeys="${Object.keys(ownAttrs).join(",")}"`
+              );
             }
           }
         }
 
         // ── Check next neighbor for inherited attrs (different actor) ──
         if (
+          Object.keys(ownAttrs).length > 0 &&
           nextRun?.insertSuggestion &&
           nextRun.insertSuggestion.actorEmail !== actorEmail &&
-          Object.keys(nextRun.baseAttributes).length > 0
+          Object.keys(nextEffectiveAttrs).length > 0
         ) {
-          const inherited = intersectAttrs(ownAttrs, nextRun.baseAttributes);
+          const inherited = intersectAttrs(ownAttrs, nextEffectiveAttrs);
+          console.log(
+            `[INSERT] opId=${opId} compIdx=${compIdx} after inheritance remaining ownAttrKeys="${Object.keys(ownAttrs).join(",")}"`
+          );
           const inheritedKeys = Object.keys(inherited).join(",");
           console.log(`[INSERT] opId=${opId} compIdx=${compIdx} — checking NEXT neighbor for inherited attrs from actor=${nextRun.insertSuggestion.actorEmail} inheritedKeys="${inheritedKeys}"`);
 
@@ -1084,30 +1338,6 @@ export async function buildReviewProjection(
           }
         }
 
-        // ── Check adjacent format suggestion group from different actor ──
-        const adjFmt = formatSuggestions.find(f => {
-          if (f.actorEmail === actorEmail) return false;
-          if (extendedGroupIds.has(f.groupId)) return false;
-          const fmtAttrs = JSON.parse(f.attributes) as Record<string, any>;
-          const inherited = intersectAttrs(ownAttrs, fmtAttrs);
-          return Object.keys(inherited).length > 0 && f.spans.some(s => s.start + s.length === localLogPos);
-        });
-
-        if (adjFmt) {
-          const fmtAttrs = JSON.parse(adjFmt.attributes) as Record<string, any>;
-          const inherited = intersectAttrs(ownAttrs, fmtAttrs);
-          const inheritedKeys = Object.keys(inherited).join(",");
-          if (Object.keys(inherited).length > 0) {
-            ownAttrs = subtractAttrs(ownAttrs, inherited);
-            const span = adjFmt.spans.find(s => s.start + s.length === localLogPos)!;
-            span.length += insertText.length;
-            extendedGroupIds.add(adjFmt.groupId);
-            console.log(`[INSERT] opId=${opId} compIdx=${compIdx} — extended adjacent format group=${adjFmt.groupId} span by insertText.length=${insertText.length} inheritedKeys="${inheritedKeys}"`);
-          }
-        } else {
-          console.log(`[INSERT] opId=${opId} compIdx=${compIdx} — no adjacent format suggestion group found at boundary localLogPos=${localLogPos}`);
-        }
-
         // ── Splice new runs ──
         const parts = insertText.split("\n");
         let spliceAt = insertAtIdx;
@@ -1120,6 +1350,7 @@ export async function buildReviewProjection(
             runs.splice(spliceAt++, 0, {
               text: parts[i],
               baseAttributes: { ...ownAttrs },
+              suggestionAttributes: {},
               logicalStart: runPos,
               opId,
               insertComponentIndex: compIdx,
@@ -1132,6 +1363,7 @@ export async function buildReviewProjection(
             runs.splice(spliceAt++, 0, {
               text: "\n",
               baseAttributes: {},
+              suggestionAttributes: {},
               logicalStart: runPos,
               opId,
               insertComponentIndex: compIdx,

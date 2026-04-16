@@ -1880,7 +1880,7 @@ function EditContent() {
 
             {isReviewing && isOwner.current && (
               <button
-                className="btn-secondary"
+                className="btn-primary"
                 onClick={undo}
                 disabled={reviewHistory.current.length === 0}
                 style={{
@@ -1899,7 +1899,7 @@ function EditContent() {
           style={{
             backgroundColor: "#fffbeb",
             border: "1px solid #fcd34b",
-            color: "#92400e",
+            color: "#f3f031ff",
             padding: "0.75rem 1rem",
             borderRadius: "6px",
             marginBottom: "1rem",
@@ -1990,24 +1990,6 @@ function EditContent() {
           <div
             style={{ display: "flex", gap: "1rem", alignItems: "flex-start" }}
           >
-            {showReviewSidebarModal && isOwner.current && (
-              <FormatSidebarModal
-                open={showReviewSidebarModal}
-                hasPendingSuggestions={hasPendingSuggestions}
-                formatSuggestions={formatSuggestions.filter(
-                  canActOnFormatSuggestion,
-                )}
-                activeFormatId={activeFormatId}
-                onActivateFormat={activateFormatSuggestion}
-                onClose={
-                  hasPendingSuggestions
-                    ? () => setShowExitReviewModal(true)
-                    : handleExitReview
-                }
-                onSave={saveVersion}
-              />
-            )}
-
             <div
               style={{
                 flex: 1,
@@ -2040,6 +2022,23 @@ function EditContent() {
                 }}
               />
             </div>
+            {showReviewSidebarModal && isOwner.current && (
+              <FormatSidebarModal
+                open={showReviewSidebarModal}
+                hasPendingSuggestions={hasPendingSuggestions}
+                formatSuggestions={formatSuggestions.filter(
+                  canActOnFormatSuggestion,
+                )}
+                activeFormatId={activeFormatId}
+                onActivateFormat={activateFormatSuggestion}
+                onClose={
+                  hasPendingSuggestions
+                    ? () => setShowExitReviewModal(true)
+                    : handleExitReview
+                }
+                onSave={saveVersion}
+              />
+            )}
           </div>
 
           {showExitReviewModal && (

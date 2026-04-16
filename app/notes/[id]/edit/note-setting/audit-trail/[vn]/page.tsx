@@ -7,7 +7,7 @@ import { useAuth } from "@/src/context/AuthContext";
 import type Quill from "quill";
 import "quill/dist/quill.snow.css";
 import { Note, NoteVersion } from "@/src/types";
-import displayFormattedNote from "@/src/lib/attribution";
+import { buildReviewProjection } from "@/src/lib/attribution";
 import { TextOperation } from "@/src/lib/textOperation";
 import { registerFormats } from "@/src/lib/quillformats";
 
@@ -108,16 +108,15 @@ function AuditNoteContent() {
         }
         console.log(committedOps, pendingOps)
 
-        const suggestionDelta = await displayFormattedNote(
-          quill,
+        const suggestionDelta = await buildReviewProjection(
           noteId as string,
           committedOps,
           pendingOps,
         );
 
-        if (suggestionDelta !== null) {
-          quill.updateContents(suggestionDelta, "api");
-        }
+        // if (suggestionDelta !== null) {
+        //   quill.updateContents(suggestionDelta, "api");
+        // }
       } catch (err: any) {
         setErrorMessage(err.message || "Failed to load note");
       }
