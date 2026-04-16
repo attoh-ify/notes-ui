@@ -21,16 +21,16 @@ import {
   ReviewInProgressResponse,
   TooltipState,
 } from "../../../../src/types";
-import { AuditTooltip } from "@/components/AuditTooltip";
+import { ReviewTooltip } from "@/components/ReviewTooltip";
 import ExitReviewModal from "@/components/ExitReviewModal";
 import FormatSidebarModal from "@/components/FormatSidebarModal";
 import {
-  buildReviewProjection,
   buildFormatOverlayDelta,
   buildFormatOverlayClearDelta,
   FormatSuggestionItem,
   OpReference,
   OpReferenceResponse,
+  ReviewProjection,
 } from "@/src/lib/attribution";
 
 type ReviewAction = "ACCEPT" | "REJECT";
@@ -83,7 +83,6 @@ function EditContent() {
   const [errorMessage, setErrorMessageMessage] = useState<string | null>(null);
 
   const [isReviewing, setIsReviewing] = useState<boolean>(false);
-  const [revisionLog, setRevisionLog] = useState<TextOperation[] | null>(null);
 
   const [formatSuggestions, setFormatSuggestions] = useState<
     FormatSuggestionItem[]
@@ -232,73 +231,6 @@ function EditContent() {
     }
   }, [isLoading, isReviewing, note?.accessRole]);
 
-  useEffect(() => {
-    const quill = quillRef.current;
-    if (!revisionLog || !quill) {
-      console.log(`[REVISION_LOG_EFFECT] Skipping — revisionLog=${revisionLog === null ? "null" : "present"} quill=${quill ? "present" : "null"}`);
-      return;
-    }
-
-    let cancelled = false;
-
-    const run = async () => {
-      const committedOps = revisionLog.filter((op) => op.state === "COMMITTED");
-      const pendingOps = revisionLog.filter((op) => op.state === "PENDING");
-
-      console.log(`[REVISION_LOG_EFFECT] Processing revisionLog — committedCount=${committedOps.length} pendingCount=${pendingOps.length}`);
-
-      if (pendingOps.length === 0) {
-        console.log(`[REVISION_LOG_EFFECT] No pending ops — setting plain committed document, clearing format suggestions`);
-        let base = new Delta();
-        for (const op of committedOps) {
-          base = base.compose(new Delta(op.delta.ops));
-        }
-        quill.setContents(base, "api");
-        setFormatSuggestions([]);
-        setHasPendingSuggestions(false);
-        return;
-      }
-
-      if (cancelled) {
-        console.log(`[REVISION_LOG_EFFECT] Effect was cancelled before projection completed`);
-        return;
-      }
-
-      console.log(`[REVISION_LOG_EFFECT] Calling buildReviewProjection — noteId=${noteId}`);
-      const projection = await buildReviewProjection(
-        noteId as string,
-        committedOps,
-        pendingOps,
-      );
-
-      if (projection.visualDelta.ops.length === 0) {
-        console.log(`[REVISION_LOG_EFFECT] visualDelta is empty — skipping setContents`);
-        return;
-      }
-
-      console.log(`[REVISION_LOG_EFFECT] Applying visualDelta to Quill — opCount=${projection.visualDelta.ops.length} formatSuggestionCount=${projection.formatSuggestions.length}`);
-      quill.setContents(projection.visualDelta, "api");
-      setFormatSuggestions(projection.formatSuggestions);
-      setHasPendingSuggestions(true);
-
-      initializeRuntimeFromProjection(projection);
-      runtimeHistoryRef.current = [];
-      console.log(`[REVISION_LOG_EFFECT] Runtime initialized from projection — segmentCount=${reviewSegmentsRef.current.length}`);
-
-      quill.root.removeEventListener("click", handleClick);
-      quill.root.addEventListener("click", handleClick);
-      console.log(`[REVISION_LOG_EFFECT] Click handler (re)attached to Quill root`);
-    };
-
-    run();
-
-    return () => {
-      cancelled = true;
-      quillRef.current?.root.removeEventListener("click", handleClick);
-      console.log(`[REVISION_LOG_EFFECT] Cleanup — cancelled=true, click handler removed`);
-    };
-  }, [revisionLog, noteId]);
-
   const activateFormatSuggestion = useCallback((groupId: string) => {
     const quill = quillRef.current;
     if (!quill) {
@@ -323,7 +255,7 @@ function EditContent() {
 
     if (prevId === groupId) {
       console.log(`[ACTIVATE_FORMAT] Same groupId clicked again — toggling OFF, closing tooltip`);
-      closeAuditTooltip();
+      closeReviewTooltip();
       return;
     }
 
@@ -460,16 +392,6 @@ function EditContent() {
         });
         setNote(noteData);
         console.log(`[REVIEW_LOG_FETCH] Fetched note — title="${noteData.title}" accessRole="${noteData.accessRole}"`);
-
-        const logData = await apiFetch<TextOperation[]>(
-          `notes/${noteData.id}/revision-log`,
-          { method: "GET" },
-        );
-        console.log(`[REVIEW_LOG_FETCH] Fetched revision log — opCount=${logData.length}`);
-        const committedCount = logData.filter(op => op.state === "COMMITTED").length;
-        const pendingCount = logData.filter(op => op.state === "PENDING").length;
-        console.log(`[REVIEW_LOG_FETCH] committedCount=${committedCount} pendingCount=${pendingCount}`);
-        setRevisionLog(logData);
       } catch (err: any) {
         console.log(`[REVIEW_LOG_FETCH] ERROR — ${err.message}`);
         setErrorMessageMessage(err.message || "Failed to fetch note data");
@@ -760,7 +682,7 @@ function EditContent() {
         return;
       }
       acceptFormatSuggestion(item);
-      closeAuditTooltip();
+      closeReviewTooltip();
       return;
     }
 
@@ -839,7 +761,7 @@ function EditContent() {
         return;
       }
       rejectFormatSuggestion(item);
-      closeAuditTooltip();
+      closeReviewTooltip();
       return;
     }
 
@@ -1095,6 +1017,39 @@ function EditContent() {
     console.log(`[REVIEW_NOTE] Saving note then triggering review for noteId=${noteId}`);
     await saveNote();
     await apiFetch(`notes/${noteId}/review`, { method: "GET" });
+
+    const quill = quillRef.current;
+    if (!quill) {
+      console.log(`[QUILL] quill=${quill ? "present" : "null"}`);
+      return;
+    }
+    
+    const run = async () => {
+      const projection = await apiFetch<ReviewProjection>(`notes/${noteId}/build-attribution`, {
+        method: "GET",
+      });
+
+      if (projection.visualDelta.ops.length === 0) {
+        console.log(`[PROJECTION] visualDelta is empty — skipping setContents`);
+        return;
+      }
+
+      console.log(`[PROJECTION] Applying visualDelta to Quill — opCount=${projection.visualDelta.ops.length} formatSuggestionCount=${projection.formatSuggestions.length}`);
+      quill.setContents(new Delta(projection.visualDelta.ops), "api");
+      setFormatSuggestions(projection.formatSuggestions);
+      setHasPendingSuggestions(true);
+
+      initializeRuntimeFromProjection(projection);
+      runtimeHistoryRef.current = [];
+      console.log(`[PROJECTION] Runtime initialized from projection — segmentCount=${reviewSegmentsRef.current.length}`);
+
+      quill.root.removeEventListener("click", handleClick);
+      quill.root.addEventListener("click", handleClick);
+      console.log(`[PROJECTION] Click handler (re)attached to Quill root`);
+    };
+
+    run();
+
     console.log(`[REVIEW_NOTE] Review triggered`);
   }
 
@@ -1117,7 +1072,6 @@ function EditContent() {
     try {
       await apiFetch(`notes/${noteId}/review/exit`, { method: "GET" });
       console.log(`[EXIT_REVIEW] Exit API call successful — resetting all review state`);
-      setRevisionLog(null);
       setFormatSuggestions([]);
       setActiveFormatId(null);
       setHasPendingSuggestions(false);
@@ -1274,7 +1228,7 @@ function EditContent() {
     }));
   }
 
-  function closeAuditTooltip() {
+  function closeReviewTooltip() {
     const quill = quillRef.current;
 
     if (
@@ -2063,11 +2017,11 @@ function EditContent() {
       </footer>
 
       {activeSuggestion && (
-        <AuditTooltip
+        <ReviewTooltip
           tooltip={activeSuggestion}
           onAccept={acceptChange}
           onReject={rejectChange}
-          onClose={closeAuditTooltip}
+          onClose={closeReviewTooltip}
         />
       )}
     </main>

@@ -1,14 +1,14 @@
 import { OpReference } from "@/src/lib/attribution";
 import { TooltipState, TYPE_CONFIG } from "@/src/types";
 
-interface AuditTooltipProps {
+interface ReviewTooltipProps {
   tooltip: TooltipState;
   onAccept: (groupId: string, type: "insert" | "delete" | "format", opIds: OpReference[]) => void;
   onReject: (groupId: string, type: "insert" | "delete" | "format") => void;
   onClose: () => void;
 }
 
-export function AuditTooltip({ tooltip, onAccept, onReject, onClose }: AuditTooltipProps) {
+export function ReviewTooltip({ tooltip, onAccept, onReject, onClose }: ReviewTooltipProps) {
   const config = TYPE_CONFIG[tooltip.type];
 
   return (
@@ -25,7 +25,7 @@ export function AuditTooltip({ tooltip, onAccept, onReject, onClose }: AuditTool
         boxShadow: "0 8px 32px rgba(0,0,0,0.14)",
         zIndex: 9999,
         fontSize: "0.85rem",
-        width: "220px",
+        width: "320px",
       }}
     >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>

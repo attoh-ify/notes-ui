@@ -7,9 +7,10 @@ import { useAuth } from "@/src/context/AuthContext";
 import type Quill from "quill";
 import "quill/dist/quill.snow.css";
 import { Note, NoteVersion } from "@/src/types";
-import { buildReviewProjection } from "@/src/lib/attribution";
 import { TextOperation } from "@/src/lib/textOperation";
 import { registerFormats } from "@/src/lib/quillformats";
+import { ReviewProjection } from "@/src/lib/attribution";
+import { Delta } from "quill";
 
 function AuditNoteContent() {
   const { id: noteId, vn: versionNumberParam } = useParams();
@@ -108,15 +109,13 @@ function AuditNoteContent() {
         }
         console.log(committedOps, pendingOps)
 
-        const suggestionDelta = await buildReviewProjection(
-          noteId as string,
-          committedOps,
-          pendingOps,
-        );
+        const projection = await apiFetch<ReviewProjection>(`notes/${noteId}/build-attribution`, {
+          method: "GET",
+        });
 
-        // if (suggestionDelta !== null) {
-        //   quill.updateContents(suggestionDelta, "api");
-        // }
+        if (projection.visualDelta.ops.length !== 0) {
+          quill.setContents(new Delta(projection.visualDelta.ops), "api");
+        }
       } catch (err: any) {
         setErrorMessage(err.message || "Failed to load note");
       }
