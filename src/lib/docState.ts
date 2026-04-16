@@ -40,7 +40,7 @@ export class DocState {
 
   async queueOperation(
     delta: Delta,
-    onSend: (operation: TextOperation) => Promise<void>,
+    send: (operation: TextOperation) => Promise<void>,
   ): Promise<void> {
     this.document = this.document.compose(delta);
 
@@ -53,7 +53,7 @@ export class DocState {
         OperationState.PENDING,
         new Date().toISOString().slice(0, 19)
       );
-      await onSend(this.sentOperation);
+      await send(this.sentOperation);
     } else {
       this.pendingDelta = this.pendingDelta.compose(delta);
     }
