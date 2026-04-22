@@ -1,5 +1,3 @@
-import { OpReference } from "../lib/attribution";
-
 export type MutableOp = {
   insert: string;
   attributes?: Record<string, any>;
@@ -31,14 +29,6 @@ export type SuggestionFormat = {
   attributes: string;
   opIds: string[];
 };
-
-export interface TooltipState {
-  groupId: string;
-  type: "insert" | "delete" | "format";
-  actorEmail: string;
-  createdAt: string;
-  references: OpReference[];
-}
 
 export interface CursorModule {
   createCursor: (id: string, label: string, color: string) => void;

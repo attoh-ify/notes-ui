@@ -51,7 +51,7 @@ export interface CursorPayload {
   position: number;
 }
 
-export enum messageType {
+export enum MessageType {
   COLLABORATOR_JOIN = "COLLABORATOR_JOIN",
   OPERATION = "OPERATION",
   COLLABORATOR_CURSOR = "COLLABORATOR_CURSOR",

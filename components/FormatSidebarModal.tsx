@@ -1,6 +1,6 @@
 "use client";
 
-import { FormatSuggestionItem } from "@/src/lib/attribution";
+import { FormatSuggestionItem } from "@/src/types";
 
 interface FormatSidebarModalProps {
   open: boolean;
@@ -10,7 +10,7 @@ interface FormatSidebarModalProps {
   onActivateFormat: (groupId: string) => void;
   onClose: () => void;
   onSave: (comment: string) => void;
-}
+} 
 
 function formatAttrLabel(attributes: string): string {
   try {

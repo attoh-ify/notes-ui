@@ -15,10 +15,17 @@ import { registerFormats } from "../../../../src/lib/quillformats";
 import {
   CursorModule,
   CursorPayload,
+  FormatSuggestionItem,
   JoinResponse,
-  messageType,
+  MessageType,
   Note,
+  OpReference,
+  ReviewAction,
+  ReviewEntry,
   ReviewInProgressResponse,
+  ReviewProjection,
+  ReviewSegment,
+  RuntimeSnapshot,
   TooltipState,
 } from "../../../../src/types";
 import { ReviewTooltip } from "@/components/ReviewTooltip";
@@ -27,48 +34,22 @@ import FormatSidebarModal from "@/components/FormatSidebarModal";
 import {
   buildFormatOverlayDelta,
   buildFormatOverlayClearDelta,
-  FormatSuggestionItem,
-  OpReference,
-  OpReferenceResponse,
-  ReviewProjection,
+  cloneFormatSuggestions,
+  cloneSegments,
+  deleteInsertGroupSegments,
+  deltaToSegments,
+  findDeleteGroupRangeInRuntime,
+  findInsertGroupRangeInRuntime,
+  getSuggestionSelector,
+  mergeAdjacentSegments,
+  mergeOpReferences,
+  normalizeLineBreaksAfterRejectedInsert,
+  removeInsertSuggestionFromSegments,
+  segmentsToDelta,
+  stripSuggestionAttributes,
+  transformSpansAfterRuntimeInsertRemoval,
+  getRuntimeTextInRange,
 } from "@/src/lib/attribution";
-
-type ReviewAction = "ACCEPT" | "REJECT";
-
-interface ReviewEntry {
-  type: ReviewAction;
-  undoDelta: Delta;
-  redoDelta: Delta;
-  beforeFormatSuggestions: FormatSuggestionItem[];
-  afterFormatSuggestions: FormatSuggestionItem[];
-  beforeActiveFormatId: string | null;
-  afterActiveFormatId: string | null;
-  beforeActiveSuggestion: TooltipState | null;
-  afterActiveSuggestion: TooltipState | null;
-  runtimeSnapshotBefore: RuntimeSnapshot;
-}
-
-type RuntimeActionKind = "accept-insert" | "reject-insert";
-
-interface ReviewSegment {
-  id: string;
-  text: string;
-  attrs: Record<string, any>;
-  references: OpReference[];
-}
-
-interface RuntimeSnapshot {
-  segments: ReviewSegment[];
-  formatSuggestions: FormatSuggestionItem[];
-  activeSuggestion: TooltipState | null;
-  activeFormatId: string | null;
-}
-
-interface RuntimeActionEntry {
-  kind: RuntimeActionKind;
-  before: RuntimeSnapshot;
-  after: RuntimeSnapshot;
-}
 
 function EditContent() {
   const { id: noteId } = useParams();
@@ -105,7 +86,6 @@ function EditContent() {
   const rejectedChanges = useRef<Delta[]>([]);
   const acceptedReferences = useRef<OpReference[][]>([]);
   const reviewSegmentsRef = useRef<ReviewSegment[]>([]);
-  const runtimeHistoryRef = useRef<RuntimeActionEntry[]>([]);
   let _runtimeSegCtr = 0;
 
   const formatSuggestionsRef = useRef<FormatSuggestionItem[]>([]);
@@ -119,6 +99,8 @@ function EditContent() {
   useEffect(() => {
     activeFormatIdRef.current = activeFormatId;
   }, [activeFormatId]);
+
+  // why do we have them both as useState and useRef
 
   useEffect(() => {
     activeSuggestionRef.current = activeSuggestion;
@@ -138,9 +120,11 @@ function EditContent() {
 
     if (activeSuggestion?.groupId) {
       console.log(`[HIGHLIGHT] Activating highlight for groupId=${activeSuggestion.groupId} type=${activeSuggestion.type}`);
-      quill.root
-        .querySelectorAll(`[data-group-id="${activeSuggestion.groupId}"]`)
-        .forEach((el) => el.classList.add("active"));
+      const selector = getSuggestionSelector(activeSuggestion.groupId, activeSuggestion.type);
+
+      quill.root.querySelectorAll(selector).forEach((el) => {
+        el.classList.add("active");
+      });
     } else {
       console.log(`[HIGHLIGHT] Cleared all active highlights (no active suggestion)`);
     }
@@ -203,7 +187,8 @@ function EditContent() {
         quillRef.current.on("text-change", (delta, _old, source) => {
           if (source !== "user") return;
           const range = quillRef.current?.getSelection();
-          if (range) sendCursorChange(range.index ?? 0);
+          if (range) sendCursorChange(range.index ?? -1);
+          console.log("delta", delta);
 
           console.log(`[TEXT_CHANGE] User-triggered text change — deltaOpCount=${delta.ops.length}`);
           docStateRef.current?.queueOperation(
@@ -215,7 +200,7 @@ function EditContent() {
                 return;
               }
               console.log(`[TEXT_CHANGE] Sending operation to server — revision=${op.revision}`);
-              await sendOperationToServer(op);
+              await sendOperationToServer(op);  // if this operation is still an await call, does the system really wait for the operation so finish sending before changing isSyncComplete to true?
               isSyncComplete.current = true;
             },
           );
@@ -223,7 +208,7 @@ function EditContent() {
 
         quillRef.current.on("selection-change", async (range, _old, source) => {
           if (source !== "user" || !range) return;
-          sendCursorChange(range.index ?? 0);
+          sendCursorChange(range.index ?? -1);
         });
       };
 
@@ -298,6 +283,7 @@ function EditContent() {
         return;
       }
 
+      // TODO: change JoinResponse to pass isReviewing isntead of returning null when isReviewing
       const joinData = await apiFetch<JoinResponse>(`notes/${noteId}/join`, {
         method: "GET",
       });
@@ -348,15 +334,15 @@ function EditContent() {
       client.subscribe(`/topic/note/${noteId}`, (message) => {
         const { type, payload } = JSON.parse(message.body);
         console.log(`[STOMP_MSG] Received type=${type}`);
-        if (type === messageType.OPERATION) handleRemoteOperation(payload);
-        if (type === messageType.COLLABORATOR_JOIN) {
+        if (type === MessageType.OPERATION) handleRemoteOperation(payload);
+        if (type === MessageType.COLLABORATOR_JOIN) {
           console.log(`[STOMP_MSG] Collaborator joined — updating collaborators`);
           setCollaborators(payload.collaborators);
         }
-        if (type === messageType.COLLABORATOR_CURSOR) {
+        if (type === MessageType.COLLABORATOR_CURSOR) {
           handleCursorChange(payload);
         }
-        if (type === messageType.REVIEW_IN_PROGRESS) {
+        if (type === MessageType.REVIEW_IN_PROGRESS) {
           console.log(`[STOMP_MSG] Review in progress message received`);
           handleReviewInProgress(payload);
         }
@@ -377,29 +363,29 @@ function EditContent() {
     };
   }, [noteId, isLoading]);
 
-  useEffect(() => {
-    if (!user || !isReviewing) {
-      console.log(`[REVIEW_LOG_FETCH] Skipping — user="${user?.email ?? "null"}" isReviewing=${isReviewing}`);
-      return;
-    }
+  // useEffect(() => {
+  //   if (!user || !isReviewing) {
+  //     console.log(`[REVIEW_LOG_FETCH] Skipping — user="${user?.email ?? "null"}" isReviewing=${isReviewing}`);
+  //     return;
+  //   }
 
-    console.log(`[REVIEW_LOG_FETCH] Entering review mode — fetching revision log for noteId=${noteId}`);
+  //   console.log(`[REVIEW_LOG_FETCH] Entering review mode — fetching revision log for noteId=${noteId}`);
 
-    (async () => {
-      try {
-        const noteData = await apiFetch<Note>(`notes/${noteId}`, {
-          method: "GET",
-        });
-        setNote(noteData);
-        console.log(`[REVIEW_LOG_FETCH] Fetched note — title="${noteData.title}" accessRole="${noteData.accessRole}"`);
-      } catch (err: any) {
-        console.log(`[REVIEW_LOG_FETCH] ERROR — ${err.message}`);
-        setErrorMessageMessage(err.message || "Failed to fetch note data");
-      } finally {
-        setIsloading(false);
-      }
-    })();
-  }, [user, isReviewing, noteId]);
+  //   (async () => {
+  //     try {
+  //       const noteData = await apiFetch<Note>(`notes/${noteId}`, {
+  //         method: "GET",
+  //       });
+  //       setNote(noteData);
+  //       console.log(`[REVIEW_LOG_FETCH] Fetched note — title="${noteData.title}" accessRole="${noteData.accessRole}"`);
+  //     } catch (err: any) {
+  //       console.log(`[REVIEW_LOG_FETCH] ERROR — ${err.message}`);
+  //       setErrorMessageMessage(err.message || "Failed to fetch note data");
+  //     } finally {
+  //       setIsloading(false);
+  //     }
+  //   })();
+  // }, [user, isReviewing, noteId]);
 
   useEffect(() => {
     const quill = quillRef.current;
@@ -428,43 +414,76 @@ function EditContent() {
     const quill = quillRef.current;
     if (!quill) return;
 
-    let hoveredGroupId: string | null = null;
+    if (!isReviewing) return;
 
-    const setGroupHoverState = (groupId: string | null, isActive: boolean) => {
-      if (!groupId) return;
-      quill.root
-        .querySelectorAll(`[data-group-id="${groupId}"]`)
-        .forEach((el) => {
-          if (isActive) el.classList.add("active");
-          else el.classList.remove("active");
-        });
+    let hoveredGroupId: string | null = null;
+    let hoveredType: TooltipState["type"] | null = null;
+
+    const setGroupHoverState = (
+      groupId: string | null,
+      isActive: boolean,
+      type: TooltipState["type"] | null,
+    ) => {
+      if (!groupId || !type) return;
+
+      const selector = getSuggestionSelector(groupId, type);
+
+      quill.root.querySelectorAll(selector).forEach((el) => {
+        if (isActive) el.classList.add("hover");
+        else el.classList.remove("hover");
+      });
     };
 
     const onMouseOver = (e: Event) => {
       const target = e.target as HTMLElement;
-      const node = target.closest("[data-group-id]") as HTMLElement | null;
+      const node = target.closest(
+        "[data-suggestion-type][data-group-id]"
+      ) as HTMLElement | null;
+
       const nextGroupId = node?.getAttribute("data-group-id") ?? null;
+      const rawType = node?.getAttribute("data-suggestion-type") ?? null;
+      const nextType =
+        rawType === "insert" || rawType === "delete" || rawType === "format"
+          ? (rawType as TooltipState["type"])
+          : null;
 
-      if (hoveredGroupId === nextGroupId) return;
+      if (hoveredGroupId === nextGroupId && hoveredType === nextType) return;
 
-      if (hoveredGroupId && hoveredGroupId !== activeSuggestionRef.current?.groupId) {
-        setGroupHoverState(hoveredGroupId, false);
+      if (
+        hoveredGroupId &&
+        hoveredType &&
+        hoveredGroupId !== activeSuggestionRef.current?.groupId
+      ) {
+        setGroupHoverState(hoveredGroupId, false, hoveredType);
       }
 
       hoveredGroupId = nextGroupId;
+      hoveredType = nextType;
 
-      if (hoveredGroupId && hoveredGroupId !== activeSuggestionRef.current?.groupId) {
-        setGroupHoverState(hoveredGroupId, true);
-        console.log(`[HOVER] Hovering groupId=${hoveredGroupId}`);
+      if (
+        hoveredGroupId &&
+        hoveredType &&
+        hoveredGroupId !== activeSuggestionRef.current?.groupId
+      ) {
+        setGroupHoverState(hoveredGroupId, true, hoveredType);
+        console.log(
+          `[HOVER] Hovering groupId=${hoveredGroupId} type=${hoveredType}`
+        );
       }
     };
 
     const onMouseLeave = () => {
-      if (hoveredGroupId && hoveredGroupId !== activeSuggestionRef.current?.groupId) {
-        setGroupHoverState(hoveredGroupId, false);
-        console.log(`[HOVER] Left groupId=${hoveredGroupId}`);
+      if (
+        hoveredGroupId &&
+        hoveredType &&
+        hoveredGroupId !== activeSuggestionRef.current?.groupId
+      ) {
+        setGroupHoverState(hoveredGroupId, false, hoveredType);
+        console.log(`[HOVER] Left groupId=${hoveredGroupId} type=${hoveredType}`);
       }
+
       hoveredGroupId = null;
+      hoveredType = null;
     };
 
     quill.root.addEventListener("mouseover", onMouseOver);
@@ -474,11 +493,13 @@ function EditContent() {
       quill.root.removeEventListener("mouseover", onMouseOver);
       quill.root.removeEventListener("mouseleave", onMouseLeave);
     };
-  }, []);
+  }, [isReviewing]);
 
   const handleClick = useCallback((e: Event) => {
     const target = (e as MouseEvent).target as HTMLElement;
-    const node = target.closest("[data-suggestion-type]") as HTMLElement | null;
+    const node = target.closest(
+      "[data-suggestion-type][data-group-id]"
+    ) as HTMLElement | null;
 
     if (!node) {
       console.log(`[CLICK] Clicked outside any suggestion node — clearing active suggestion`);
@@ -492,16 +513,13 @@ function EditContent() {
       return;
     }
 
-    const parentInsert = node.closest('[data-suggestion-type="insert"]');
-    const effective = (parentInsert || node) as HTMLElement;
-
-    const suggestionType = effective.getAttribute(
+    const suggestionType = node.getAttribute(
       "data-suggestion-type",
     ) as TooltipState["type"];
-    const groupId = effective.getAttribute("data-group-id")!;
-    const actorEmail = effective.getAttribute("data-actor-email")!;
-    const createdAt = effective.getAttribute("data-created-at")!;
-    const references = JSON.parse(effective.getAttribute("data-references") ?? "[]");
+    const groupId = node.getAttribute("data-group-id")!;
+    const actorEmail = node.getAttribute("data-actor-email")!;
+    const createdAt = node.getAttribute("data-created-at")!;
+    const references = JSON.parse(node.getAttribute("data-references") ?? "[]");
 
     console.log(`[CLICK] Clicked on suggestion — type=${suggestionType} groupId=${groupId} actor=${actorEmail}`);
 
@@ -524,46 +542,26 @@ function EditContent() {
   }
 
   function snapshotAndApply(fn: () => void, type: ReviewAction) {
-    const quill = quillRef.current!;
-    const beforeContents = quill.getContents();
-    const beforeFormatSuggestions = cloneFormatSuggestions(formatSuggestionsRef.current);
-    const beforeActiveFormatId = activeFormatIdRef.current;
-    const beforeActiveSuggestion = cloneTooltipState(activeSuggestionRef.current);
-    const runtimeSnapshotBefore = captureRuntimeSnapshot();
-
+    const snapshot = captureRuntimeSnapshot();
+ 
     console.log(`\n[SNAPSHOT] Action=${type} — capturing state BEFORE fn()`);
-    console.log(`[SNAPSHOT] beforeFormatSuggestionCount=${beforeFormatSuggestions.length} beforeActiveFormatId="${beforeActiveFormatId ?? "none"}" beforeActiveSuggestionGroupId="${beforeActiveSuggestion?.groupId ?? "none"}"`);
-    console.log(`[SNAPSHOT] runtimeSegmentCountBefore=${runtimeSnapshotBefore.segments.length}`);
+    console.log(`[SNAPSHOT] formatSuggestionCount=${snapshot.formatSuggestions.length} activeFormatId="${snapshot.activeFormatId ?? "none"}" activeSuggestionGroupId="${snapshot.activeSuggestion?.groupId ?? "none"}"`);
+    console.log(`[SNAPSHOT] segmentCount=${snapshot.segments.length}`);
+ 
+    const beforeDeltaForReject = type === "REJECT"
+      ? segmentsToDelta(snapshot.segments)  // which is better to use here, segmentsToDelta or quillRef.current!.getContents(), in terms of efficiency and functionality
+      : null;
 
+ 
     fn();
-
-    const afterContents = quill.getContents();
-    const afterFormatSuggestions = cloneFormatSuggestions(formatSuggestionsRef.current);
-    const afterActiveFormatId = activeFormatIdRef.current;
-    const afterActiveSuggestion = cloneTooltipState(activeSuggestionRef.current);
-
-    const redoDelta = beforeContents.diff(afterContents);
-    const undoDelta = afterContents.diff(beforeContents);
-
-    console.log(`[SNAPSHOT] State AFTER fn() — afterFormatSuggestionCount=${afterFormatSuggestions.length}`);
-    console.log(`[SNAPSHOT] redoDelta opCount=${redoDelta.ops.length} undoDelta opCount=${undoDelta.ops.length}`);
-    console.log(`[SNAPSHOT] Pushing to reviewHistory — historyLength will be=${reviewHistory.current.length + 1}`);
-
-    reviewHistory.current.push({
-      type,
-      undoDelta,
-      redoDelta,
-      beforeFormatSuggestions,
-      afterFormatSuggestions,
-      beforeActiveFormatId,
-      afterActiveFormatId,
-      beforeActiveSuggestion,
-      afterActiveSuggestion,
-      runtimeSnapshotBefore,
-    });
-
+ 
+    reviewHistory.current.push({ type, snapshot });
+    console.log(`[SNAPSHOT] Pushed to reviewHistory — historyLength=${reviewHistory.current.length}`);
+ 
     if (type === "REJECT") {
-      const stripped = stripSuggestionAttributes(redoDelta);
+      const afterDelta = quillRef.current!.getContents();
+      const redoDelta  = beforeDeltaForReject!.diff(afterDelta);
+      const stripped   = stripSuggestionAttributes(redoDelta);
       rejectedChanges.current.push(stripped);
       console.log(`[SNAPSHOT] REJECT — pushed stripped redoDelta to rejectedChanges, total=${rejectedChanges.current.length}`);
     }
@@ -571,34 +569,33 @@ function EditContent() {
 
   async function undo() {
     console.log(`\n[UNDO] Triggered — historyLength=${reviewHistory.current.length}`);
-
+ 
     if (reviewHistory.current.length === 0) {
       console.log(`[UNDO] History is empty — nothing to undo`);
       return;
     }
-
+ 
     const entry = reviewHistory.current[reviewHistory.current.length - 1];
-    console.log(`[UNDO] Reverting action type=${entry.type} — restoring runtimeSnapshot with segmentCount=${entry.runtimeSnapshotBefore.segments.length} formatSuggestionCount=${entry.runtimeSnapshotBefore.formatSuggestions.length}`);
-
-    const quill = quillRef.current!;
+    console.log(`[UNDO] Reverting action type=${entry.type} — restoring snapshot with segmentCount=${entry.snapshot.segments.length} formatSuggestionCount=${entry.snapshot.formatSuggestions.length}`);
+ 
     const suspended = suspendActiveFormatOverlay();
-
+ 
     try {
-      reviewSegmentsRef.current = cloneSegments(entry.runtimeSnapshotBefore.segments);
+      reviewSegmentsRef.current = cloneSegments(entry.snapshot.segments);
       console.log(`[UNDO] Runtime segments restored — segmentCount=${reviewSegmentsRef.current.length}`);
-
+ 
       refreshEditorFromRuntime();
       console.log(`[UNDO] Editor refreshed from restored runtime segments`);
-
-      setFormatSuggestions(cloneFormatSuggestions(entry.runtimeSnapshotBefore.formatSuggestions));
-      setActiveFormatId(entry.runtimeSnapshotBefore.activeFormatId);
-      setActiveSuggestion(cloneTooltipState(entry.runtimeSnapshotBefore.activeSuggestion));
-
-      console.log(`[UNDO] State fully restored — restoredFormatCount=${entry.runtimeSnapshotBefore.formatSuggestions.length} restoredActiveFormatId="${entry.runtimeSnapshotBefore.activeFormatId ?? "none"}" restoredActiveSuggestionGroupId="${entry.runtimeSnapshotBefore.activeSuggestion?.groupId ?? "none"}"`);
+ 
+      setFormatSuggestions(cloneFormatSuggestions(entry.snapshot.formatSuggestions));
+      setActiveFormatId(entry.snapshot.activeFormatId);
+      setActiveSuggestion(cloneTooltipState(entry.snapshot.activeSuggestion));
+ 
+      console.log(`[UNDO] State fully restored — formatCount=${entry.snapshot.formatSuggestions.length} activeFormatId="${entry.snapshot.activeFormatId ?? "none"}" activeSuggestionGroupId="${entry.snapshot.activeSuggestion?.groupId ?? "none"}"`);
     } finally {
       restoreActiveFormatOverlay(suspended);
     }
-
+ 
     if (entry.type === "REJECT") {
       rejectedChanges.current.pop();
       console.log(`[UNDO] Popped last rejectedChange — remaining=${rejectedChanges.current.length}`);
@@ -606,63 +603,9 @@ function EditContent() {
       acceptedReferences.current.pop();
       console.log(`[UNDO] Popped last acceptedReferences — remaining=${acceptedReferences.current.length}`);
     }
-
+ 
     reviewHistory.current.pop();
     console.log(`[UNDO] Popped history entry — historyLength now=${reviewHistory.current.length}`);
-  }
-
-  function stripSuggestionAttributes(delta: Delta): Delta {
-    return new Delta(
-      delta.ops.map((op) => {
-        if (!op.attributes) return op;
-        const {
-          "suggestion-format": _f,
-          "suggestion-delete": _d,
-          "suggestion-delete-newline": _dn,
-          "suggestion-insert": _i,
-          ...attrs
-        } = op.attributes;
-        return {
-          ...op,
-          attributes: Object.keys(attrs).length ? attrs : undefined,
-        };
-      }),
-    );
-  }
-
-  function getGroupRange(
-    groupId: string,
-  ): { index: number; length: number } | null {
-    const quill = quillRef.current!;
-    const els = Array.from(
-      quill.root.querySelectorAll(`[data-group-id="${groupId}"]`),
-    ) as HTMLElement[];
-
-    console.log(`[GET_GROUP_RANGE] groupId=${groupId} — found ${els.length} DOM element(s)`);
-
-    if (els.length === 0) {
-      console.log(`[GET_GROUP_RANGE] groupId=${groupId} — no elements found, returning null`);
-      return null;
-    }
-
-    let minIdx = Infinity;
-    let maxEnd = -Infinity;
-
-    for (const el of els) {
-      const blot = (quill.constructor as any).find(el, true);
-      if (!blot) {
-        console.log(`[GET_GROUP_RANGE] groupId=${groupId} — DOM element found but no blot resolved`);
-        continue;
-      }
-      const idx = quill.getIndex(blot);
-      const len = blot.length ? blot.length() : (el.textContent?.length ?? 0);
-      if (idx < minIdx) minIdx = idx;
-      if (idx + len > maxEnd) maxEnd = idx + len;
-    }
-
-    const result = minIdx === Infinity ? null : { index: minIdx, length: maxEnd - minIdx };
-    console.log(`[GET_GROUP_RANGE] groupId=${groupId} — result index=${result?.index ?? "null"} length=${result?.length ?? "null"}`);
-    return result;
   }
 
   function acceptChange(
@@ -687,7 +630,7 @@ function EditContent() {
     }
 
     snapshotAndApply(() => {
-      const suspended = suspendActiveFormatOverlay();
+      const suspended = suspendActiveFormatOverlay();  // is this really necessary? the only way to accept an insert or delete is to click on the suggestion, which removes any other active suggestion first. so is there ever going to be a point where I have to suspend an active format suggestion to accept an insert or delete without clicking that insert or delete first, which will on its own remove the format suggestion (or any other active suggestions).
 
       try {
         const quill = quillRef.current!;
@@ -696,24 +639,15 @@ function EditContent() {
 
         if (type === "insert") {
           console.log(`[ACCEPT] INSERT accept — groupId=${groupId}`);
-          const before = captureRuntimeSnapshot();
 
-          removeInsertSuggestionFromSegments(groupId);
+          removeInsertSuggestionFromSegments(reviewSegmentsRef.current, groupId);
           console.log(`[ACCEPT] Removed insert suggestion from segments — remaining segmentCount=${reviewSegmentsRef.current.length}`);
 
-          refreshEditorFromRuntime();
+          refreshEditorFromRuntime();  // why this extra processing???
           console.log(`[ACCEPT] Editor refreshed after insert accept`);
 
           updateFormatSuggestionsAfterInsertAccept(groupId);
           console.log(`[ACCEPT] Format suggestions updated — removed dependency on insertGroupId=${groupId}`);
-
-          const after = captureRuntimeSnapshot();
-          runtimeHistoryRef.current.push({
-            kind: "accept-insert",
-            before: cloneRuntimeSnapshot(before),
-            after: cloneRuntimeSnapshot(after),
-          });
-          console.log(`[ACCEPT] Runtime history entry pushed — kind=accept-insert`);
 
           const activeId = activeFormatIdRef.current;
           if (activeId) {
@@ -726,16 +660,53 @@ function EditContent() {
             }
           }
         } else if (type === "delete") {
-          console.log(`[ACCEPT] DELETE accept — groupId=${groupId} — removing range from Quill`);
-          const range = getGroupRange(groupId);
+          console.log(`[ACCEPT] DELETE accept — groupId=${groupId} — removing range from runtime`);
+
+          const range = findDeleteGroupRangeInRuntime(reviewSegmentsRef.current, groupId);
 
           if (!range) {
-            console.log(`[ACCEPT] WARNING — could not find DOM range for delete groupId=${groupId}`);
+            console.log(`[ACCEPT] WARNING — could not find runtime range for delete groupId=${groupId}`);
             return;
           }
 
-          console.log(`[ACCEPT] Deleting Quill range index=${range.index} length=${range.length}`);
-          quill.deleteText(range.index, range.length, "api");
+          console.log(`[ACCEPT] Deleting delete-group range index=${range.index} length=${range.length}`);
+
+          let cursor = 0;
+          const nextSegments: ReviewSegment[] = [];
+
+          for (const seg of reviewSegmentsRef.current) {
+            const segStart = cursor;
+            const segEnd = cursor + seg.text.length;
+
+            if (segEnd <= range.index || segStart >= range.index + range.length) {
+              nextSegments.push(seg);
+            } else {
+              const leftCut = Math.max(0, range.index - segStart);
+              const rightCut = Math.max(0, segEnd - (range.index + range.length));
+
+              if (leftCut > 0) {
+                nextSegments.push({
+                  ...seg,
+                  id: nextRuntimeSegmentId(),
+                  text: seg.text.slice(0, leftCut),
+                });
+              }
+
+              if (rightCut > 0) {
+                nextSegments.push({
+                  ...seg,
+                  id: nextRuntimeSegmentId(),
+                  text: seg.text.slice(seg.text.length - rightCut),
+                });
+              }
+            }
+
+            cursor = segEnd;
+          }
+
+          reviewSegmentsRef.current = mergeAdjacentSegments(nextSegments);
+          refreshEditorFromRuntime();  // why this extra processing???
+          console.log(`[ACCEPT] Runtime updated after delete accept — segmentCount=${reviewSegmentsRef.current.length}`);
         }
       } finally {
         restoreActiveFormatOverlay(suspended);
@@ -769,8 +740,10 @@ function EditContent() {
       const suspended = suspendActiveFormatOverlay();
 
       try {
-        const quill = quillRef.current!;
-        const range = getGroupRange(groupId);
+        const range =
+          type === "delete"
+            ? findDeleteGroupRangeInRuntime(reviewSegmentsRef.current, groupId)
+            : findInsertGroupRangeInRuntime(reviewSegmentsRef.current, groupId);
         if (!range) {
           console.log(`[REJECT] WARNING — could not find DOM range for groupId=${groupId} type=${type}`);
           return;
@@ -778,26 +751,19 @@ function EditContent() {
 
         if (type === "insert") {
           console.log(`[REJECT] INSERT reject — groupId=${groupId}`);
-          const runtimeRange = findInsertGroupRangeInRuntime(groupId);
-          const before = captureRuntimeSnapshot();
 
-          if (!runtimeRange) {
-            console.log(`[REJECT] WARNING — runtimeRange not found for insertGroupId=${groupId}`);
-            return;
-          }
+          console.log(`[REJECT] range index=${range.index} length=${range.length}`);
 
-          console.log(`[REJECT] runtimeRange index=${runtimeRange.index} length=${runtimeRange.length}`);
-
-          const removedText = getRuntimeTextInRange(runtimeRange.index, runtimeRange.length);
+          const removedText = getRuntimeTextInRange(reviewSegmentsRef.current, range.index, range.length);
           console.log(`[REJECT] removedText="${removedText}"`);
 
-          deleteInsertGroupSegments(groupId);
+          deleteInsertGroupSegments(reviewSegmentsRef.current, groupId);
           console.log(`[REJECT] Deleted insert group segments for groupId=${groupId} — remaining segmentCount=${reviewSegmentsRef.current.length}`);
 
-          normalizeLineBreaksAfterRejectedInsert(runtimeRange, removedText);
+          normalizeLineBreaksAfterRejectedInsert(reviewSegmentsRef.current, range, removedText, nextRuntimeSegmentId);  // study this
           console.log(`[REJECT] Normalized line breaks after rejected insert`);
 
-          refreshEditorFromRuntime();
+          refreshEditorFromRuntime();  // why this extra processing???
           console.log(`[REJECT] Editor refreshed after insert reject`);
 
           const updated = formatSuggestions
@@ -805,8 +771,8 @@ function EditContent() {
               ...item,
               spans: transformSpansAfterRuntimeInsertRemoval(
                 item.spans,
-                runtimeRange.index,
-                runtimeRange.length,
+                range.index,
+                range.length,
               ),
               dependsOnInsertGroupIds: item.dependsOnInsertGroupIds.filter(
                 (id) => id !== groupId,
@@ -817,27 +783,35 @@ function EditContent() {
           console.log(`[REJECT] Updated format suggestions — before=${formatSuggestions.length} after=${updated.length}`);
 
           setFormatSuggestions(refreshPreviewTextsAgainstRuntime(updated));
-
-          const after = captureRuntimeSnapshot();
-          runtimeHistoryRef.current.push({
-            kind: "reject-insert",
-            before: cloneRuntimeSnapshot(before),
-            after: cloneRuntimeSnapshot(after),
-          });
-          console.log(`[REJECT] Runtime history entry pushed — kind=reject-insert`);
         } else if (type === "delete") {
           console.log(
-            `[REJECT] DELETE reject — clearing suggestion-delete + suggestion-delete-newline for groupId=${groupId} range index=${range.index} length=${range.length}`
+            `[REJECT] DELETE reject — removing delete attrs from runtime for groupId=${groupId} range index=${range.index} length=${range.length}`
           );
 
-          quill.formatText(
-            range.index,
-            range.length,
-            {
-              "suggestion-delete": null,
-              "suggestion-delete-newline": null,
-            },
-            "api",
+          reviewSegmentsRef.current = mergeAdjacentSegments(
+            reviewSegmentsRef.current.map((seg) => {
+              const deleteAttr =
+                seg.attrs["suggestion-delete"] ??
+                seg.attrs["suggestion-delete-newline"];
+
+              if (!deleteAttr || deleteAttr.groupId !== groupId) return seg;
+
+              const {
+                ["suggestion-delete"]: _d,
+                ["suggestion-delete-newline"]: _dn,
+                ...rest
+              } = seg.attrs;
+
+              return {
+                ...seg,
+                attrs: Object.keys(rest).length ? rest : {},
+              };
+            }),
+          );
+
+          refreshEditorFromRuntime();  // why this extra processing???
+          console.log(
+            `[REJECT] Runtime updated after delete reject — segmentCount=${reviewSegmentsRef.current.length}`
           );
         }
       } finally {
@@ -931,10 +905,14 @@ function EditContent() {
       payload.actorEmail,
       collaborators[payload.actorEmail],
     );
-    cursor.moveCursor(payload.actorEmail, {
-      index: payload.position,
-      length: 0,
-    });
+    if (payload.position === -1) {
+      cursor.removeCursor(payload.actorEmail);
+    } else {
+      cursor.moveCursor(payload.actorEmail, {
+        index: payload.position,
+        length: 0,
+      });
+    }
   }
 
   function handleRemoteOperation(payload: TextOperation) {
@@ -1029,6 +1007,8 @@ function EditContent() {
         method: "GET",
       });
 
+      console.log(`[PROJECTION] Projection result - ${JSON.stringify(projection)}`);
+
       if (projection.visualDelta.ops.length === 0) {
         console.log(`[PROJECTION] visualDelta is empty — skipping setContents`);
         return;
@@ -1036,11 +1016,11 @@ function EditContent() {
 
       console.log(`[PROJECTION] Applying visualDelta to Quill — opCount=${projection.visualDelta.ops.length} formatSuggestionCount=${projection.formatSuggestions.length}`);
       quill.setContents(new Delta(projection.visualDelta.ops), "api");
+      console.log(`[PROJECTION] visualDelta applied to Quill: ${JSON.stringify(quill.getContents())}`);
       setFormatSuggestions(projection.formatSuggestions);
       setHasPendingSuggestions(true);
 
-      initializeRuntimeFromProjection(projection);
-      runtimeHistoryRef.current = [];
+      reviewSegmentsRef.current = deltaToSegments(projection.visualDelta, nextRuntimeSegmentId);
       console.log(`[PROJECTION] Runtime initialized from projection — segmentCount=${reviewSegmentsRef.current.length}`);
 
       quill.root.removeEventListener("click", handleClick);
@@ -1092,27 +1072,6 @@ function EditContent() {
     await saveNote();
     router.push(`/notes/${noteId}/edit/note-setting`);
   }
-
-  const mergeOpReferences = (refs: OpReference[]): OpReferenceResponse[] => {
-    const mergedMap = new Map<string, Set<number>>();
-
-    for (const ref of refs) {
-      if (!mergedMap.has(ref.opId)) {
-        mergedMap.set(ref.opId, new Set([ref.componentIndex]));
-      } else {
-        const existingIndexes = mergedMap.get(ref.opId)!;
-        existingIndexes.add(ref.componentIndex);
-      }
-    }
-
-    const result = Array.from(mergedMap.entries()).map(([opId, indexSet]) => ({
-      opId,
-      componentIndexes: Array.from(indexSet).sort((a, b) => a - b),
-    }));
-
-    console.log(`[MERGE_OP_REFS] Merged ${refs.length} raw refs into ${result.length} unique opId(s)`);
-    return result;
-  };
 
   async function saveReviewChanges() {
     console.log(`\n[SAVE_REVIEW] Saving review changes — rejectedChangesCount=${rejectedChanges.current.length} acceptedReferenceGroupCount=${acceptedReferences.current.length}`);
@@ -1217,17 +1176,6 @@ function EditContent() {
     return canAct;
   }
 
-  function cloneFormatSuggestions(
-    items: FormatSuggestionItem[],
-  ): FormatSuggestionItem[] {
-    return items.map((item) => ({
-      ...item,
-      references: [...item.references],
-      spans: item.spans.map((s) => ({ ...s })),
-      dependsOnInsertGroupIds: [...item.dependsOnInsertGroupIds],
-    }));
-  }
-
   function closeReviewTooltip() {
     const quill = quillRef.current;
 
@@ -1256,83 +1204,7 @@ function EditContent() {
     _runtimeSegCtr += 1;
     return `seg_${_runtimeSegCtr}`;
   }
-
-  function cloneSegments(items: ReviewSegment[]): ReviewSegment[] {
-    return items.map((s) => ({
-      ...s,
-      attrs: { ...s.attrs },
-      references: [...s.references],
-    }));
-  }
-
-  function cloneRuntimeSnapshot(snapshot: RuntimeSnapshot): RuntimeSnapshot {
-    return {
-      segments: cloneSegments(snapshot.segments),
-      formatSuggestions: cloneFormatSuggestions(snapshot.formatSuggestions),
-      activeSuggestion: snapshot.activeSuggestion
-        ? {
-            ...snapshot.activeSuggestion,
-            references: [...snapshot.activeSuggestion.references],
-          }
-        : null,
-      activeFormatId: snapshot.activeFormatId,
-    };
-  }
-
-  function deltaToSegments(delta: Delta): ReviewSegment[] {
-    const ops = delta.ops ?? [];
-    const segments = ops
-      .filter((op: any) => typeof op.insert === "string")
-      .map((op: any) => ({
-        id: nextRuntimeSegmentId(),
-        text: op.insert,
-        attrs: { ...(op.attributes ?? {}) },
-        references: [...(op.attributes?.["suggestion-insert"]?.references ?? [])],
-      }));
-
-    console.log(`[DELTA_TO_SEGMENTS] Converted delta with ${ops.length} ops into ${segments.length} segment(s)`);
-    return segments;
-  }
-
-  function mergeAdjacentSegments(segments: ReviewSegment[]): ReviewSegment[] {
-    const merged: ReviewSegment[] = [];
-
-    for (const seg of segments) {
-      const last = merged[merged.length - 1];
-
-      const canMerge =
-        !!last &&
-        JSON.stringify(last.attrs ?? {}) === JSON.stringify(seg.attrs ?? {}) &&
-        JSON.stringify(last.references ?? []) === JSON.stringify(seg.references ?? []);
-
-      if (canMerge) {
-        last.text += seg.text;
-      } else {
-        merged.push({
-          ...seg,
-          attrs: { ...seg.attrs },
-          references: [...seg.references],
-        });
-      }
-    }
-
-    return merged;
-  }
-
-  function segmentsToDelta(segments: ReviewSegment[]): Delta {
-    const delta = new Delta();
-
-    for (const seg of segments) {
-      if (Object.keys(seg.attrs).length > 0) {
-        delta.insert(seg.text, seg.attrs);
-      } else {
-        delta.insert(seg.text);
-      }
-    }
-
-    return delta;
-  }
-
+  
   function captureRuntimeSnapshot(): RuntimeSnapshot {
     return {
       segments: cloneSegments(reviewSegmentsRef.current),
@@ -1345,42 +1217,6 @@ function EditContent() {
         : null,
       activeFormatId: activeFormatIdRef.current,
     };
-  }
-
-  function initializeRuntimeFromProjection(projection: {
-    visualDelta: Delta;
-    formatSuggestions: FormatSuggestionItem[];
-  }) {
-    reviewSegmentsRef.current = deltaToSegments(projection.visualDelta);
-    console.log(`[INIT_RUNTIME] Initialized runtime from projection — segmentCount=${reviewSegmentsRef.current.length}`);
-  }
-
-  function removeInsertSuggestionFromSegments(groupId: string) {
-    const before = reviewSegmentsRef.current.length;
-    reviewSegmentsRef.current = mergeAdjacentSegments(
-      reviewSegmentsRef.current.map((seg) => {
-        const insertAttr = seg.attrs["suggestion-insert"];
-        if (!insertAttr || insertAttr.groupId !== groupId) return seg;
-
-        const { ["suggestion-insert"]: _removed, ...rest } = seg.attrs;
-        return {
-          ...seg,
-          attrs: Object.keys(rest).length > 0 ? rest : {},
-        };
-      }),
-    );
-    console.log(`[REMOVE_INSERT_FROM_SEGMENTS] groupId=${groupId} — segmentCount before=${before} after=${reviewSegmentsRef.current.length}`);
-  }
-
-  function deleteInsertGroupSegments(groupId: string) {
-    const before = reviewSegmentsRef.current.length;
-    reviewSegmentsRef.current = mergeAdjacentSegments(
-      reviewSegmentsRef.current.filter((seg) => {
-        const insertAttr = seg.attrs["suggestion-insert"];
-        return !(insertAttr && insertAttr.groupId === groupId);
-      }),
-    );
-    console.log(`[DELETE_INSERT_SEGMENTS] groupId=${groupId} — segmentCount before=${before} after=${reviewSegmentsRef.current.length}`);
   }
 
   function refreshEditorFromRuntime() {
@@ -1400,77 +1236,6 @@ function EditContent() {
       console.log(`[UPDATE_FORMAT_AFTER_ACCEPT] Removed insertGroupId=${groupId} from all dependencies — formatCount=${next.length}`);
       return next;
     });
-  }
-
-  function transformSpansAfterRuntimeInsertRemoval(
-    spans: { start: number; length: number }[],
-    deleteStart: number,
-    deleteLength: number,
-  ) {
-    const deleteEnd = deleteStart + deleteLength;
-    const next: { start: number; length: number }[] = [];
-
-    for (const span of spans) {
-      const spanStart = span.start;
-      const spanEnd = span.start + span.length;
-
-      if (spanEnd <= deleteStart) {
-        next.push({ ...span });
-        continue;
-      }
-
-      if (spanStart >= deleteEnd) {
-        next.push({
-          start: spanStart - deleteLength,
-          length: span.length,
-        });
-        continue;
-      }
-
-      const leftLen = Math.max(0, deleteStart - spanStart);
-      const rightLen = Math.max(0, spanEnd - deleteEnd);
-
-      if (leftLen > 0) {
-        next.push({ start: spanStart, length: leftLen });
-      }
-      if (rightLen > 0) {
-        next.push({ start: deleteStart, length: rightLen });
-      }
-    }
-
-    const merged: { start: number; length: number }[] = [];
-    for (const span of next) {
-      const last = merged[merged.length - 1];
-      if (last && last.start + last.length === span.start) {
-        last.length += span.length;
-      } else {
-        merged.push({ ...span });
-      }
-    }
-
-    return merged;
-  }
-
-  function findInsertGroupRangeInRuntime(groupId: string): { index: number; length: number } | null {
-    let cursor = 0;
-    let start = -1;
-    let end = -1;
-
-    for (const seg of reviewSegmentsRef.current) {
-      const len = seg.text.length;
-      const insertAttr = seg.attrs["suggestion-insert"];
-
-      if (insertAttr?.groupId === groupId) {
-        if (start === -1) start = cursor;
-        end = cursor + len;
-      }
-
-      cursor += len;
-    }
-
-    const result = (start === -1 || end === -1) ? null : { index: start, length: end - start };
-    console.log(`[FIND_INSERT_RANGE] groupId=${groupId} — found=${result !== null} index=${result?.index ?? "null"} length=${result?.length ?? "null"}`);
-    return result;
   }
 
   function refreshPreviewTextsAgainstRuntime(items: FormatSuggestionItem[]) {
@@ -1501,221 +1266,7 @@ function EditContent() {
     return refreshed;
   }
 
-  function getRuntimePlainText(): string {
-    return reviewSegmentsRef.current.map((seg) => seg.text).join("");
-  }
-
-  function getRuntimeTextInRange(start: number, length: number): string {
-    const end = start + length;
-    let cursor = 0;
-    let out = "";
-
-    for (const seg of reviewSegmentsRef.current) {
-      const segStart = cursor;
-      const segEnd = cursor + seg.text.length;
-
-      if (segEnd <= start) {
-        cursor = segEnd;
-        continue;
-      }
-
-      if (segStart >= end) break;
-
-      const sliceStart = Math.max(start, segStart) - segStart;
-      const sliceEnd = Math.min(end, segEnd) - segStart;
-      out += seg.text.slice(sliceStart, sliceEnd);
-
-      cursor = segEnd;
-    }
-
-    return out;
-  }
-
-  function removeRuntimeCharAt(index: number) {
-    if (index < 0) {
-      console.log(`[REMOVE_CHAR_AT] index=${index} is negative — skipping`);
-      return;
-    }
-
-    let cursor = 0;
-
-    for (let i = 0; i < reviewSegmentsRef.current.length; i++) {
-      const seg = reviewSegmentsRef.current[i];
-      const segStart = cursor;
-      const segEnd = cursor + seg.text.length;
-
-      if (index >= segEnd) {
-        cursor = segEnd;
-        continue;
-      }
-
-      const offset = index - segStart;
-      if (offset < 0 || offset >= seg.text.length) {
-        console.log(`[REMOVE_CHAR_AT] index=${index} offset=${offset} out of bounds for seg text="${seg.text}" — skipping`);
-        return;
-      }
-
-      const removedChar = seg.text[offset];
-      console.log(`[REMOVE_CHAR_AT] Removing char="${removedChar === "\n" ? "\\n" : removedChar}" at index=${index} from segment text="${seg.text}"`);
-
-      if (seg.text.length === 1) {
-        reviewSegmentsRef.current.splice(i, 1);
-      } else if (offset === 0) {
-        reviewSegmentsRef.current[i] = {
-          ...seg,
-          text: seg.text.slice(1),
-        };
-      } else if (offset === seg.text.length - 1) {
-        reviewSegmentsRef.current[i] = {
-          ...seg,
-          text: seg.text.slice(0, -1),
-        };
-      } else {
-        const left = {
-          ...seg,
-          text: seg.text.slice(0, offset),
-        };
-        const right = {
-          ...seg,
-          id: nextRuntimeSegmentId(),
-          text: seg.text.slice(offset + 1),
-        };
-
-        reviewSegmentsRef.current.splice(i, 1, left, right);
-      }
-
-      reviewSegmentsRef.current = mergeAdjacentSegments(reviewSegmentsRef.current);
-      console.log(`[REMOVE_CHAR_AT] Done — segmentCount now=${reviewSegmentsRef.current.length}`);
-      return;
-    }
-
-    console.log(`[REMOVE_CHAR_AT] index=${index} exceeded all segments — nothing removed`);
-  }
-
-  function insertRuntimeTextAt(index: number, text: string, attrs: Record<string, any> = {}) {
-    if (!text) {
-      console.log(`[INSERT_RUNTIME_TEXT_AT] Empty text — skipping`);
-      return;
-    }
-
-    const displayText = text === "\n" ? "\\n" : text;
-    console.log(`[INSERT_RUNTIME_TEXT_AT] Inserting "${displayText}" at index=${index}`);
-
-    let cursor = 0;
-
-    for (let i = 0; i < reviewSegmentsRef.current.length; i++) {
-      const seg = reviewSegmentsRef.current[i];
-      const segStart = cursor;
-      const segEnd = cursor + seg.text.length;
-
-      if (index > segEnd) {
-        cursor = segEnd;
-        continue;
-      }
-
-      if (index === segStart) {
-        reviewSegmentsRef.current.splice(i, 0, {
-          id: nextRuntimeSegmentId(),
-          text,
-          attrs,
-          references: [],
-        });
-        reviewSegmentsRef.current = mergeAdjacentSegments(reviewSegmentsRef.current);
-        console.log(`[INSERT_RUNTIME_TEXT_AT] Inserted at segStart — segmentCount=${reviewSegmentsRef.current.length}`);
-        return;
-      }
-
-      if (index === segEnd) {
-        reviewSegmentsRef.current.splice(i + 1, 0, {
-          id: nextRuntimeSegmentId(),
-          text,
-          attrs,
-          references: [],
-        });
-        reviewSegmentsRef.current = mergeAdjacentSegments(reviewSegmentsRef.current);
-        console.log(`[INSERT_RUNTIME_TEXT_AT] Inserted at segEnd — segmentCount=${reviewSegmentsRef.current.length}`);
-        return;
-      }
-
-      if (index > segStart && index < segEnd) {
-        const offset = index - segStart;
-
-        const left = { ...seg, text: seg.text.slice(0, offset) };
-        const inserted = { id: nextRuntimeSegmentId(), text, attrs, references: [] };
-        const right = { ...seg, id: nextRuntimeSegmentId(), text: seg.text.slice(offset) };
-
-        reviewSegmentsRef.current.splice(i, 1, left, inserted, right);
-        reviewSegmentsRef.current = mergeAdjacentSegments(reviewSegmentsRef.current);
-        console.log(`[INSERT_RUNTIME_TEXT_AT] Inserted inside segment at offset=${offset} — segmentCount=${reviewSegmentsRef.current.length}`);
-        return;
-      }
-    }
-
-    reviewSegmentsRef.current.push({
-      id: nextRuntimeSegmentId(),
-      text,
-      attrs,
-      references: [],
-    });
-    reviewSegmentsRef.current = mergeAdjacentSegments(reviewSegmentsRef.current);
-    console.log(`[INSERT_RUNTIME_TEXT_AT] Appended at end — segmentCount=${reviewSegmentsRef.current.length}`);
-  }
-
-  function normalizeLineBreaksAfterRejectedInsert(
-    removedRange: { index: number; length: number },
-    removedText: string,
-  ) {
-    const boundary = removedRange.index;
-    const currentText = getRuntimePlainText();
-
-    const charBefore = boundary > 0 ? currentText[boundary - 1] : null;
-    const charAfter = boundary < currentText.length ? currentText[boundary] : null;
-
-    const removedHadNewline = removedText.includes("\n");
-    const beforeHasVisibleText = boundary > 0;
-    const afterHasVisibleText = boundary < currentText.length;
-
-    const beforeIsText = charBefore !== null && charBefore !== "\n";
-    const afterIsText = charAfter !== null && charAfter !== "\n";
-
-    const charBeforeDisplay = charBefore === null ? "null" : charBefore === "\n" ? "\\n" : charBefore;
-    const charAfterDisplay = charAfter === null ? "null" : charAfter === "\n" ? "\\n" : charAfter;
-
-    console.log(`[NORMALIZE_LINEBREAKS] boundary=${boundary} charBefore="${charBeforeDisplay}" charAfter="${charAfterDisplay}" removedHadNewline=${removedHadNewline} beforeHasVisibleText=${beforeHasVisibleText} afterHasVisibleText=${afterHasVisibleText}`);
-
-    // Case 1: two newlines meet after deletion -> collapse to one
-    if (charBefore === "\n" && charAfter === "\n") {
-      console.log(`[NORMALIZE_LINEBREAKS] CASE 1 — double newline at boundary — removing one at index=${boundary}`);
-      removeRuntimeCharAt(boundary);
-      return;
-    }
-
-    // Case 2: deleted first line content, leaving a leading newline
-    if (boundary === 0 && charAfter === "\n") {
-      console.log(`[NORMALIZE_LINEBREAKS] CASE 2 — leading newline at position 0 — removing it`);
-      removeRuntimeCharAt(0);
-      return;
-    }
-
-    // Case 3: deleted last line content, leaving a trailing newline
-    if (boundary === currentText.length && charBefore === "\n") {
-      console.log(`[NORMALIZE_LINEBREAKS] CASE 3 — trailing newline at end — removing at index=${boundary - 1}`);
-      removeRuntimeCharAt(boundary - 1);
-      return;
-    }
-
-    // Case 4: removed block was between two non-empty text regions and contained line break(s)
-    if (removedHadNewline && beforeHasVisibleText && afterHasVisibleText && beforeIsText && afterIsText) {
-      console.log(`[NORMALIZE_LINEBREAKS] CASE 4 — removed cross-line content, two surviving text regions — inserting separator newline at boundary=${boundary}`);
-      insertRuntimeTextAt(boundary, "\n");
-      return;
-    }
-
-    console.log(`[NORMALIZE_LINEBREAKS] No normalization case matched — no change made`);
-  }
-
-  if (loadingUser)
-    return <div className="container-wide">Checking session...</div>;
+  if (loadingUser) return <div className="container-wide">Checking session...</div>;
 
   if (!user) {
     router.push("/login");
