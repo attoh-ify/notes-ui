@@ -26,6 +26,7 @@ export function registerFormats(QuillModule: typeof Quill) {
       actorEmail: string;
       createdAt: string;
       references: string;
+      "base-attributes"?: Record<string, any>;
     }) {
       const node = super.create();
 
@@ -37,6 +38,10 @@ export function registerFormats(QuillModule: typeof Quill) {
       node.setAttribute("data-actor-email", data.actorEmail ?? "");
       node.setAttribute("data-created-at", data.createdAt ?? "");
       node.setAttribute("data-references", JSON.stringify(uniqueIds));
+      node.setAttribute(
+        "data-base-attributes",
+        JSON.stringify(data["base-attributes"] ?? {})
+      );
       node.classList.add("suggestion-insert");
       return node;
     }
@@ -47,6 +52,7 @@ export function registerFormats(QuillModule: typeof Quill) {
         actorEmail: node.getAttribute("data-actor-email") ?? "",
         createdAt: node.getAttribute("data-created-at") ?? "",
         references: getJsonObject(node, "data-references", []),
+        baseAttributes: getJsonObject(node, "data-base-attributes", {}),
       };
     }
   }

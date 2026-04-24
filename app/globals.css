@@ -140,7 +140,7 @@ body {
   cursor: pointer;
   transition: background-color 0.15s;
 }
-.suggestion-insert:hover {
+.suggestion-insert.hover {
   background-color: #bfdbfe;
 }
 .suggestion-insert.active {
@@ -158,7 +158,7 @@ body {
   transition: background-color 0.15s;
 }
 
-.suggestion-delete:hover {
+.suggestion-delete.hover {
   background-color: #fecaca;
 }
 
@@ -179,7 +179,7 @@ body {
   text-decoration: none !important;
 }
 
-.suggestion-delete-newline:hover {
+.suggestion-delete-newline.hover {
   background-color: #fecaca;
 }
 
@@ -196,7 +196,7 @@ body {
   transition: background-color 0.15s;
 }
 
-.suggestion-format:hover {
+.suggestion-format.hover {
   background-color: transparent !important;
 }
 

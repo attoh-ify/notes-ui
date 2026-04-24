@@ -6,10 +6,9 @@ import { useEffect, useState, Suspense, useRef } from "react";
 import { useAuth } from "@/src/context/AuthContext";
 import type Quill from "quill";
 import "quill/dist/quill.snow.css";
-import { Note, NoteVersion } from "@/src/types";
+import { Note, NoteVersion, ReviewProjection } from "@/src/types";
 import { TextOperation } from "@/src/lib/textOperation";
 import { registerFormats } from "@/src/lib/quillformats";
-import { ReviewProjection } from "@/src/lib/attribution";
 import { Delta } from "quill";
 
 function AuditNoteContent() {

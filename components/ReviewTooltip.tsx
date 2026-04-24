@@ -1,5 +1,4 @@
-import { OpReference } from "@/src/lib/attribution";
-import { TooltipState, TYPE_CONFIG } from "@/src/types";
+import { OpReference, TooltipState, TYPE_CONFIG } from "@/src/types";
 
 interface ReviewTooltipProps {
   tooltip: TooltipState;
