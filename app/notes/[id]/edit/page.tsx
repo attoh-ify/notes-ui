@@ -27,6 +27,7 @@ import {
   ReviewSegment,
   RuntimeSnapshot,
   TooltipState,
+  SuggestionSlice,
 } from "../../../../src/types";
 import { ReviewTooltip } from "@/components/ReviewTooltip";
 import ExitReviewModal from "@/components/ExitReviewModal";
@@ -42,7 +43,6 @@ import {
   findInsertGroupRangeInRuntime,
   getSuggestionSelector,
   mergeAdjacentSegments,
-  mergeOpReferences,
   normalizeLineBreaksAfterRejectedInsert,
   removeInsertSuggestionFromSegments,
   restoreFormatSuggestionToBase,
@@ -87,7 +87,7 @@ function EditContent() {
   const isOwner = useRef<boolean>(false);
   const reviewHistory = useRef<ReviewEntry[]>([]);
   const rejectedChanges = useRef<Delta[]>([]);
-  const acceptedReferences = useRef<OpReference[][]>([]);
+  const acceptedReferences = useRef<SuggestionSlice[][]>([]);
   const reviewSegmentsRef = useRef<ReviewSegment[]>([]);
   let _runtimeSegCtr = 0;
 
@@ -521,7 +521,7 @@ function EditContent() {
   function acceptChange(
     groupId: string,
     type: "insert" | "delete" | "format",
-    references: OpReference[],
+    references: SuggestionSlice[],
   ) {
     if (type === "format") {
       const item = formatSuggestionsRef.current.find((f) => f.groupId === groupId);
@@ -932,8 +932,7 @@ function EditContent() {
           ? rejectedChanges.current.reduce((acc, d) => acc.compose(d))
           : new Delta();
 
-      const flatRefs = acceptedReferences.current.flat();
-      const mergedRefs = mergeOpReferences(flatRefs);
+      const acceptedSlices = acceptedReferences.current.flat();
 
       await apiFetch(`notes/${noteId}/review`, {
         method: "POST",
@@ -946,7 +945,7 @@ function EditContent() {
             OperationState.PENDING,
             new Date().toISOString().slice(0, 19),
           ),
-          acceptedReferences: mergedRefs,
+          acceptedReferences: acceptedSlices,
         }),
       });
 

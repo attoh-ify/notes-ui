@@ -1,22 +1,5 @@
 import Delta from "quill-delta";
-import { FormatSuggestionItem, OpReference, OpReferenceResponse, ReviewSegment, TooltipState } from "../types";
-
-// ─── Op-reference utilities ───────────────────────────────────────────────────
-
-export function mergeOpReferences(refs: OpReference[]): OpReferenceResponse[] {
-  const mergedMap = new Map<string, Set<number>>();
-  for (const ref of refs) {
-    if (!mergedMap.has(ref.opId)) {
-      mergedMap.set(ref.opId, new Set([ref.componentIndex]));
-    } else {
-      mergedMap.get(ref.opId)!.add(ref.componentIndex);
-    }
-  }
-  return Array.from(mergedMap.entries()).map(([opId, indexSet]) => ({
-    opId,
-    componentIndexes: Array.from(indexSet).sort((a, b) => a - b),
-  }));
-}
+import { FormatSuggestionItem, ReviewSegment, TooltipState, SuggestionSlice } from "../types";
 
 // ─── Format suggestion utilities ──────────────────────────────────────────────
 
@@ -25,7 +8,11 @@ export function cloneFormatSuggestions(
 ): FormatSuggestionItem[] {
   return items.map((item) => ({
     ...item,
-    references: [...item.references],
+    references: item.references.map((r) => ({
+      start: r.start,
+      length: r.length,
+      ref: { ...r.ref },
+    })),
     spans: item.spans.map((s) => ({ ...s })),
     dependsOnInsertGroupIds: [...item.dependsOnInsertGroupIds],
   }));
@@ -128,16 +115,28 @@ export function deltaToSegments(
     .map((op: any) => {
       const rawAttrs: Record<string, any> = { ...(op.attributes ?? {}) };
 
-      const baseAttributes: Record<string, any> = rawAttrs["base-attributes"] ?? {};
-      const insertMeta = rawAttrs["suggestion-insert"] ?? null;
-      const references: OpReference[] = insertMeta?.references ?? [];
+      const baseAttributes: Record<string, any> =
+        rawAttrs["base-attributes"] ?? {};
 
-      const { "base-attributes": _ba, "suggestion-attributes": _sa, ...storedAttrs } = rawAttrs;
+      const insertMeta = rawAttrs["suggestion-insert"] ?? null;
+      const deleteMeta =
+        rawAttrs["suggestion-delete"] ??
+        rawAttrs["suggestion-delete-newline"] ??
+        null;
+
+      const references: SuggestionSlice[] =
+        insertMeta?.references ?? deleteMeta?.references ?? [];
+
+      const {
+        "base-attributes": _ba,
+        "suggestion-attributes": _sa,
+        ...storedAttrs
+      } = rawAttrs;
 
       return {
-        id:             nextId(),
-        text:           op.insert as string,
-        attrs:          Object.keys(storedAttrs).length > 0 ? storedAttrs : {},
+        id: nextId(),
+        text: op.insert as string,
+        attrs: Object.keys(storedAttrs).length > 0 ? storedAttrs : {},
         references,
         baseAttributes,
       };
@@ -159,7 +158,11 @@ export function mergeAdjacentSegments(segments: ReviewSegment[]): ReviewSegment[
       merged.push({
         ...seg,
         attrs:          { ...seg.attrs },
-        references:     [...seg.references],
+        references: seg.references.map((r) => ({
+          start: r.start,
+          length: r.length,
+          ref: { ...r.ref },
+        })),
         baseAttributes: { ...(seg.baseAttributes ?? {}) },
       });
     }
@@ -186,8 +189,12 @@ export function segmentsToDelta(segments: ReviewSegment[]): Delta {
 export function cloneSegments(items: ReviewSegment[]): ReviewSegment[] {
   return items.map((s) => ({
     ...s,
-    attrs:          { ...s.attrs },
-    references:     [...s.references],
+    attrs: { ...s.attrs },
+    references: s.references.map((r) => ({
+      start: r.start,
+      length: r.length,
+      ref: { ...r.ref },
+    })),
     baseAttributes: { ...(s.baseAttributes ?? {}) },
   }));
 }
@@ -323,8 +330,29 @@ function removeRuntimeCharAt(segments: ReviewSegment[], index: number, nextId: (
     else if (offset === seg.text.length - 1)        { next[i] = { ...seg, text: seg.text.slice(0, -1) }; }
     else {
       next.splice(i, 1,
-        { ...seg, text: seg.text.slice(0, offset) },
-        { ...seg, id: nextId(), text: seg.text.slice(offset + 1) },
+        {
+          ...seg,
+          text: seg.text.slice(0, offset),
+          attrs: { ...seg.attrs },
+          references: seg.references.map((r) => ({
+            start: r.start,
+            length: r.length,
+            ref: { ...r.ref },
+          })),
+          baseAttributes: { ...(seg.baseAttributes ?? {}) },
+        },
+        {
+          ...seg,
+          id: nextId(),
+          text: seg.text.slice(offset + 1),
+          attrs: { ...seg.attrs },
+          references: seg.references.map((r) => ({
+            start: r.start,
+            length: r.length,
+            ref: { ...r.ref },
+          })),
+          baseAttributes: { ...(seg.baseAttributes ?? {}) },
+        }
       );
     }
     return mergeAdjacentSegments(next);
@@ -342,7 +370,13 @@ function insertRuntimeTextAt(
 ): ReviewSegment[] {
   if (!text) return segments;
   const next   = [...segments];
-  const newSeg: ReviewSegment = { id: nextId(), text, attrs: { ...attrs }, references: [], baseAttributes: { ...baseAttributes } };
+  const newSeg: ReviewSegment = {
+    id: nextId(),
+    text,
+    attrs: { ...attrs },
+    references: [],
+    baseAttributes: { ...baseAttributes },
+  };
   let cursor = 0;
   for (let i = 0; i < next.length; i++) {
     const seg      = next[i];

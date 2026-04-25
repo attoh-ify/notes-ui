@@ -5,6 +5,12 @@ export interface OpReference {
   componentIndex: number;
 }
 
+export interface SuggestionSlice {
+  start: number;
+  length: number;
+  ref: OpReference;
+}
+
 export interface OpReferenceResponse {
   opId: string;
   componentIndexes: number[];
@@ -14,7 +20,7 @@ export interface InsertSuggestion {
   groupId: string;
   actorEmail: string;
   createdAt: string;
-  references: OpReference[];
+  references: SuggestionSlice[];
   startIndex: number;
   baseAttributes?: Record<string, any>;
 }
@@ -23,7 +29,7 @@ export interface DeleteSuggestion {
   groupId: string;
   actorEmail: string;
   createdAt: string;
-  references: OpReference[];
+  references: SuggestionSlice[];
 }
 
 export interface FormatSuggestionSpan {
@@ -36,7 +42,7 @@ export interface FormatSuggestionItem {
   actorEmail: string;
   createdAt: string;
   attributes: string;
-  references: OpReference[];
+  references: SuggestionSlice[];
   spans: FormatSuggestionSpan[];
   previewText: string;
   dependsOnInsertGroupIds: string[];
@@ -52,7 +58,7 @@ export interface ReviewSegment {
   id: string;
   text: string;
   attrs: Record<string, any>;
-  references: OpReference[];
+  references: SuggestionSlice[];
   baseAttributes: Record<string, any>;
 }
 
@@ -61,7 +67,7 @@ export interface TooltipState {
   type: "insert" | "delete" | "format";
   actorEmail: string;
   createdAt: string;
-  references: OpReference[];
+  references: SuggestionSlice[];
 }
 
 export type ReviewAction = "ACCEPT" | "REJECT";
