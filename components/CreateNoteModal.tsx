@@ -19,6 +19,7 @@ export default function CreateNoteModal({
   onClose,
 }: CreateNoteModalProps) {
   const router = useRouter();
+
   const [title, setTitle] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -78,7 +79,12 @@ export default function CreateNoteModal({
           gap: 20,
         }}
       >
-        <div style={{ display: "flex", justifyContent: "space-between" }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+          }}
+        >
           <p style={{ fontSize: 13, color: "#718096" }}>
             Create new note
           </p>
@@ -90,8 +96,10 @@ export default function CreateNoteModal({
               background: "transparent",
               border: "none",
               fontSize: 18,
-              cursor: isLoading ? "not-allowed" : "pointer",
               color: "#4A5568",
+              cursor: isLoading ? "not-allowed" : "pointer",
+              opacity: isLoading ? 0.6 : 1,
+              pointerEvents: isLoading ? "none" : "auto",
             }}
           >
             ✕
@@ -107,14 +115,32 @@ export default function CreateNoteModal({
         />
 
         {error && (
-          <p style={{ color: "red", fontSize: 12 }}>{error}</p>
+          <p style={{ color: "red", fontSize: 12 }}>
+            {error}
+          </p>
         )}
 
-        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "flex-end",
+          }}
+        >
           <button
             onClick={onCreate}
-            className="btn-primary"
             disabled={isLoading || !title.trim()}
+            className="btn-primary"
+            style={{
+              opacity: isLoading ? 0.7 : 1,
+              cursor:
+                isLoading || !title.trim()
+                  ? "not-allowed"
+                  : "pointer",
+              pointerEvents:
+                isLoading || !title.trim()
+                  ? "none"
+                  : "auto",
+            }}
           >
             {isLoading ? "Creating..." : "Create"}
           </button>

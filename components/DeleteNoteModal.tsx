@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+
 interface DeleteNoteModalProps {
   open: boolean;
   title: string;
@@ -13,8 +15,21 @@ export default function DeleteNoteModal({
   onClose,
   onDelete,
 }: DeleteNoteModalProps) {
+  const [isDeleting, setIsDeleting] = useState(false);
 
   if (!open) return null;
+
+  async function handleDelete() {
+    if (isDeleting) return;
+
+    setIsDeleting(true);
+
+    try {
+      await onDelete();
+    } finally {
+      setIsDeleting(false);
+    }
+  }
 
   return (
     <div
@@ -62,33 +77,65 @@ export default function DeleteNoteModal({
 
           <button
             onClick={onClose}
+            disabled={isDeleting}
             style={{
               background: "transparent",
               border: "none",
               fontSize: 18,
-              cursor: "pointer",
               color: "#4A5568",
+              cursor: isDeleting ? "not-allowed" : "pointer",
+              opacity: isDeleting ? 0.6 : 1,
+              pointerEvents: isDeleting ? "none" : "auto",
             }}
           >
             ✕
           </button>
         </div>
 
-        <div
-          style={{ color: "black" }}
-        >
-          Are you sure you want to delete <p style={{ color: "var(--text-muted)", textDecoration: "underline" }}>{title}</p>
+        <div style={{ color: "black" }}>
+          Are you sure you want to delete{" "}
+          <p
+            style={{
+              color: "var(--text-muted)",
+              textDecoration: "underline",
+            }}
+          >
+            {title}
+          </p>
         </div>
 
         <div
           style={{
             display: "flex",
             justifyContent: "flex-end",
-            gap: "1rem"
+            gap: "1rem",
           }}
         >
-          <button onClick={() => onDelete()} className="btn-delete">delete</button>
-          <button onClick={onClose} className="btn-secondary">cancel</button>
+          <button
+            onClick={handleDelete}
+            disabled={isDeleting}
+            className="btn-delete"
+            style={{
+              opacity: isDeleting ? 0.7 : 1,
+              cursor: isDeleting ? "not-allowed" : "pointer",
+              pointerEvents: isDeleting ? "none" : "auto",
+            }}
+          >
+            {isDeleting ? "Deleting..." : "Delete"}
+          </button>
+
+          <button
+            onClick={onClose}
+            disabled={isDeleting}
+            className="btn-secondary"
+            style={{
+              opacity: isDeleting ? 0.7 : 1,
+              cursor: isDeleting ? "not-allowed" : "pointer",
+              pointerEvents: isDeleting ? "none" : "auto",
+            }}
+          >
+            Cancel
+          </button>
         </div>
       </div>
     </div>
