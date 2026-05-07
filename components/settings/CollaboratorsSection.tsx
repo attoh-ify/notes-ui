@@ -283,7 +283,6 @@ export default function CollaboratorsSection({
               value={newEmail}
               placeholder="invite by email..."
               onChange={(e) => setNewEmail(e.target.value)}
-              disabled={isAdding}
               style={{
                 flex: 1,
                 padding: "10px",
@@ -295,7 +294,6 @@ export default function CollaboratorsSection({
 
             <select
               value={newRole}
-              disabled={isAdding}
               onChange={(e) =>
                 setNewRole(
                   e.target.value as NoteAccessRole,
