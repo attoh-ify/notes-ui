@@ -7,7 +7,7 @@ import { useState } from "react";
 
 interface CreateNoteModalProps {
   open: boolean;
-  email: string,
+  email: string;
   userId: string;
   onClose: () => void;
 }
@@ -20,26 +20,36 @@ export default function CreateNoteModal({
 }: CreateNoteModalProps) {
   const router = useRouter();
   const [title, setTitle] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   if (!open) return null;
 
   async function onCreate() {
+    if (isLoading) return;
+
+    setIsLoading(true);
+    setError(null);
+
     try {
+      if (!userId || !email) {
+        throw new Error("User not authenticated");
+      }
+
       const data = await apiFetch<Note>("notes", {
         method: "POST",
-        body: JSON.stringify({
-            title
-        })
+        body: JSON.stringify({ title }),
       });
-      if (!userId || !email) {
-        throw("User not authenticated");
-      }
+
       router.push(
-        `/notes/${data.id}/edit?email${email}&userId=${encodeURIComponent(userId)}`,
+        `/notes/${data.id}/edit?email=${encodeURIComponent(email)}&userId=${encodeURIComponent(userId)}`
       );
+
       onClose();
     } catch (err: any) {
-      throw(err.message || "Failed to create Note.");
+      setError(err.message || "Failed to create Note.");
+    } finally {
+      setIsLoading(false);
     }
   }
 
@@ -68,32 +78,19 @@ export default function CreateNoteModal({
           gap: 20,
         }}
       >
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "flex-start",
-          }}
-        >
-          <div>
-            <p
-              style={{
-                margin: "4px 0 0",
-                fontSize: 13,
-                color: "#718096",
-              }}
-            >
-              Create new note
-            </p>
-          </div>
+        <div style={{ display: "flex", justifyContent: "space-between" }}>
+          <p style={{ fontSize: 13, color: "#718096" }}>
+            Create new note
+          </p>
 
           <button
             onClick={onClose}
+            disabled={isLoading}
             style={{
               background: "transparent",
               border: "none",
               fontSize: 18,
-              cursor: "pointer",
+              cursor: isLoading ? "not-allowed" : "pointer",
               color: "#4A5568",
             }}
           >
@@ -106,15 +103,21 @@ export default function CreateNoteModal({
           placeholder="Title..."
           className="input-field"
           onChange={(e) => setTitle(e.target.value)}
+          disabled={isLoading}
         />
 
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "flex-end",
-          }}
-        >
-          <button onClick={onCreate} className="btn-primary">create</button>
+        {error && (
+          <p style={{ color: "red", fontSize: 12 }}>{error}</p>
+        )}
+
+        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+          <button
+            onClick={onCreate}
+            className="btn-primary"
+            disabled={isLoading || !title.trim()}
+          >
+            {isLoading ? "Creating..." : "Create"}
+          </button>
         </div>
       </div>
     </div>
