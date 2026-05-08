@@ -26,7 +26,8 @@ export function registerFormats(QuillModule: typeof Quill) {
       actorEmail: string;
       createdAt: string;
       references: string;
-      "base-attributes"?: Record<string, any>;
+      baseAttributes?: Record<string, any>;
+      suggestionAttributes?: Record<string, any>;
     }) {
       const node = super.create();
 
@@ -40,7 +41,11 @@ export function registerFormats(QuillModule: typeof Quill) {
       node.setAttribute("data-references", JSON.stringify(uniqueIds));
       node.setAttribute(
         "data-base-attributes",
-        JSON.stringify(data["base-attributes"] ?? {})
+        JSON.stringify(data.baseAttributes ?? {})
+      );
+      node.setAttribute(
+        "data-suggestion-attributes",
+        JSON.stringify(data.suggestionAttributes ?? {})
       );
       node.classList.add("suggestion-insert");
       return node;
@@ -53,6 +58,7 @@ export function registerFormats(QuillModule: typeof Quill) {
         createdAt: node.getAttribute("data-created-at") ?? "",
         references: getJsonObject(node, "data-references", []),
         baseAttributes: getJsonObject(node, "data-base-attributes", {}),
+        suggestionAttributes: getJsonObject(node, "data-suggestion-attributes", {}),
       };
     }
   }
@@ -66,6 +72,8 @@ export function registerFormats(QuillModule: typeof Quill) {
       actorEmail: string;
       createdAt: string;
       references: string;
+      baseAttributes?: Record<string, any>;
+      suggestionAttributes?: Record<string, any>;
     }) {
       const node = super.create();
 
@@ -77,6 +85,14 @@ export function registerFormats(QuillModule: typeof Quill) {
       node.setAttribute("data-actor-email", data.actorEmail ?? "");
       node.setAttribute("data-created-at", data.createdAt ?? "");
       node.setAttribute("data-references", JSON.stringify(uniqueIds));
+      node.setAttribute(
+        "data-base-attributes",
+        JSON.stringify(data.baseAttributes ?? {})
+      );
+      node.setAttribute(
+        "data-suggestion-attributes",
+        JSON.stringify(data.suggestionAttributes ?? {})
+      );
       node.classList.add("suggestion-delete");
 
       return node;

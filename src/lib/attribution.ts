@@ -9,7 +9,8 @@ export function cloneFormatSuggestions(
   return items.map((item) => ({
     ...item,
     references: item.references.map((r) => ({
-      start: r.start,
+      reviewStart: r.reviewStart,
+      componentStart: r.componentStart,
       length: r.length,
       ref: { ...r.ref },
     })),
@@ -76,7 +77,7 @@ export function buildFormatOverlayDelta(item: FormatSuggestionItem): Delta {
         groupId:    item.groupId,
         actorEmail: item.actorEmail,
         createdAt:  item.createdAt,
-        attributes: item.attributes,
+        attributes: { key:item.attributeKey, value:item.attributeValue },
         references: item.references,
       },
     });
@@ -115,30 +116,34 @@ export function deltaToSegments(
     .map((op: any) => {
       const rawAttrs: Record<string, any> = { ...(op.attributes ?? {}) };
 
-      const baseAttributes: Record<string, any> =
-        rawAttrs["base-attributes"] ?? {};
-
       const insertMeta = rawAttrs["suggestion-insert"] ?? null;
       const deleteMeta =
         rawAttrs["suggestion-delete"] ??
         rawAttrs["suggestion-delete-newline"] ??
         null;
 
-      const references: SuggestionSlice[] =
-        insertMeta?.references ?? deleteMeta?.references ?? [];
+      const baseAttributes: Record<string, any> =
+        insertMeta?.["baseAttributes"] ??
+        deleteMeta?.["baseAttributes"] ??
+        {};
 
-      const {
-        "base-attributes": _ba,
-        "suggestion-attributes": _sa,
-        ...storedAttrs
-      } = rawAttrs;
+      const suggestionAttributes: Record<string, any> =
+        insertMeta?.["suggestionAttributes"] ??
+        deleteMeta?.["suggestionAttributes"] ??
+        {};
+
+      const references: SuggestionSlice[] =
+        insertMeta?.references ??
+        deleteMeta?.references ??
+        [];
 
       return {
         id: nextId(),
         text: op.insert as string,
-        attrs: Object.keys(storedAttrs).length > 0 ? storedAttrs : {},
-        references,
+        attrs: rawAttrs,
         baseAttributes,
+        suggestionAttributes,
+        references,
       };
     });
 }
@@ -159,7 +164,8 @@ export function mergeAdjacentSegments(segments: ReviewSegment[]): ReviewSegment[
         ...seg,
         attrs:          { ...seg.attrs },
         references: seg.references.map((r) => ({
-          start: r.start,
+          reviewStart: r.reviewStart,
+          componentStart: r.componentStart,
           length: r.length,
           ref: { ...r.ref },
         })),
@@ -191,7 +197,8 @@ export function cloneSegments(items: ReviewSegment[]): ReviewSegment[] {
     ...s,
     attrs: { ...s.attrs },
     references: s.references.map((r) => ({
-      start: r.start,
+      reviewStart: r.reviewStart,
+      componentStart: r.componentStart,
       length: r.length,
       ref: { ...r.ref },
     })),
@@ -335,7 +342,8 @@ function removeRuntimeCharAt(segments: ReviewSegment[], index: number, nextId: (
           text: seg.text.slice(0, offset),
           attrs: { ...seg.attrs },
           references: seg.references.map((r) => ({
-            start: r.start,
+            reviewStart: r.reviewStart,
+            componentStart: r.componentStart,
             length: r.length,
             ref: { ...r.ref },
           })),
@@ -347,7 +355,8 @@ function removeRuntimeCharAt(segments: ReviewSegment[], index: number, nextId: (
           text: seg.text.slice(offset + 1),
           attrs: { ...seg.attrs },
           references: seg.references.map((r) => ({
-            start: r.start,
+            reviewStart: r.reviewStart,
+            componentStart: r.componentStart,
             length: r.length,
             ref: { ...r.ref },
           })),
@@ -367,6 +376,7 @@ function insertRuntimeTextAt(
   nextId: () => string,
   attrs: Record<string, any> = {},
   baseAttributes: Record<string, any> = {},
+  suggestionAttributes: Record<string, any> = {},
 ): ReviewSegment[] {
   if (!text) return segments;
   const next   = [...segments];
@@ -376,6 +386,7 @@ function insertRuntimeTextAt(
     attrs: { ...attrs },
     references: [],
     baseAttributes: { ...baseAttributes },
+    suggestionAttributes: { ...suggestionAttributes },
   };
   let cursor = 0;
   for (let i = 0; i < next.length; i++) {
@@ -466,8 +477,7 @@ export function restoreFormatSuggestionToBase(
   segments: ReviewSegment[],
   item: FormatSuggestionItem,
 ): ReviewSegment[] {
-  const fmtAttrs = JSON.parse(item.attributes) as Record<string, any>;
-  const fmtKeys  = Object.keys(fmtAttrs);
+  const fmtKeys  = item.attributeKey;
   let cursor = 0;
 
   const next = segments.map((seg) => {

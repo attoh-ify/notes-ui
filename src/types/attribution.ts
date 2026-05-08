@@ -6,14 +6,10 @@ export interface OpReference {
 }
 
 export interface SuggestionSlice {
-  start: number;
+  reviewStart: number;
+  componentStart: number;
   length: number;
   ref: OpReference;
-}
-
-export interface OpReferenceResponse {
-  opId: string;
-  componentIndexes: number[];
 }
 
 export interface InsertSuggestion {
@@ -21,8 +17,6 @@ export interface InsertSuggestion {
   actorEmail: string;
   createdAt: string;
   references: SuggestionSlice[];
-  startIndex: number;
-  baseAttributes?: Record<string, any>;
 }
 
 export interface DeleteSuggestion {
@@ -41,7 +35,8 @@ export interface FormatSuggestionItem {
   groupId: string;
   actorEmail: string;
   createdAt: string;
-  attributes: string;
+  attributeKey: string;
+  attributeValue: any;
   references: SuggestionSlice[];
   spans: FormatSuggestionSpan[];
   previewText: string;
@@ -58,8 +53,9 @@ export interface ReviewSegment {
   id: string;
   text: string;
   attrs: Record<string, any>;
-  references: SuggestionSlice[];
   baseAttributes: Record<string, any>;
+  suggestionAttributes: Record<string, any>;
+  references: SuggestionSlice[];
 }
 
 export interface TooltipState {

@@ -19,7 +19,6 @@ import {
   JoinResponse,
   MessageType,
   Note,
-  OpReference,
   ReviewAction,
   ReviewEntry,
   ReviewInProgressResponse,
@@ -78,6 +77,7 @@ function EditContent() {
   const [showExitReviewModal, setShowExitReviewModal] = useState(false);
   const [showReviewSidebarModal, setShowReviewSidebarModal] = useState(false);
   const [hasPendingSuggestions, setHasPendingSuggestions] = useState(false);
+  const [reviewLoaded, setReviewLoaded] = useState(false);
 
   const editorRef = useRef<HTMLDivElement>(null);
   const quillRef = useRef<Quill | null>(null);
@@ -844,39 +844,41 @@ function EditContent() {
 
   async function handleReviewNote() {
     await saveNote();
+
+    setIsReviewing(true);
+    setReviewLoaded(false);
+
     await apiFetch(`notes/${noteId}/review`, { method: "GET" });
 
     const quill = quillRef.current;
-    if (!quill) {
-      return;
+    if (!quill) return;
+
+    const projection = await apiFetch<ReviewProjection>(
+      `notes/${noteId}/build-attribution`,
+      { method: "GET" },
+    );
+
+    const hasPending =
+      projection.visualDelta.ops.length > 0 ||
+      projection.formatSuggestions.length > 0;
+
+    quill.setContents(new Delta(projection.baseDelta.ops), "api");
+
+    if (projection.visualDelta.ops.length > 0) {
+      quill.updateContents(new Delta(projection.visualDelta.ops), "api");
     }
-    
-    const run = async () => {
-      const projection = await apiFetch<ReviewProjection>(`notes/${noteId}/build-attribution`, {
-        method: "GET",
-      });
-      
-      if (projection.visualDelta.ops.length > 0 || projection.formatSuggestions.length > 0) {
-        quill.setContents(new Delta(projection.baseDelta.ops), "api");
-        quill.updateContents(new Delta(projection.visualDelta.ops), "api");
-        setFormatSuggestions(projection.formatSuggestions);
-      }
-      
-      setHasPendingSuggestions(
-        projection.visualDelta.ops.length > 0 || projection.formatSuggestions.length > 0
-      );
-      
-      reviewSegmentsRef.current = deltaToSegments(
-        quill.getContents(),
-        nextRuntimeSegmentId,
-      );
-      console.log(JSON.stringify(reviewSegmentsRef.current));
 
-      quill.root.removeEventListener("click", handleClick);
-      quill.root.addEventListener("click", handleClick);
-    };
+    setFormatSuggestions(projection.formatSuggestions);
+    setHasPendingSuggestions(hasPending);
+    setReviewLoaded(true);
 
-    run();
+    reviewSegmentsRef.current = deltaToSegments(
+      quill.getContents(),
+      nextRuntimeSegmentId,
+    );
+
+    quill.root.removeEventListener("click", handleClick);
+    quill.root.addEventListener("click", handleClick);
   }
 
   function handleReviewInProgress(payload: ReviewInProgressResponse) {
@@ -898,6 +900,7 @@ function EditContent() {
       setIsReviewing(false);
       setShowReviewSidebarModal(false);
       setActiveSuggestion(null);
+      setReviewLoaded(false);
       reviewHistory.current = [];
       rejectedChanges.current = [];
       acceptedReferences.current = [];
@@ -1079,6 +1082,18 @@ function EditContent() {
         ...item,
         previewText: text,
       };
+    });
+  }
+
+  function visualDeltaHasSuggestionOps(delta: Delta): boolean {
+    return (delta.ops ?? []).some((op: any) => {
+      const attrs = op.attributes ?? {};
+
+      return Boolean(
+        attrs["suggestion-insert"] ||
+        attrs["suggestion-delete"] ||
+        attrs["suggestion-delete-newline"]
+      );
     });
   }
 
@@ -1276,35 +1291,26 @@ function EditContent() {
         </div>
       ) : (
         <>
-          {isReviewing && isOwner.current && !hasPendingSuggestions && (
+          {isReviewing && reviewLoaded && note.accessRole === "OWNER" && !hasPendingSuggestions && (
             <div
               style={{
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                justifyContent: "center",
-                backgroundColor: "#f9fafb",
-                border: "1px solid var(--border)",
-                borderRadius: "8px",
-                textAlign: "center",
-                padding: "2rem",
-                gap: "1rem",
+                backgroundColor: "#ecfdf5",
+                border: "1px solid #10b981",
+                color: "#065f46",
+                padding: "0.75rem 1rem",
+                borderRadius: "6px",
                 marginBottom: "1rem",
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                fontSize: "0.875rem",
+                fontWeight: 500,
               }}
             >
-              <div style={{ fontSize: "2.5rem" }}>✅</div>
-              <h3 style={{ color: "var(--text)", margin: 0 }}>
-                No pending changes
-              </h3>
-              <p
-                style={{
-                  color: "var(--text-muted)",
-                  maxWidth: "400px",
-                  margin: 0,
-                }}
-              >
-                All changes have been reviewed.
-              </p>
+              <span style={{ fontSize: "1.1rem" }}>✅</span>
+              <span>
+                <strong>No pending changes:</strong> The note is shown below with its current saved content.
+              </span>
             </div>
           )}
 
@@ -1323,12 +1329,7 @@ function EditContent() {
                   ? "2px solid #fcd34b"
                   : "1px solid var(--border)",
                 backgroundColor: isReviewing ? "#fafafa" : "#fcfcfc",
-                display:
-                  isReviewing &&
-                  note.accessRole === "OWNER" &&
-                  !hasPendingSuggestions
-                    ? "none"
-                    : "block",
+                display: "block",
               }}
             >
               <div
