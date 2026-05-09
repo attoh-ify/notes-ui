@@ -47,10 +47,10 @@ import {
   restoreFormatSuggestionToBase,
   segmentsToDelta,
   stripSuggestionAttributes,
-  transformSpansAfterRuntimeInsertRemoval,
   getRuntimeTextInRange,
-  segmentsToPlainDelta,
-  segmentsToAttributeOverlayDelta,
+  // segmentsToPlainDelta,
+  // segmentsToAttributeOverlayDelta,
+  resolveFormatSuggestionsAfterMutation,
 } from "@/src/lib/attribution";
 
 function EditContent() {
@@ -81,6 +81,7 @@ function EditContent() {
 
   const editorRef = useRef<HTMLDivElement>(null);
   const quillRef = useRef<Quill | null>(null);
+  const initializingEditorRef = useRef(false);
   const docStateRef = useRef<DocState | null>(null);
   const stompClientRef = useRef<CompatClient | null>(null);
   const isSyncComplete = useRef<boolean>(false);
@@ -89,11 +90,16 @@ function EditContent() {
   const rejectedChanges = useRef<Delta[]>([]);
   const acceptedReferences = useRef<SuggestionSlice[][]>([]);
   const reviewSegmentsRef = useRef<ReviewSegment[]>([]);
-  let _runtimeSegCtr = 0;
+  const runtimeSegCtrRef = useRef(0);
 
   const formatSuggestionsRef = useRef<FormatSuggestionItem[]>([]);
   const activeFormatIdRef = useRef<string | null>(null);
   const activeSuggestionRef = useRef<TooltipState | null>(null);
+  const collaboratorsRef = useRef<Record<string, string>>({});
+  const noteRef = useRef<Note | null>(null);
+  const userRef = useRef(user);
+  const isSendingRef = useRef(false);
+  const pendingSendQueueRef = useRef<TextOperation[]>([]);
 
   useEffect(() => {
     formatSuggestionsRef.current = formatSuggestions;
@@ -103,11 +109,21 @@ function EditContent() {
     activeFormatIdRef.current = activeFormatId;
   }, [activeFormatId]);
 
-  // why do we have them both as useState and useRef
-
   useEffect(() => {
     activeSuggestionRef.current = activeSuggestion;
-  }, [activeSuggestion]);
+    }, [activeSuggestion]);
+
+    useEffect(() => {
+    collaboratorsRef.current = collaborators;
+  }, [collaborators]);
+
+  useEffect(() => {
+    noteRef.current = note;
+  }, [note]);
+
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
 
   if (!docStateRef.current && user) {
     docStateRef.current = new DocState(user.email);
@@ -137,38 +153,40 @@ function EditContent() {
       !isLoading &&
       editorRef.current &&
       !quillRef.current &&
+      !initializingEditorRef.current &&
       shouldShowEditor
     ) {
       const init = async () => {
+        initializingEditorRef.current = true;
         const { default: Q } = await import("quill");
         const { default: QCursors } = await import("quill-cursors");
         Q.register("modules/cursors", QCursors);
         registerFormats(Q);
 
+        const toolbarOptions = [
+          [{ font: [] }],
+          // [{ size: Size.whitelist }], // Use the registered size whitelist
+          [{ header: [1, 2, 3, 4, 5, 6, false] }], // More header levels
+          ["bold", "italic", "underline", "strike"],
+          [{ color: [] }, { background: [] }],
+          [
+            { align: "" },
+            { align: "center" },
+            { align: "right" },
+            { align: "justify" }, // optional
+          ],
+          [{ list: "ordered" }, { list: "bullet" }],
+          [{ indent: "-1" }, { indent: "+1" }],
+          ["blockquote", "code-block"],
+          ["link", "image"],
+          ["clean"],
+        ];
+
         quillRef.current = new Q(editorRef.current!, {
           theme: "snow",
           readOnly: isReviewing,
           modules: {
-            toolbar: [
-              "bold",
-              "italic",
-              "underline",
-              "strike",
-              "color",
-              "background",
-              "font",
-              "size",
-              "header",
-              "indent",
-              "list",
-              "align",
-              "link",
-              "image",
-              "video",
-              "blockquote",
-              "code-block",
-              "formula",
-            ],
+            toolbar: toolbarOptions,
             cursors: true,
           },
           placeholder: "Start typing...",
@@ -191,8 +209,11 @@ function EditContent() {
               if (!stompClientRef.current?.connected) {
                 return;
               }
-              await sendOperationToServer(op);  // if this operation is still an await call, does the system really wait for the operation so finish sending before changing isSyncComplete to true?
-              isSyncComplete.current = true;
+              try {
+                await sendOperationToServer(op);
+              } finally {
+                isSyncComplete.current = true;
+              }
             },
           );
         });
@@ -203,7 +224,9 @@ function EditContent() {
         });
       };
 
-      init();
+      init().finally(() => {
+        initializingEditorRef.current = false;
+      });
     }
   }, [isLoading, isReviewing, note?.accessRole]);
 
@@ -260,12 +283,11 @@ function EditContent() {
         return;
       }
 
-      // TODO: change JoinResponse to pass isReviewing isntead of returning null when isReviewing
       const joinData = await apiFetch<JoinResponse>(`notes/${noteId}/join`, {
         method: "GET",
       });
 
-      if (joinData === null) {
+      if (joinData.isReviewing === true) {
         setIsReviewing(true);
         return;
       }
@@ -437,24 +459,31 @@ function EditContent() {
       return;
     }
 
-    const type = node.getAttribute("data-suggestion-type");
+    const type = node.getAttribute("data-suggestion-type") as TooltipState["type"];
     if (type === "format") {
       return;
     }
 
-    const suggestionType = node.getAttribute(
-      "data-suggestion-type",
-    ) as TooltipState["type"];
     const groupId = node.getAttribute("data-group-id")!;
     const actorEmail = node.getAttribute("data-actor-email")!;
     const createdAt = node.getAttribute("data-created-at")!;
     const references = JSON.parse(node.getAttribute("data-references") ?? "[]");
 
     setActiveSuggestion((prev) => {
-      const next = prev?.groupId === groupId ? null : { groupId, type: suggestionType, actorEmail, createdAt, references };
+      const next = prev?.groupId === groupId ? null : { groupId, type, actorEmail, createdAt, references };
       return next;
     });
   }, []);
+
+  useEffect(() => {
+    const quill = quillRef.current;
+
+    if (!quill) return;
+
+    return () => {
+      quill.root.removeEventListener("click", handleClick);
+    };
+  }, [handleClick]);
 
   function cloneTooltipState(
     tooltip: TooltipState | null,
@@ -471,9 +500,8 @@ function EditContent() {
     const snapshot = captureRuntimeSnapshot();
  
     const beforeDeltaForReject = type === "REJECT"
-      ? segmentsToDelta(snapshot.segments)  // which is better to use here, segmentsToDelta or quillRef.current!.getContents(), in terms of efficiency and functionality
+      ? segmentsToDelta(snapshot.segments)
       : null;
-
  
     fn();
  
@@ -535,7 +563,12 @@ function EditContent() {
       const suspended = suspendActiveFormatOverlay();
  
       try {
-        const quill = quillRef.current!;
+        const range =
+          type === "delete"
+            ? findDeleteGroupRangeInRuntime(reviewSegmentsRef.current, groupId)
+            : findInsertGroupRangeInRuntime(reviewSegmentsRef.current, groupId);
+        if (!range) return;
+
         acceptedReferences.current.push(references);
  
         if (type === "insert") {
@@ -543,20 +576,21 @@ function EditContent() {
             reviewSegmentsRef.current,
             groupId,
           );
- 
+
           refreshEditorFromRuntime();
-          updateFormatSuggestionsAfterInsertAccept(groupId);
- 
-          const activeId = activeFormatIdRef.current;
-          if (activeId) {
-            const activeItem = formatSuggestionsRef.current.find((f) => f.groupId === activeId);
-            if (activeItem) quill.updateContents(buildFormatOverlayDelta(activeItem), "api");
-          }
- 
+
+          setFormatSuggestions((prev) => 
+            refreshPreviewTextsAgainstRuntime(
+              resolveFormatSuggestionsAfterMutation(
+                prev,
+                range,
+                groupId,
+                "insert",
+                "ACCEPT"
+              ),
+            ),
+          );
         } else if (type === "delete") {
-          const range = findDeleteGroupRangeInRuntime(reviewSegmentsRef.current, groupId);
-          if (!range) return;
- 
           let cursor = 0;
           const nextSegments: ReviewSegment[] = [];
  
@@ -565,46 +599,45 @@ function EditContent() {
             const segEnd   = cursor + seg.text.length;
             cursor = segEnd;
  
-            // Segment is entirely outside the deleted range — keep it as-is.
             if (segEnd <= range.index || segStart >= range.index + range.length) {
               nextSegments.push(seg);
               continue;
             }
  
-            // Segment overlaps the deleted range — keep only the parts outside it.
-            // BUG FIX: surviving partial pieces must NOT inherit suggestion-delete
-            // from the parent segment. They become plain committed content, so
-            // restore their committed formatting from baseAttributes.
             const leftLen  = Math.max(0, range.index - segStart);
             const rightLen = Math.max(0, segEnd - (range.index + range.length));
  
-            // Committed attrs for the surviving pieces = baseAttributes of the seg.
-            // (For a committed deleted run, seg.attrs has suggestion-delete and
-            // seg.baseAttributes has the real formatting like bold:true.)
-            const committedAttrs = seg.baseAttributes ?? {};
- 
             if (leftLen > 0) {
               nextSegments.push({
-                ...seg,
-                id:             nextRuntimeSegmentId(),
-                text:           seg.text.slice(0, leftLen),
-                attrs:          Object.keys(committedAttrs).length > 0 ? { ...committedAttrs } : {},
-                baseAttributes: { ...committedAttrs },
+                id: nextRuntimeSegmentId(),
+                text: seg.text.slice(0, leftLen),
+                baseAttributes: { ...(seg.baseAttributes ?? {}) },
+                suggestionAttributes: { ...(seg.suggestionAttributes ?? {}) },
               });
             }
             if (rightLen > 0) {
               nextSegments.push({
-                ...seg,
-                id:             nextRuntimeSegmentId(),
-                text:           seg.text.slice(seg.text.length - rightLen),
-                attrs:          Object.keys(committedAttrs).length > 0 ? { ...committedAttrs } : {},
-                baseAttributes: { ...committedAttrs },
+                id: nextRuntimeSegmentId(),
+                text: seg.text.slice(seg.text.length - rightLen),
+                baseAttributes: { ...(seg.baseAttributes ?? {}) },
+                suggestionAttributes: { ...(seg.suggestionAttributes ?? {}) },
               });
             }
           }
  
           reviewSegmentsRef.current = mergeAdjacentSegments(nextSegments);
           refreshEditorFromRuntime();
+
+          setFormatSuggestions((prev) =>
+            refreshPreviewTextsAgainstRuntime(
+              resolveFormatSuggestionsAfterMutation(
+                prev,
+                range,
+                groupId,
+                "delete",
+                "ACCEPT"
+              )
+            ))
         }
       } finally {
         restoreActiveFormatOverlay(suspended);
@@ -658,47 +691,41 @@ function EditContent() {
           );
  
           refreshEditorFromRuntime();
- 
-          const updated = formatSuggestions
-            .map((item) => ({
-              ...item,
-              spans: transformSpansAfterRuntimeInsertRemoval(item.spans, range.index, range.length),
-              dependsOnInsertGroupIds: item.dependsOnInsertGroupIds.filter((id) => id !== groupId),
-            }))
-            .filter((item) => item.spans.length > 0);
- 
-          setFormatSuggestions(refreshPreviewTextsAgainstRuntime(updated));
- 
+
+          setFormatSuggestions((prev) =>
+            refreshPreviewTextsAgainstRuntime(
+              resolveFormatSuggestionsAfterMutation(
+                prev,
+                range,
+                groupId,
+                "insert",
+                "REJECT"
+              )
+            ))
         } else if (type === "delete") {
           // Rejecting a delete: the text stays, we just strip the suggestion-delete
           // marker and restore the committed formatting from baseAttributes.
           reviewSegmentsRef.current = mergeAdjacentSegments(
             reviewSegmentsRef.current.map((seg) => {
-              const deleteAttr =
-                seg.attrs["suggestion-delete"] ?? seg.attrs["suggestion-delete-newline"];
-              if (!deleteAttr || deleteAttr.groupId !== groupId) return seg;
+              if (seg.deleteSuggestion?.groupId !== groupId) return seg;
  
-              const {
-                "suggestion-delete":         _d,
-                "suggestion-delete-newline": _dn,
-                ...rest
-              } = seg.attrs;
- 
-              // BUG FIX: restore committed formatting from baseAttributes.
-              // Without this, deleted committed runs that had formatting (bold,
-              // italic, etc.) lose it after rejection because their attrs only
-              // contained suggestion-delete and the real formatting was only in
-              // baseAttributes.
-              const restored: Record<string, any> = {
-                ...(seg.baseAttributes ?? {}),
-                ...rest,
-              };
- 
-              return { ...seg, attrs: Object.keys(restored).length > 0 ? restored : {} };
+              return { ...seg, deleteSuggestion: undefined };
             }),
           );
  
           refreshEditorFromRuntime();
+          
+          setFormatSuggestions((prev) =>
+            refreshPreviewTextsAgainstRuntime(
+              resolveFormatSuggestionsAfterMutation(
+                prev,
+                range,
+                groupId,
+                "delete",
+                "REJECT"
+              )
+            )
+          );
         }
       } finally {
         restoreActiveFormatOverlay(suspended);
@@ -718,12 +745,12 @@ function EditContent() {
     snapshotAndApply(() => {
       const quill = quillRef.current!;
       quill.updateContents(buildFormatOverlayClearDelta(item), "api");
-      acceptedReferences.current.push(item.references);
       setFormatSuggestions((prev) => {
         const next = prev.filter((f) => f.groupId !== item.groupId);
         return next;
       });
       setActiveFormatId(null);
+      acceptedReferences.current.push(item.references);
     }, "ACCEPT");
   }
 
@@ -762,12 +789,12 @@ function EditContent() {
   }
 
   function handleCursorChange(payload: CursorPayload) {
-    if (isReviewing || payload.actorEmail === user!.email) return;
+    if (isReviewing || payload.actorEmail === userRef.current?.email) return;
     const cursor = quillRef.current!.getModule("cursors") as CursorModule;
     cursor.createCursor(
       payload.actorEmail,
       payload.actorEmail,
-      collaborators[payload.actorEmail],
+      collaboratorsRef.current[payload.actorEmail],
     );
     if (payload.position === -1) {
       cursor.removeCursor(payload.actorEmail);
@@ -807,19 +834,38 @@ function EditContent() {
     if (isReviewing) {
       return;
     }
-    await apiFetch(`notes/${noteId}/enqueue`, {
-      method: "POST",
-      body: JSON.stringify(
-        new TextOperation(
-          "",
-          operation.delta,
-          user!.email,
-          operation.revision,
-          OperationState.PENDING,
-          new Date().toISOString().slice(0, 19),
-        ),
-      ),
-    });
+
+    pendingSendQueueRef.current.push(operation);
+
+    if (isSendingRef.current) {
+      return;
+    }
+
+    isSendingRef.current = true;
+
+    try {
+      while (pendingSendQueueRef.current.length > 0) {
+        const next = pendingSendQueueRef.current.shift();
+
+        if (!next) continue;
+
+        await apiFetch(`notes/${noteId}/enqueue`, {
+          method: "POST",
+          body: JSON.stringify(
+            new TextOperation(
+              "",
+              next.delta,
+              userRef.current!.email,
+              next.revision,
+              OperationState.PENDING,
+              new Date().toISOString().slice(0, 19),
+            ),
+          ),
+        });
+      }
+    } finally {
+      isSendingRef.current = false;
+    }
   }
 
   async function saveNote() {
@@ -845,18 +891,21 @@ function EditContent() {
   async function handleReviewNote() {
     await saveNote();
 
+    const quill = quillRef.current;
+    if (!quill) return;
+
     setIsReviewing(true);
     setReviewLoaded(false);
 
     await apiFetch(`notes/${noteId}/review`, { method: "GET" });
 
-    const quill = quillRef.current;
-    if (!quill) return;
-
     const projection = await apiFetch<ReviewProjection>(
       `notes/${noteId}/build-attribution`,
       { method: "GET" },
     );
+
+    console.log(projection.visualDelta)
+    console.log(projection.formatSuggestions)
 
     const hasPending =
       projection.visualDelta.ops.length > 0 ||
@@ -882,9 +931,18 @@ function EditContent() {
   }
 
   function handleReviewInProgress(payload: ReviewInProgressResponse) {
-    if (payload.state === false && note?.ownerEmail !== user?.email) {
-      quillRef.current = null;
+    if (
+    payload.state === false &&
+    noteRef.current?.ownerEmail !== userRef.current?.email
+  ) {
+    const quill = quillRef.current;
+
+    if (quill) {
+      quill.enable(true);
+
+      quill.root.removeEventListener("click", handleClick);
     }
+  }
     setIsReviewing(payload.state);
     if (isOwner.current && payload.state === true) {
       setShowReviewSidebarModal(true);
@@ -893,6 +951,7 @@ function EditContent() {
 
   async function handleExitReview() {
     try {
+      quillRef.current?.root.removeEventListener("click", handleClick);
       await apiFetch(`notes/${noteId}/review/exit`, { method: "GET" });
       setFormatSuggestions([]);
       setActiveFormatId(null);
@@ -1025,8 +1084,8 @@ function EditContent() {
   }
 
   function nextRuntimeSegmentId() {
-    _runtimeSegCtr += 1;
-    return `seg_${_runtimeSegCtr}`;
+    runtimeSegCtrRef.current += 1;
+    return `seg_${runtimeSegCtrRef.current}`;
   }
   
   function captureRuntimeSnapshot(): RuntimeSnapshot {
@@ -1045,23 +1104,14 @@ function EditContent() {
 
   function refreshEditorFromRuntime() {
     const quill = quillRef.current!;
-    const plainDelta = segmentsToPlainDelta(reviewSegmentsRef.current);
-    const overlayDelta = segmentsToAttributeOverlayDelta(reviewSegmentsRef.current);
+    // const plainDelta = segmentsToPlainDelta(reviewSegmentsRef.current);
+    // const overlayDelta = segmentsToAttributeOverlayDelta(reviewSegmentsRef.current);
 
-    quill.setContents(plainDelta, "api");
-    quill.updateContents(overlayDelta, "api");
-  }
+    // quill.setContents(plainDelta, "api");
+    // quill.updateContents(overlayDelta, "api");
 
-  function updateFormatSuggestionsAfterInsertAccept(groupId: string) {
-    setFormatSuggestions((prev) => {
-      const next = prev.map((item) => ({
-        ...item,
-        dependsOnInsertGroupIds: item.dependsOnInsertGroupIds.filter(
-          (id) => id !== groupId,
-        ),
-      }));
-      return next;
-    });
+    const delta = segmentsToDelta(reviewSegmentsRef.current);
+    quill.setContents(delta, "api");
   }
 
   function refreshPreviewTextsAgainstRuntime(items: FormatSuggestionItem[]) {
@@ -1082,18 +1132,6 @@ function EditContent() {
         ...item,
         previewText: text,
       };
-    });
-  }
-
-  function visualDeltaHasSuggestionOps(delta: Delta): boolean {
-    return (delta.ops ?? []).some((op: any) => {
-      const attrs = op.attributes ?? {};
-
-      return Boolean(
-        attrs["suggestion-insert"] ||
-        attrs["suggestion-delete"] ||
-        attrs["suggestion-delete-newline"]
-      );
     });
   }
 

@@ -1,5 +1,5 @@
 import Delta from "quill-delta";
-import { FormatSuggestionItem, ReviewSegment, TooltipState, SuggestionSlice } from "../types";
+import { FormatSuggestionItem, ReviewSegment, TooltipState, SuggestionSlice, FormatSuggestionSpan, DeleteSuggestion, InsertSuggestion } from "../types";
 
 // ─── Format suggestion utilities ──────────────────────────────────────────────
 
@@ -7,44 +7,25 @@ export function cloneFormatSuggestions(
   items: FormatSuggestionItem[],
 ): FormatSuggestionItem[] {
   return items.map((item) => ({
-    ...item,
+    groupId: item.groupId,
+    actorEmail: item.actorEmail,
+    createdAt: item.createdAt,
+    attributeKey: item.attributeKey,
+    attributeValue: item.attributeValue,
     references: item.references.map((r) => ({
       reviewStart: r.reviewStart,
       componentStart: r.componentStart,
       length: r.length,
-      ref: { ...r.ref },
+      ref: {
+        opId: r.ref.opId,
+        componentIndex: r.ref.componentIndex
+      },
     })),
     spans: item.spans.map((s) => ({ ...s })),
+    previewText: item.previewText,
     dependsOnInsertGroupIds: [...item.dependsOnInsertGroupIds],
+    dependsOnDeleteGroupIds: [...item.dependsOnDeleteGroupIds],
   }));
-}
-
-export function transformSpansAfterRuntimeInsertRemoval(
-  spans: { start: number; length: number }[],
-  deleteStart: number,
-  deleteLength: number,
-): { start: number; length: number }[] {
-  const deleteEnd = deleteStart + deleteLength;
-  const next: { start: number; length: number }[] = [];
-
-  for (const span of spans) {
-    const spanStart = span.start;
-    const spanEnd   = span.start + span.length;
-    if (spanEnd   <= deleteStart) { next.push({ ...span }); continue; }
-    if (spanStart >= deleteEnd)   { next.push({ start: spanStart - deleteLength, length: span.length }); continue; }
-    const leftLen  = Math.max(0, deleteStart - spanStart);
-    const rightLen = Math.max(0, spanEnd - deleteEnd);
-    if (leftLen  > 0) next.push({ start: spanStart,   length: leftLen  });
-    if (rightLen > 0) next.push({ start: deleteStart, length: rightLen });
-  }
-
-  const merged: { start: number; length: number }[] = [];
-  for (const span of next) {
-    const last = merged[merged.length - 1];
-    if (last && last.start + last.length === span.start) { last.length += span.length; }
-    else { merged.push({ ...span }); }
-  }
-  return merged;
 }
 
 // ─── Quill delta utilities ────────────────────────────────────────────────────
@@ -58,8 +39,6 @@ export function stripSuggestionAttributes(delta: Delta): Delta {
         "suggestion-delete":         _d,
         "suggestion-delete-newline": _dn,
         "suggestion-insert":         _i,
-        "base-attributes":           _b,
-        "suggestion-attributes":     _sa,
         ...attrs
       } = op.attributes;
       return { ...op, attributes: Object.keys(attrs).length ? attrs : undefined };
@@ -70,14 +49,23 @@ export function stripSuggestionAttributes(delta: Delta): Delta {
 export function buildFormatOverlayDelta(item: FormatSuggestionItem): Delta {
   const delta = new Delta();
   let pos = 0;
-  for (const span of item.spans) {
+
+  const attributes = {
+    [item.attributeKey]: item.attributeValue
+  };
+
+  const spans = [...item.spans].sort(
+    (a, b) => a.start - b.start,
+  );
+
+  for (const span of spans) {
     if (span.start > pos) delta.retain(span.start - pos);
     delta.retain(span.length, {
       "suggestion-format": {
         groupId:    item.groupId,
         actorEmail: item.actorEmail,
         createdAt:  item.createdAt,
-        attributes: { key:item.attributeKey, value:item.attributeValue },
+        attributes,
         references: item.references,
       },
     });
@@ -101,9 +89,8 @@ export function buildFormatOverlayClearDelta(item: FormatSuggestionItem): Delta 
 
 function hasSuggestionAttr(seg: ReviewSegment): boolean {
   return !!(
-    seg.attrs["suggestion-insert"] ||
-    seg.attrs["suggestion-delete"] ||
-    seg.attrs["suggestion-delete-newline"]
+    seg.insertSuggestion ||
+    seg.deleteSuggestion
   );
 }
 
@@ -114,36 +101,47 @@ export function deltaToSegments(
   return (delta.ops ?? [])
     .filter((op: any) => typeof op.insert === "string")
     .map((op: any) => {
-      const rawAttrs: Record<string, any> = { ...(op.attributes ?? {}) };
+      const allAttrs: Record<string, any> = { ...(op.attributes ?? {}) };
+      const pipelineAttrs = { ...allAttrs };
 
-      const insertMeta = rawAttrs["suggestion-insert"] ?? null;
+      const insertMeta = pipelineAttrs["suggestion-insert"] ?? null;
       const deleteMeta =
-        rawAttrs["suggestion-delete"] ??
-        rawAttrs["suggestion-delete-newline"] ??
+        pipelineAttrs["suggestion-delete"] ??
+        pipelineAttrs["suggestion-delete-newline"] ??
         null;
 
       const baseAttributes: Record<string, any> =
-        insertMeta?.["baseAttributes"] ??
-        deleteMeta?.["baseAttributes"] ??
-        {};
+      insertMeta?.baseAttributes ??
+      deleteMeta?.baseAttributes ??
+      {};
 
       const suggestionAttributes: Record<string, any> =
-        insertMeta?.["suggestionAttributes"] ??
-        deleteMeta?.["suggestionAttributes"] ??
+        insertMeta?.suggestionAttributes ??
+        deleteMeta?.suggestionAttributes ??
         {};
-
-      const references: SuggestionSlice[] =
-        insertMeta?.references ??
-        deleteMeta?.references ??
-        [];
 
       return {
         id: nextId(),
         text: op.insert as string,
-        attrs: rawAttrs,
+        // attrs: allAttrs,
         baseAttributes,
         suggestionAttributes,
-        references,
+        insertSuggestion: insertMeta
+          ? {
+              groupId: insertMeta.groupId,
+              actorEmail: insertMeta.actorEmail,
+              createdAt: insertMeta.createdAt,
+              references: insertMeta.references,
+            }
+          : undefined,
+        deleteSuggestion: deleteMeta
+          ? {
+              groupId: deleteMeta.groupId,
+              actorEmail: deleteMeta.actorEmail,
+              createdAt: deleteMeta.createdAt,
+              references: deleteMeta.references,
+            }
+          : undefined
       };
     });
 }
@@ -154,22 +152,70 @@ export function mergeAdjacentSegments(segments: ReviewSegment[]): ReviewSegment[
     const last = merged[merged.length - 1];
     const canMerge =
       !!last &&
-      JSON.stringify(last.attrs          ?? {}) === JSON.stringify(seg.attrs          ?? {}) &&
-      JSON.stringify(last.references     ?? []) === JSON.stringify(seg.references     ?? []) &&
-      JSON.stringify(last.baseAttributes ?? {}) === JSON.stringify(seg.baseAttributes ?? {});
+      last.text !== "\n" &&
+      seg.text !== "\n" &&
+
+      shallowEqual(
+        getEffectiveAttributes(last),
+        getEffectiveAttributes(seg)
+      ) &&
+
+      last.insertSuggestion?.groupId === seg.insertSuggestion?.groupId &&
+
+      last.deleteSuggestion?.groupId === seg.deleteSuggestion?.groupId &&
+
+      shallowEqual(
+        last.baseAttributes ?? {},
+        seg.baseAttributes ?? {}
+      );
     if (canMerge) {
       last.text += seg.text;
+
+      if (
+        last.insertSuggestion &&
+        seg.insertSuggestion &&
+        last.insertSuggestion.groupId === seg.insertSuggestion.groupId
+      ) {
+        last.insertSuggestion = {
+          ...last.insertSuggestion,
+          references: dedupeSuggestionSlices([
+            ...last.insertSuggestion.references,
+            ...seg.insertSuggestion.references,
+          ]),
+        };
+      }
+
+      if (
+        last.deleteSuggestion &&
+        seg.deleteSuggestion &&
+        last.deleteSuggestion.groupId === seg.deleteSuggestion.groupId
+      ) {
+        last.deleteSuggestion = {
+          ...last.deleteSuggestion,
+          references: dedupeSuggestionSlices([
+            ...last.deleteSuggestion.references,
+            ...seg.deleteSuggestion.references,
+          ]),
+        };
+      }
     } else {
       merged.push({
-        ...seg,
-        attrs:          { ...seg.attrs },
-        references: seg.references.map((r) => ({
-          reviewStart: r.reviewStart,
-          componentStart: r.componentStart,
-          length: r.length,
-          ref: { ...r.ref },
-        })),
+        id: seg.id,
+        text: seg.text,
         baseAttributes: { ...(seg.baseAttributes ?? {}) },
+        suggestionAttributes: { ...(seg.suggestionAttributes ?? {}) },
+        insertSuggestion: seg.insertSuggestion
+          ? {
+              ...seg.insertSuggestion,
+              references: [...seg.insertSuggestion.references],
+            }
+          : undefined,
+        deleteSuggestion: seg.deleteSuggestion
+          ? {
+              ...seg.deleteSuggestion,
+              references: [...seg.deleteSuggestion.references],
+            }
+          : undefined,
       });
     }
   }
@@ -180,13 +226,37 @@ export function segmentsToDelta(segments: ReviewSegment[]): Delta {
   const delta = new Delta();
 
   for (const seg of segments) {
-    const attrs = stripPipelineAttrs(seg.attrs ?? {});
+    const attrs: Record<string, any> = {
+      ...(seg.baseAttributes ?? {}),
+      ...(seg.suggestionAttributes ?? {}),
+    };
 
-    if (Object.keys(attrs).length > 0) {
-      delta.insert(seg.text, attrs);
-    } else {
-      delta.insert(seg.text);
+    if (seg.insertSuggestion) {
+      attrs["suggestion-insert"] = {
+        groupId: seg.insertSuggestion.groupId,
+        actorEmail: seg.insertSuggestion.actorEmail,
+        createdAt: seg.insertSuggestion.createdAt,
+        references: seg.insertSuggestion.references,
+        baseAttributes: seg.baseAttributes ?? null,
+        suggestionAttributes: seg.suggestionAttributes ?? null,
+      };
     }
+
+    if (seg.deleteSuggestion) {
+      attrs["suggestion-delete"] = {
+        groupId: seg.deleteSuggestion.groupId,
+        actorEmail: seg.deleteSuggestion.actorEmail,
+        createdAt: seg.deleteSuggestion.createdAt,
+        references: seg.deleteSuggestion.references,
+        baseAttributes: seg.baseAttributes ?? null,
+        suggestionAttributes: seg.suggestionAttributes ?? null,
+      };
+    }
+
+    const finalAttrs =
+      Object.keys(attrs).length > 0 ? attrs : undefined;
+
+    delta.insert(seg.text, finalAttrs);
   }
 
   return delta;
@@ -194,15 +264,30 @@ export function segmentsToDelta(segments: ReviewSegment[]): Delta {
 
 export function cloneSegments(items: ReviewSegment[]): ReviewSegment[] {
   return items.map((s) => ({
-    ...s,
-    attrs: { ...s.attrs },
-    references: s.references.map((r) => ({
-      reviewStart: r.reviewStart,
-      componentStart: r.componentStart,
-      length: r.length,
-      ref: { ...r.ref },
-    })),
+    id: s.id,
+    text: s.text,
     baseAttributes: { ...(s.baseAttributes ?? {}) },
+    suggestionAttributes: { ...(s.suggestionAttributes ?? {}) },
+    insertSuggestion: s.insertSuggestion
+    ? {
+        groupId: s.insertSuggestion.groupId,
+        actorEmail: s.insertSuggestion.actorEmail,
+        createdAt: s.insertSuggestion.createdAt,
+        references: cloneSuggestionSlices(
+          s.insertSuggestion.references,
+        ),
+      }
+    : undefined,
+    deleteSuggestion: s.deleteSuggestion
+    ? {
+        groupId: s.deleteSuggestion.groupId,
+        actorEmail: s.deleteSuggestion.actorEmail,
+        createdAt: s.deleteSuggestion.createdAt,
+        references: cloneSuggestionSlices(
+          s.deleteSuggestion.references,
+        ),
+      }
+    : undefined
   }));
 }
 
@@ -236,7 +321,7 @@ export function findInsertGroupRangeInRuntime(
   let cursor = 0, start = -1, end = -1;
   for (const seg of segments) {
     const len = seg.text.length;
-    if (seg.attrs["suggestion-insert"]?.groupId === groupId) {
+    if (seg.insertSuggestion?.groupId === groupId) {
       if (start === -1) start = cursor;
       end = cursor + len;
     }
@@ -251,8 +336,8 @@ export function findDeleteGroupRangeInRuntime(
 ): { index: number; length: number } | null {
   let cursor = 0, start = -1, end = -1;
   for (const seg of segments) {
-    const len        = seg.text.length;
-    const deleteAttr = seg.attrs["suggestion-delete"] ?? seg.attrs["suggestion-delete-newline"];
+    const len = seg.text.length;
+    const deleteAttr = seg.deleteSuggestion;
     if (deleteAttr?.groupId === groupId) {
       if (start === -1) start = cursor;
       end = cursor + len;
@@ -268,20 +353,14 @@ export function removeInsertSuggestionFromSegments(
 ): ReviewSegment[] {
   return mergeAdjacentSegments(
     segments.map((seg) => {
-      const insertAttr = seg.attrs["suggestion-insert"];
+      const insertAttr = seg.insertSuggestion;
       if (!insertAttr || insertAttr.groupId !== groupId) return seg;
 
-      const realAttrs = stripAllSuggestionAttrs(seg.attrs);
-
-      const restored: Record<string, any> = {
-        ...(seg.baseAttributes ?? {}),
-        ...realAttrs,
-      };
-
       return {
-        ...seg,
-        attrs: Object.keys(restored).length > 0 ? restored : {},
-        baseAttributes: { ...(seg.baseAttributes ?? {}) },
+        id: seg.id,
+        text: seg.text,
+        baseAttributes: seg.baseAttributes,
+        suggestionAttributes: seg.suggestionAttributes
       };
     }),
   );
@@ -293,7 +372,7 @@ export function deleteInsertGroupSegments(
   insertRange: { index: number; length: number } | null,
 ): ReviewSegment[] {
   const afterDelete = segments.filter((seg) => {
-    const insertAttr = seg.attrs["suggestion-insert"];
+    const insertAttr = seg.insertSuggestion;
     return !(insertAttr && insertAttr.groupId === groupId);
   });
   
@@ -321,51 +400,42 @@ export function deleteInsertGroupSegments(
   return mergeAdjacentSegments(cleaned);
 }
 
-function removeRuntimeCharAt(segments: ReviewSegment[], index: number, nextId: () => string): ReviewSegment[] {
+function removeRuntimeCharAt(
+  segments: ReviewSegment[],
+  index: number,
+  nextId: () => string,
+): ReviewSegment[] {
   if (index < 0) return segments;
+
   let cursor = 0;
-  const next = [...segments];
-  for (let i = 0; i < next.length; i++) {
-    const seg      = next[i];
-    const segStart = cursor;
-    const segEnd   = cursor + seg.text.length;
-    if (index >= segEnd) { cursor = segEnd; continue; }
-    const offset = index - segStart;
-    if (offset < 0 || offset >= seg.text.length) return segments;
-    if (seg.text.length === 1)                      { next.splice(i, 1); }
-    else if (offset === 0)                          { next[i] = { ...seg, text: seg.text.slice(1) }; }
-    else if (offset === seg.text.length - 1)        { next[i] = { ...seg, text: seg.text.slice(0, -1) }; }
-    else {
-      next.splice(i, 1,
-        {
-          ...seg,
-          text: seg.text.slice(0, offset),
-          attrs: { ...seg.attrs },
-          references: seg.references.map((r) => ({
-            reviewStart: r.reviewStart,
-            componentStart: r.componentStart,
-            length: r.length,
-            ref: { ...r.ref },
-          })),
-          baseAttributes: { ...(seg.baseAttributes ?? {}) },
-        },
-        {
-          ...seg,
-          id: nextId(),
-          text: seg.text.slice(offset + 1),
-          attrs: { ...seg.attrs },
-          references: seg.references.map((r) => ({
-            reviewStart: r.reviewStart,
-            componentStart: r.componentStart,
-            length: r.length,
-            ref: { ...r.ref },
-          })),
-          baseAttributes: { ...(seg.baseAttributes ?? {}) },
-        }
-      );
+
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+
+    const start = cursor;
+    const end = cursor + seg.text.length;
+
+    if (index >= end) {
+      cursor = end;
+      continue;
     }
-    return mergeAdjacentSegments(next);
+
+    const offset = index - start;
+
+    splitSegmentAt(segments, i, offset, nextId);
+
+    const rightIndex = splitSegmentAt(
+      segments,
+      i + 1,
+      1,
+      nextId,
+    );
+
+    segments.splice(rightIndex - 1, 1);
+
+    return mergeAdjacentSegments(segments);
   }
+
   return segments;
 }
 
@@ -374,40 +444,59 @@ function insertRuntimeTextAt(
   index: number,
   text: string,
   nextId: () => string,
-  attrs: Record<string, any> = {},
   baseAttributes: Record<string, any> = {},
   suggestionAttributes: Record<string, any> = {},
 ): ReviewSegment[] {
   if (!text) return segments;
-  const next   = [...segments];
+
   const newSeg: ReviewSegment = {
     id: nextId(),
     text,
-    attrs: { ...attrs },
-    references: [],
-    baseAttributes: { ...baseAttributes },
-    suggestionAttributes: { ...suggestionAttributes },
+
+    baseAttributes: {
+      ...baseAttributes,
+    },
+
+    suggestionAttributes: {
+      ...suggestionAttributes,
+    },
   };
+
   let cursor = 0;
-  for (let i = 0; i < next.length; i++) {
-    const seg      = next[i];
-    const segStart = cursor;
-    const segEnd   = cursor + seg.text.length;
-    if (index > segEnd) { cursor = segEnd; continue; }
-    if (index === segStart) { next.splice(i, 0, newSeg);     return mergeAdjacentSegments(next); }
-    if (index === segEnd)   { next.splice(i + 1, 0, newSeg); return mergeAdjacentSegments(next); }
-    if (index > segStart && index < segEnd) {
-      const offset = index - segStart;
-      next.splice(i, 1,
-        { ...seg, attrs: { ...seg.attrs }, references: [...(seg.references ?? [])], baseAttributes: { ...(seg.baseAttributes ?? {}) }, text: seg.text.slice(0, offset) },
-        newSeg,
-        { ...seg, id: nextId(), attrs: { ...seg.attrs }, references: [...(seg.references ?? [])], baseAttributes: { ...(seg.baseAttributes ?? {}) }, text: seg.text.slice(offset) },
-      );
-      return mergeAdjacentSegments(next);
+
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+
+    const start = cursor;
+    const end = cursor + seg.text.length;
+
+    if (index > end) {
+      cursor = end;
+      continue;
     }
+
+    if (index === start) {
+      segments.splice(i, 0, newSeg);
+      return mergeAdjacentSegments(segments);
+    }
+
+    if (index === end) {
+      segments.splice(i + 1, 0, newSeg);
+      return mergeAdjacentSegments(segments);
+    }
+
+    const offset = index - start;
+
+    splitSegmentAt(segments, i, offset, nextId);
+
+    segments.splice(i + 1, 0, newSeg);
+
+    return mergeAdjacentSegments(segments);
   }
-  next.push(newSeg);
-  return mergeAdjacentSegments(next);
+
+  segments.push(newSeg);
+
+  return mergeAdjacentSegments(segments);
 }
 
 export function normalizeLineBreaksAfterRejectedInsert(
@@ -469,118 +558,363 @@ export function getSuggestionSelector(
   return `[data-suggestion-type="delete"][data-group-id="${groupId}"]`;
 }
 
-function rangeOverlaps(segStart: number, segEnd: number, spanStart: number, spanEnd: number) {
-  return segStart < spanEnd && segEnd > spanStart;
-}
-
 export function restoreFormatSuggestionToBase(
   segments: ReviewSegment[],
   item: FormatSuggestionItem,
 ): ReviewSegment[] {
-  const fmtKeys  = item.attributeKey;
+  const key = item.attributeKey;
+
   let cursor = 0;
 
-  const next = segments.map((seg) => {
+  const updated = segments.map((seg) => {
     const segStart = cursor;
-    const segEnd   = cursor + seg.text.length;
+    const segEnd = cursor + seg.text.length;
     cursor = segEnd;
 
-    const overlaps = item.spans.some((span) =>
-      rangeOverlaps(segStart, segEnd, span.start, span.start + span.length),
+    const overlaps = item.spans.some(
+      (span) =>
+        span.start < segEnd &&
+        span.start + span.length > segStart
     );
+
     if (!overlaps) return seg;
 
-    const nextAttrs           = { ...(seg.attrs ?? {}) };
-    const nextSuggestionAttrs = { ...(nextAttrs["suggestion-attributes"] ?? {}) };
+    const newSuggestion = { ...(seg.suggestionAttributes ?? {}) };
 
-    for (const key of fmtKeys) {
-      delete nextSuggestionAttrs[key];
-      const baseValue = seg.baseAttributes?.[key];
-      if (baseValue === undefined || baseValue === null) {
-        delete nextAttrs[key];
-      } else {
-        nextAttrs[key] = baseValue;
-      }
-    }
+    delete newSuggestion[key];
 
-    if (Object.keys(nextSuggestionAttrs).length > 0) {
-      nextAttrs["suggestion-attributes"] = nextSuggestionAttrs;
-    } else {
-      delete nextAttrs["suggestion-attributes"];
-    }
-
-    return { ...seg, attrs: nextAttrs };
+    return {
+      ...seg,
+      baseAttributes: { ...(seg.baseAttributes ?? {}) },
+      suggestionAttributes: newSuggestion,
+    };
   });
 
-  return mergeAdjacentSegments(next);
+  return mergeAdjacentSegments(updated);
 }
 
-function stripPipelineAttrs(attrs: Record<string, any> = {}) {
-  const {
-    "base-attributes": _ba,
-    "suggestion-attributes": _sa,
-    ...rest
-  } = attrs;
+// export function segmentsToPlainDelta(segments: ReviewSegment[]): Delta {
+//   const delta = new Delta();
 
-  return rest;
+//   for (const seg of segments) {
+//     delta.insert(seg.text);
+//   }
+
+//   return delta;
+// }
+
+// export function segmentsToAttributeOverlayDelta(
+//   segments: ReviewSegment[],
+// ): Delta {
+//   const delta = new Delta();
+
+//   for (const seg of segments) {
+//     const hasSuggestionInsert = !!seg.insertSuggestion;
+//     const hasSuggestionDelete =
+//       !!seg.deleteSuggestion;
+//     const hasSuggestionFormat = !!attrs["suggestion-format"];
+
+//     const clearSuggestionAttrs = {
+//       "suggestion-insert": hasSuggestionInsert ? attrs["suggestion-insert"] : null,
+//       "suggestion-delete": hasSuggestionDelete ? attrs["suggestion-delete"] ?? null : null,
+//       "suggestion-delete-newline": hasSuggestionDelete
+//         ? attrs["suggestion-delete-newline"] ?? null
+//         : null,
+//       "suggestion-format": hasSuggestionFormat ? attrs["suggestion-format"] : null,
+//     };
+
+//     const finalAttrs = {
+//       ...attrs,
+//       ...clearSuggestionAttrs,
+//     };
+
+//     delta.retain(
+//       seg.text.length,
+//       Object.keys(finalAttrs).length > 0 ? finalAttrs : null,
+//     );
+//   }
+
+//   return delta;
+// }
+
+function shallowEqual(a: any, b: any) {
+  return JSON.stringify(normalize(a)) === JSON.stringify(normalize(b));
 }
 
-function stripAllSuggestionAttrs(attrs: Record<string, any> = {}) {
-  const {
-    "suggestion-insert": _si,
-    "suggestion-delete": _sd,
-    "suggestion-delete-newline": _sdn,
-    "suggestion-format": _sf,
-    "suggestion-attributes": _sa,
-    "base-attributes": _ba,
-    ...rest
-  } = attrs;
-
-  return rest;
+function normalize(obj: any): any {
+  if (Array.isArray(obj)) return obj.map(normalize);
+  if (obj && typeof obj === "object") {
+    return Object.keys(obj)
+      .sort()
+      .reduce((acc: any, k) => {
+        acc[k] = normalize(obj[k]);
+        return acc;
+      }, {});
+  }
+  return obj ?? null;
 }
 
-export function segmentsToPlainDelta(segments: ReviewSegment[]): Delta {
-  const delta = new Delta();
+export function resolveFormatSuggestionsAfterMutation(
+  items: FormatSuggestionItem[],
+  mutation: { index: number; length: number },
+  mutationGroupId: string,
+  mutationType: "insert" | "delete",
+  action: "ACCEPT" | "REJECT",
+) {
+  const rangeStart = mutation.index;
+  const rangeEnd = rangeStart + mutation.length;
 
-  for (const seg of segments) {
-    delta.insert(seg.text);
+  const next: FormatSuggestionItem[] = [];
+
+  for (const item of items) {
+    const updatedSpans: FormatSuggestionSpan[] = [];
+
+    const shouldShrink =
+      (mutationType === "insert" && action === "REJECT") ||
+      (mutationType === "delete" && action === "ACCEPT");
+
+    for (const span of item.spans) {
+      const spanStart = span.start;
+      const spanEnd = span.start + span.length;
+
+      const overlapStart = Math.max(spanStart, rangeStart);
+      const overlapEnd = Math.min(spanEnd, rangeEnd);
+
+      const hasOverlap = overlapStart < overlapEnd;
+
+      // no overlap → keep
+      if (!hasOverlap) {
+        updatedSpans.push(span);
+        continue;
+      }
+
+      // INSERT REJECT → shrink overlap
+      // DELETE ACCEPT → shrink overlap
+      if (shouldShrink) {
+        if (spanStart < overlapStart) {
+          updatedSpans.push({
+            start: spanStart,
+            length: overlapStart - spanStart,
+          });
+        }
+
+        if (overlapEnd < spanEnd) {
+          updatedSpans.push({
+            start: overlapEnd,
+            length: spanEnd - overlapEnd,
+          });
+        }
+
+        continue;
+      }
+
+      // INSERT ACCEPT → DO NOTHING (span unchanged)
+      // DELETE REJECT → DO NOTHING (span unchanged)
+      updatedSpans.push(span);
+    }
+
+    if (updatedSpans.length === 0) continue;
+
+    const filterInsert =
+      mutationType === "insert"
+        ? item.dependsOnInsertGroupIds.filter((id) => id !== mutationGroupId)
+        : item.dependsOnInsertGroupIds;
+
+    const filterDelete =
+      mutationType === "delete"
+        ? item.dependsOnDeleteGroupIds.filter((id) => id !== mutationGroupId)
+        : item.dependsOnDeleteGroupIds;
+
+    next.push({
+      ...item,
+      spans: updatedSpans,
+      dependsOnInsertGroupIds: filterInsert,
+      dependsOnDeleteGroupIds: filterDelete,
+    });
   }
 
-  return delta;
+  return next;
 }
 
-export function segmentsToAttributeOverlayDelta(
+function getEffectiveAttributes(seg: ReviewSegment) {
+  return {
+    ...(seg.baseAttributes ?? {}),
+    ...(seg.suggestionAttributes ?? {}),
+  };
+}
+
+function cloneSuggestionSlices(
+  refs: SuggestionSlice[],
+): SuggestionSlice[] {
+  return refs.map((r) => ({
+    reviewStart: r.reviewStart,
+    componentStart: r.componentStart,
+    length: r.length,
+    ref: {
+      ...r.ref,
+    },
+  }));
+}
+
+function splitSuggestionSlices(
+  refs: SuggestionSlice[],
+  offset: number,
+): {
+  left: SuggestionSlice[];
+  right: SuggestionSlice[];
+} {
+  const left: SuggestionSlice[] = [];
+  const right: SuggestionSlice[] = [];
+
+  for (const ref of refs) {
+    const refStart = ref.componentStart;
+    const refEnd = ref.componentStart + ref.length;
+
+    // fully left
+    if (refEnd <= offset) {
+      left.push({ ...ref, ref: { ...ref.ref } });
+      continue;
+    }
+
+    // fully right
+    if (refStart >= offset) {
+      right.push({
+        ...ref,
+        componentStart: ref.componentStart - offset,
+        ref: { ...ref.ref },
+      });
+      continue;
+    }
+
+    // split
+    const leftLen = offset - refStart;
+    const rightLen = refEnd - offset;
+
+    if (leftLen > 0) {
+      left.push({
+        ...ref,
+        length: leftLen,
+        ref: { ...ref.ref },
+      });
+    }
+
+    if (rightLen > 0) {
+      right.push({
+        ...ref,
+        componentStart: 0,
+        length: rightLen,
+        ref: { ...ref.ref },
+      });
+    }
+  }
+
+  return { left, right };
+}
+
+function splitSegmentAt(
   segments: ReviewSegment[],
-): Delta {
-  const delta = new Delta();
+  segmentIndex: number,
+  offset: number,
+  nextId: () => string,
+): number {
+  const seg = segments[segmentIndex];
 
-  for (const seg of segments) {
-    const attrs = stripPipelineAttrs(seg.attrs ?? {});
-
-    const hasSuggestionInsert = !!attrs["suggestion-insert"];
-    const hasSuggestionDelete =
-      !!attrs["suggestion-delete"] || !!attrs["suggestion-delete-newline"];
-    const hasSuggestionFormat = !!attrs["suggestion-format"];
-
-    const clearSuggestionAttrs = {
-      "suggestion-insert": hasSuggestionInsert ? attrs["suggestion-insert"] : null,
-      "suggestion-delete": hasSuggestionDelete ? attrs["suggestion-delete"] ?? null : null,
-      "suggestion-delete-newline": hasSuggestionDelete
-        ? attrs["suggestion-delete-newline"] ?? null
-        : null,
-      "suggestion-format": hasSuggestionFormat ? attrs["suggestion-format"] : null,
-    };
-
-    const finalAttrs = {
-      ...attrs,
-      ...clearSuggestionAttrs,
-    };
-
-    delta.retain(
-      seg.text.length,
-      Object.keys(finalAttrs).length > 0 ? finalAttrs : null,
-    );
+  if (
+    offset <= 0 ||
+    offset >= seg.text.length
+  ) {
+    return segmentIndex;
   }
 
-  return delta;
+  let leftInsert: InsertSuggestion | undefined;
+  let rightInsert: InsertSuggestion | undefined;
+
+  if (seg.insertSuggestion) {
+    const split = splitSuggestionSlices(
+      seg.insertSuggestion.references,
+      offset,
+    );
+
+    leftInsert = {
+      ...seg.insertSuggestion,
+      references: split.left,
+    };
+
+    rightInsert = {
+      ...seg.insertSuggestion,
+      references: split.right,
+    };
+  }
+
+  let leftDelete: DeleteSuggestion | undefined;
+  let rightDelete: DeleteSuggestion | undefined;
+
+  if (seg.deleteSuggestion) {
+    const split = splitSuggestionSlices(
+      seg.deleteSuggestion.references,
+      offset,
+    );
+
+    leftDelete = {
+      ...seg.deleteSuggestion,
+      references: split.left,
+    };
+
+    rightDelete = {
+      ...seg.deleteSuggestion,
+      references: split.right,
+    };
+  }
+
+  const left: ReviewSegment = {
+    id: seg.id,
+    text: seg.text.slice(0, offset),
+
+    baseAttributes: {
+      ...(seg.baseAttributes ?? {}),
+    },
+
+    suggestionAttributes: {
+      ...(seg.suggestionAttributes ?? {}),
+    },
+
+    insertSuggestion: leftInsert,
+    deleteSuggestion: leftDelete,
+  };
+
+  const right: ReviewSegment = {
+    id: nextId(),
+    text: seg.text.slice(offset),
+
+    baseAttributes: {
+      ...(seg.baseAttributes ?? {}),
+    },
+
+    suggestionAttributes: {
+      ...(seg.suggestionAttributes ?? {}),
+    },
+
+    insertSuggestion: rightInsert,
+    deleteSuggestion: rightDelete,
+  };
+
+  segments.splice(segmentIndex, 1, left, right);
+
+  return segmentIndex + 1;
+}
+
+function dedupeSuggestionSlices(
+  refs: SuggestionSlice[],
+): SuggestionSlice[] {
+  const seen = new Set<string>();
+
+  return refs.filter((r) => {
+    const key =
+      `${r.ref.opId}-${r.ref.componentIndex}-${r.componentStart}-${r.length}`;
+
+    if (seen.has(key)) return false;
+
+    seen.add(key);
+    return true;
+  });
 }

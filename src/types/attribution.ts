@@ -41,6 +41,7 @@ export interface FormatSuggestionItem {
   spans: FormatSuggestionSpan[];
   previewText: string;
   dependsOnInsertGroupIds: string[];
+  dependsOnDeleteGroupIds: string[];
 }
 
 export interface ReviewProjection {
@@ -52,10 +53,12 @@ export interface ReviewProjection {
 export interface ReviewSegment {
   id: string;
   text: string;
-  attrs: Record<string, any>;
+  // attrs: Record<string, any>;
   baseAttributes: Record<string, any>;
   suggestionAttributes: Record<string, any>;
-  references: SuggestionSlice[];
+  // references: SuggestionSlice[];
+  insertSuggestion?: InsertSuggestion;
+  deleteSuggestion?: DeleteSuggestion;
 }
 
 export interface TooltipState {

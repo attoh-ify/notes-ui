@@ -39,6 +39,7 @@ export interface JoinResponse {
   collaborators: { [email: string]: string };
   delta: Delta;
   revision: number;
+  isReviewing: boolean;
 }
 
 export interface ReviewInProgressResponse {

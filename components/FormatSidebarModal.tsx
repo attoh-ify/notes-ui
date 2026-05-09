@@ -12,22 +12,39 @@ interface FormatSidebarModalProps {
   onSave: (comment: string) => void;
 } 
 
-function formatAttrLabel(attributes: string): string {
-  try {
-    const attrs = JSON.parse(attributes) as Record<string, any>;
-    return Object.entries(attrs)
-      .filter(([, v]) => v !== null && v !== false)
-      .map(([k, v]) => {
-        if (v === true) return k.charAt(0).toUpperCase() + k.slice(1);
-        if (k === "color" || k === "background") return `${k}: ${v}`;
-        if (k === "header") return `H${v}`;
-        if (k === "size") return `Size ${v}`;
-        return `${k}: ${v}`;
-      })
-      .join(", ") || "Formatting";
-  } catch {
-    return "Formatting";
+function formatAttrLabel(
+  attributeKey: string,
+  attributeValue: any,
+): string {
+  if (
+    attributeValue === null ||
+    attributeValue === false ||
+    attributeValue === undefined
+  ) {
+    return `Remove ${attributeKey}`;
   }
+
+  if (attributeValue === true) {
+    return attributeKey.charAt(0).toUpperCase() + attributeKey.slice(1);
+  }
+
+  if (attributeKey === "color" || attributeKey === "background") {
+    return `${attributeKey}: ${attributeValue}`;
+  }
+
+  if (attributeKey === "header") {
+    return `Heading ${attributeValue}`;
+  }
+
+  if (attributeKey === "size") {
+    return `Size ${attributeValue}`;
+  }
+
+  if (attributeKey === "link") {
+    return "Link added";
+  }
+
+  return `${attributeKey}: ${attributeValue}`;
 }
 
 function relativeTime(createdAt: string): string {
@@ -126,7 +143,10 @@ export default function FormatSidebarModal({
                   >
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "0.25rem" }}>
                       <span style={{ fontSize: "0.8rem", fontWeight: "600", color: isActive ? "#92400e" : "var(--text-main)" }}>
-                        {formatAttrLabel(item.attributes)}
+                        {formatAttrLabel(
+                          item.attributeKey,
+                          item.attributeValue,
+                        )}
                       </span>
                       <span style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginLeft: "4px", flexShrink: 0 }}>
                         {relativeTime(item.createdAt)}
