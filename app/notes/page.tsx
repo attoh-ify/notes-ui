@@ -97,10 +97,10 @@ function NotesContent() {
 
         <div
           style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: "12px",
-            marginBottom: "12px",
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+            gap: "16px",
+            marginTop: "24px",
           }}
         >
           {notes.map((note) => (
@@ -114,58 +114,109 @@ function NotesContent() {
                 )
               }
               style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                padding: "1rem",
-                border: "1px solid var(--border)",
-                borderRadius: "8px",
-                backgroundColor: "transparent",
-                textAlign: "left",
+                background: "#fff",
+                border: "1px solid #E5E7EB",
+                borderRadius: 16,
+                padding: "18px",
                 cursor: "pointer",
-                transition: "all 0.1s ease-in-out",
-                width: "100%",
+                transition: "all 0.2s ease",
+                textAlign: "left",
+                minHeight: 160,
+                display: "flex",
+                flexDirection: "column",
+                justifyContent: "space-between",
+                boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor =
-                  "var(--hover-bg, #f9f9f9)";
-                e.currentTarget.style.transform = "translateY(-2px)";
+                e.currentTarget.style.transform = "translateY(-4px)";
+                e.currentTarget.style.boxShadow =
+                  "0 12px 24px rgba(0,0,0,0.08)";
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.backgroundColor = "transparent";
-                e.currentTarget.style.transform = "translateY(0px)";
+                e.currentTarget.style.transform = "translateY(0)";
+                e.currentTarget.style.boxShadow =
+                  "0 1px 2px rgba(0,0,0,0.04)";
               }}
             >
               <div>
-                <span
+                <div
                   style={{
-                    fontWeight: "600",
-                    display: "block",
-                    fontSize: "1.2rem",
-                    color: "var(--text)",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "flex-start",
+                    marginBottom: 12,
+                  }}
+                >
+                  <div
+                    style={{
+                      width: 42,
+                      height: 42,
+                      borderRadius: 12,
+                      background: "#EEF2FF",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontSize: 18,
+                    }}
+                  >
+                    📄
+                  </div>
+
+                  <span
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 700,
+                      padding: "4px 8px",
+                      borderRadius: 999,
+                      background:
+                        note.accessRole === "OWNER"
+                          ? "#EDE9FE"
+                          : note.accessRole === "SUPER"
+                          ? "#DBEAFE"
+                          : note.accessRole === "EDITOR"
+                          ? "#D1FAE5"
+                          : "#F3F4F6",
+                      color:
+                        note.accessRole === "OWNER"
+                          ? "#6D28D9"
+                          : note.accessRole === "SUPER"
+                          ? "#1D4ED8"
+                          : note.accessRole === "EDITOR"
+                          ? "#047857"
+                          : "#4B5563",
+                    }}
+                  >
+                    {note.accessRole}
+                  </span>
+                </div>
+
+                <h3
+                  style={{
+                    margin: 0,
+                    fontSize: "1.05rem",
+                    fontWeight: 700,
+                    color: "#111827",
                   }}
                 >
                   {note.title}
-                </span>
-                <span
-                  style={{
-                    fontSize: "0.75rem",
-                    color: "var(--text-muted)",
-                    textTransform: "uppercase",
-                  }}
-                >
-                  {note.accessRole}
-                </span>
+                </h3>
               </div>
 
               <div
                 style={{
+                  marginTop: 20,
                   display: "flex",
+                  justifyContent: "space-between",
                   alignItems: "center",
-                  color: "var(--primary)",
+                  fontSize: 13,
+                  color: "#6B7280",
                 }}
               >
-                <span style={{ fontSize: "0.9rem", fontWeight: "500" }}>
+                <span>
+                  {new Date(note.createdAt).toLocaleDateString()}
+                </span>
+
+                <span style={{ color: "#111827", fontWeight: 600 }}>
                   Open →
                 </span>
               </div>

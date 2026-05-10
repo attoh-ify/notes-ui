@@ -6,7 +6,6 @@ import { useParams, useRouter } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
 import DeleteNoteModal from "@/components/DeleteNoteModal";
 import { Note, NoteVisibility } from "@/src/types";
-import CollaboratorsSection from "@/components/settings/CollaboratorsSection";
 import RevisionHistorySection from "@/components/settings/RevisionHistorySection";
 import VisibilitySection from "@/components/settings/VisibilitySection";
 
@@ -100,12 +99,6 @@ function NoteSettingsContent() {
         </header>
 
         <RevisionHistorySection noteId={noteId as string} title={note.title} />
-
-        <CollaboratorsSection
-          noteId={noteId as string}
-          email={user.email}
-          accessRole={note.accessRole}
-        />
 
         {currentVisibility && (
           <VisibilitySection
