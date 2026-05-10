@@ -254,40 +254,86 @@ function EditContent() {
   }, [noteId, user, router]);
 
   useEffect(() => {
-    loadNoteAndJoin();
-  }, [loadNoteAndJoin]);
-
-  useEffect(() => {
-    if (!noteId || isLoading) return;
+    if (!noteId || !user) return;
 
     const client = Stomp.over(
-      () => new SockJS(`${API_BASE_URL}/relay?noteId=${noteId}`),
+      () => new SockJS(`${API_BASE_URL}/relay?noteId=${noteId}`)
     );
+
     client.debug = () => {};
+
     stompClientRef.current = client;
 
-    client.connect({}, () => {
-      client.subscribe(`/topic/note/${noteId}`, (message) => {
-        const { type, payload } = JSON.parse(message.body);
-        if (type === MessageType.OPERATION) handleRemoteOperation(payload);
-        if (type === MessageType.COLLABORATOR_JOIN)
-          setCollaborators(payload.collaborators);
-        if (type === MessageType.COLLABORATOR_CURSOR)
-          handleCursorChange(payload);
-        if (type === MessageType.REVIEW_IN_PROGRESS)
-          handleReviewInProgress(payload);
-      });
+    client.connect({}, async () => {
+      try {
+        client.subscribe(`/topic/note/${noteId}`, (message) => {
+          const { type, payload } = JSON.parse(message.body);
 
-      if (docStateRef.current?.sentOperation && !isSyncComplete.current) {
-        sendOperationToServer(docStateRef.current.sentOperation);
-        isSyncComplete.current = true;
+          if (type === MessageType.OPERATION)
+            handleRemoteOperation(payload);
+
+          if (type === MessageType.COLLABORATOR_JOIN)
+            setCollaborators(payload.collaborators);
+
+          if (type === MessageType.COLLABORATOR_CURSOR)
+            handleCursorChange(payload);
+
+          if (type === MessageType.REVIEW_IN_PROGRESS)
+            handleReviewInProgress(payload);
+        });
+
+        const noteData = await apiFetch<Note>(`notes/${noteId}`, {
+          method: "GET",
+        });
+
+        setNote(noteData);
+
+        if (noteData.accessRole === "VIEWER") {
+          router.push(`/notes/${noteId}`);
+          return;
+        }
+
+        const joinData = await apiFetch<JoinResponse>(
+          `notes/${noteId}/join`,
+          {
+            method: "GET",
+          }
+        );
+
+        if (joinData.isReviewing === true) {
+          setIsReviewing(true);
+          return;
+        }
+
+        docStateRef.current!.lastSyncedRevision =
+          joinData.revision;
+
+        docStateRef.current!.setDocument(
+          new Delta(joinData.delta.ops || [])
+        );
+
+        setCollaborators(joinData.collaborators);
+
+        if (noteData.accessRole === "OWNER") {
+          isOwner.current = true;
+        }
+
+        setIsloading(false);
+      } catch (err: any) {
+        setErrorMessageMessage(
+          err.message || "Failed to load note"
+        );
+
+        setIsloading(false);
       }
     });
 
     return () => {
-      if (client.active) client.disconnect();
+      if (client.active) {
+        client.disconnect();
+      }
     };
-  }, [noteId, isLoading]);
+  }, [noteId, user]);
 
   useEffect(() => {
     const quill = quillRef.current;
