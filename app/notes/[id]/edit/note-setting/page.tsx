@@ -5,9 +5,8 @@ import { apiFetch } from "@/src/lib/api";
 import { useParams, useRouter } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
 import DeleteNoteModal from "@/components/DeleteNoteModal";
-import { Note, NoteVisibility } from "@/src/types";
+import { Note } from "@/src/types";
 import RevisionHistorySection from "@/components/settings/RevisionHistorySection";
-import VisibilitySection from "@/components/settings/VisibilitySection";
 
 function NoteSettingsContent() {
   const { id: noteId } = useParams();
@@ -16,7 +15,6 @@ function NoteSettingsContent() {
   const [note, setNote] = useState<Note | null>(null);
   const [isLoading, setIsloading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [currentVisibility, setCurrentVisibility] = useState<NoteVisibility>();
   const [showDeleteNoteModal, setShowDeleteNoteModal] = useState(false);
   const isOwner = useRef<boolean>(false);
 
@@ -27,7 +25,6 @@ function NoteSettingsContent() {
           method: "GET",
         });
         setNote(noteData);
-        setCurrentVisibility(noteData.visibility);
 
         if (noteData.accessRole === "OWNER") {
           isOwner.current = true;
@@ -99,14 +96,6 @@ function NoteSettingsContent() {
         </header>
 
         <RevisionHistorySection noteId={noteId as string} title={note.title} />
-
-        {currentVisibility && (
-          <VisibilitySection
-            noteId={noteId as string}
-            accessRole={note.accessRole}
-            visibility={currentVisibility}
-          />
-        )}
 
         {isOwner.current && (
           <section

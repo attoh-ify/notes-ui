@@ -2,7 +2,7 @@
 
 import { API_BASE_URL, apiFetch } from "@/src/lib/api";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useState, useRef, Suspense, useCallback } from "react";
+import { useEffect, useState, useRef, Suspense, useCallback, useMemo } from "react";
 import { Stomp, CompatClient } from "@stomp/stompjs";
 import SockJS from "sockjs-client";
 import { DocState } from "@/src/lib/docState";
@@ -59,6 +59,7 @@ import {
 } from "@/src/lib/review/formatSuggestionEngine";
 import { snapshotAndApply, undo } from "@/src/lib/review/reviewHistory";
 import CollaboratorsModal from "@/components/CollaboratorsSection";
+import VisibilitySection from "@/components/VisibilitySection";
 
 function EditContent() {
   const { id: noteId } = useParams();
@@ -243,6 +244,12 @@ function EditContent() {
       docStateRef.current!.setDocument(new Delta(joinData.delta.ops || []));
       setCollaborators(joinData.collaborators);
 
+      const isAllowed = Object.hasOwn(joinData.collaborators, user.email);
+
+      if (!isAllowed) {
+        router.push("/notes");
+      }
+      
       if (noteData.accessRole === "OWNER") {
         isOwner.current = true;
       }
@@ -274,6 +281,12 @@ function EditContent() {
 
           if (type === MessageType.COLLABORATOR_JOIN)
             setCollaborators(payload.collaborators);
+
+            const isAllowed = Object.hasOwn(payload.collaborators, user.email);
+
+            if (!isAllowed) {
+              router.push("/notes");
+            }
 
           if (type === MessageType.COLLABORATOR_CURSOR)
             handleCursorChange(payload);
@@ -313,6 +326,12 @@ function EditContent() {
         );
 
         setCollaborators(joinData.collaborators);
+
+        const isAllowed = Object.hasOwn(joinData.collaborators, user.email);
+
+        if (!isAllowed) {
+          router.push("/notes");
+        }
 
         if (noteData.accessRole === "OWNER") {
           isOwner.current = true;
@@ -945,147 +964,263 @@ function EditContent() {
   return (
     <main
       className="container-wide"
-      style={{ maxWidth: "1000px", paddingBottom: 60 }}
+      style={{
+        maxWidth: "1150px",
+        paddingBottom: 60,
+      }}
     >
       <header
         style={{
-          borderBottom: "1px solid var(--border)",
-          paddingBottom: "1rem",
           marginBottom: "1.5rem",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "flex-end",
         }}
       >
-        <div>
-          <span
-            style={{
-              fontSize: "0.75rem",
-              color: "var(--primary)",
-              fontWeight: "bold",
-              textTransform: "uppercase",
-            }}
-          >
-            Editing Note
-          </span>
-          <h1 style={{ fontSize: "1.75rem", margin: 0 }}>{note.title}</h1>
-        </div>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "flex-start",
+            gap: "1rem",
+            flexWrap: "wrap",
+            marginBottom: "1rem",
+          }}
+        >
+          <div>
+            <span
+              style={{
+                fontSize: "0.72rem",
+                color: "var(--primary)",
+                fontWeight: 700,
+                textTransform: "uppercase",
+                letterSpacing: "0.08em",
+              }}
+            >
+              Editing Note
+            </span>
 
-        <div style={{ textAlign: "right" }}>
-          <div
-            style={{
-              fontSize: "0.875rem",
-              marginBottom: "8px",
-              display: "flex",
-              gap: "5px",
-              justifyContent: "flex-end",
-              flexWrap: "wrap",
-            }}
-          >
-            {Object.entries(collaborators).length > 0 ? (
-              <>
-                <span style={{ color: "var(--textmuted)" }}>
-                  Collaborating:{" "}
+            <h1
+              style={{
+                fontSize: "2rem",
+                margin: "8px 0 10px",
+                color: "#111827",
+                lineHeight: 1.1,
+              }}
+            >
+              {note.title}
+            </h1>
+
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                flexWrap: "wrap",
+              }}
+            >
+              <span
+                style={{
+                  fontSize: "0.85rem",
+                  color: "#6B7280",
+                  fontWeight: 500,
+                }}
+              >
+                Active:
+              </span>
+
+              {Object.entries(collaborators).length > 0 ? (
+                Object.entries(collaborators).map(([email, color]) => (
+                  <div
+                    key={email}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "6px 10px",
+                      borderRadius: 999,
+                      background: "#F3F4F6",
+                      border: "1px solid #E5E7EB",
+                      fontSize: "0.82rem",
+                      fontWeight: 600,
+                      color: "#374151",
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: "50%",
+                        background: color,
+                      }}
+                    />
+
+                    <span>
+                      {email === user?.email ? "You" : email}
+                    </span>
+                  </div>
+                ))
+              ) : (
+                <span
+                  style={{
+                    color: "#9CA3AF",
+                    fontSize: "0.85rem",
+                  }}
+                >
+                  Working alone
                 </span>
-                {Object.entries(collaborators).map(([email, color], i, arr) => (
-                  <span key={email} style={{ color, fontWeight: "600" }}>
-                    {email === user?.email ? "You" : email}
-                    {i < arr.length - 1 && (
-                      <span style={{ color, marginLeft: "2px" }}>,</span>
-                    )}
-                  </span>
-                ))}
-              </>
-            ) : (
-              <span style={{ color: "var(--textmuted)" }}>Working alone</span>
-            )}
+              )}
+            </div>
           </div>
 
           <div
-            style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "10px",
+              flexWrap: "wrap",
+              justifyContent: "flex-end",
+            }}
           >
-            <button className="btn-icon" title="Settings" onClick={openSettings}>
-              ⚙️
-            </button>
-            <div
-              style={{
-                width: "1px",
-                background: "var(--border)",
-                margin: "0 4px",
-              }}
-            />
-
-            {(isOwner.current || note.accessRole === "SUPER") && <button
-              className="btn-outline"
-              onClick={() => setShowCollaboratorsModal(true)}
-            >
-              Collaborators
-            </button>}
-
             {!isReviewing && (
               <button
-                className="btn-outline"
                 onClick={() => router.push(`/notes/${noteId}`)}
+                style={{
+                  padding: "10px 16px",
+                  borderRadius: 10,
+                  border: "1px solid #E5E7EB",
+                  background: "white",
+                  cursor: "pointer",
+                  fontWeight: 600,
+                }}
               >
                 View
               </button>
             )}
 
+            {(isOwner.current || note.accessRole === "SUPER") && (
+              <button
+                onClick={() => setShowCollaboratorsModal(true)}
+                style={{
+                  padding: "10px 16px",
+                  borderRadius: 10,
+                  border: "1px solid #E5E7EB",
+                  background: "white",
+                  cursor: "pointer",
+                  fontWeight: 600,
+                }}
+              >
+                Collaborators
+              </button>
+            )}
+
             {isOwner.current && !isReviewing && (
-              <button className="btn-outline" onClick={handleReviewNote}>
+              <button
+                onClick={handleReviewNote}
+                style={{
+                  padding: "10px 16px",
+                  borderRadius: 10,
+                  border: "1px solid #FCD34D",
+                  background: "#FEF3C7",
+                  color: "#92400E",
+                  cursor: "pointer",
+                  fontWeight: 700,
+                }}
+              >
                 Review
               </button>
             )}
 
             {!isReviewing && (
-              <button className="btn-primary" onClick={saveNote}>
-                Save changes
+              <button
+                onClick={saveNote}
+                style={{
+                  padding: "10px 18px",
+                  borderRadius: 10,
+                  border: "none",
+                  background: "#111827",
+                  color: "white",
+                  cursor: "pointer",
+                  fontWeight: 700,
+                  boxShadow: "0 2px 10px rgba(0,0,0,0.08)",
+                }}
+              >
+                Save Changes
               </button>
             )}
 
             {isReviewing && isOwner.current && (
               <button
-                className="btn-primary"
                 onClick={handleUndo}
                 disabled={reviewHistory.current.length === 0}
                 style={{
-                  opacity: reviewHistory.current.length === 0 ? 0.4 : 1,
+                  padding: "10px 18px",
+                  borderRadius: 10,
+                  border: "none",
+                  background: "#111827",
+                  color: "white",
+                  cursor: "pointer",
+                  fontWeight: 700,
+                  opacity:
+                    reviewHistory.current.length === 0
+                      ? 0.4
+                      : 1,
                 }}
               >
                 ↩ Undo
               </button>
             )}
+
+            <button
+              title="Settings"
+              onClick={openSettings}
+              style={{
+                width: 42,
+                height: 42,
+                borderRadius: 12,
+                border: "1px solid #E5E7EB",
+                background: "white",
+                cursor: "pointer",
+                fontSize: "1rem",
+              }}
+            >
+              ⚙️
+            </button>
           </div>
         </div>
+
+        <VisibilitySection
+          noteId={noteId as string}
+          accessRole={note.accessRole}
+          visibility={note.visibility}
+        />
       </header>
 
       {isReviewing && (
         <div
           style={{
-            backgroundColor: "#fffbeb",
-            border: "1px solid #fcd34b",
-            color: "#f3f031ff",
-            padding: "0.75rem 1rem",
-            borderRadius: "6px",
+            backgroundColor: "#FEF3C7",
+            border: "1px solid #FCD34D",
+            color: "#92400E",
+            padding: "0.9rem 1rem",
+            borderRadius: "12px",
             marginBottom: "1rem",
             display: "flex",
             alignItems: "center",
-            gap: "8px",
-            fontSize: "0.875rem",
+            gap: "10px",
+            fontSize: "0.9rem",
             fontWeight: "500",
           }}
         >
           <span style={{ fontSize: "1.2rem" }}>📝</span>
+
           <span>
             {note.accessRole === "OWNER" ? (
               <>
-                <strong>Review Mode:</strong> You are reviewing proposed
-                changes. Accept or reject them.
+                <strong>Review Mode:</strong> You are reviewing
+                proposed changes.
               </>
             ) : (
               <>
-                <strong>Review in Progress:</strong> The owner is reviewing a
-                proposed version of this note.
+                <strong>Review in Progress:</strong> The owner is
+                currently reviewing this note.
               </>
             )}
           </span>
@@ -1100,20 +1235,36 @@ function EditContent() {
             flexDirection: "column",
             alignItems: "center",
             justifyContent: "center",
-            backgroundColor: "#f9fafb",
-            border: "1px solid var(--border)",
-            borderRadius: "8px",
+            backgroundColor: "#F9FAFB",
+            border: "1px solid #E5E7EB",
+            borderRadius: "16px",
             textAlign: "center",
             padding: "2rem",
           }}
         >
-          <div style={{ fontSize: "2.5rem", marginBottom: "1rem" }}>🔒</div>
-          <h3 style={{ color: "var(--text)", margin: "0 0 0.5rem 0" }}>
+          <div style={{ fontSize: "2.7rem", marginBottom: "1rem" }}>
+            🔒
+          </div>
+
+          <h3
+            style={{
+              color: "#111827",
+              margin: "0 0 0.5rem 0",
+            }}
+          >
             Editor Locked
           </h3>
-          <p style={{ color: "var(--text-muted)", maxWidth: "400px", margin: 0 }}>
-            The owner is reviewing proposed changes. The editor will be
-            available once review is complete.
+
+          <p
+            style={{
+              color: "#6B7280",
+              maxWidth: "400px",
+              margin: 0,
+              lineHeight: 1.6,
+            }}
+          >
+            The owner is reviewing proposed changes. Editing
+            will become available once the review is complete.
           </p>
         </div>
       ) : (
@@ -1124,11 +1275,11 @@ function EditContent() {
             !hasPendingSuggestions && (
               <div
                 style={{
-                  backgroundColor: "#ecfdf5",
-                  border: "1px solid #10b981",
-                  color: "#065f46",
-                  padding: "0.75rem 1rem",
-                  borderRadius: "6px",
+                  backgroundColor: "#ECFDF5",
+                  border: "1px solid #10B981",
+                  color: "#065F46",
+                  padding: "0.9rem 1rem",
+                  borderRadius: "12px",
                   marginBottom: "1rem",
                   display: "flex",
                   alignItems: "center",
@@ -1138,15 +1289,20 @@ function EditContent() {
                 }}
               >
                 <span style={{ fontSize: "1.1rem" }}>✅</span>
+
                 <span>
-                  <strong>No pending changes:</strong> The note is shown below
-                  with its current saved content.
+                  <strong>No pending changes:</strong> Everything
+                  looks good.
                 </span>
               </div>
             )}
 
           <div
-            style={{ display: "flex", gap: "1rem", alignItems: "flex-start" }}
+            style={{
+              display: "flex",
+              gap: "1rem",
+              alignItems: "flex-start",
+            }}
           >
             <div
               style={{
@@ -1154,13 +1310,13 @@ function EditContent() {
                 minWidth: 0,
                 position: "relative",
                 minHeight: "500px",
-                borderRadius: "8px",
-                padding: "2px",
+                borderRadius: "18px",
+                overflow: "hidden",
                 border: isReviewing
-                  ? "2px solid #fcd34b"
-                  : "1px solid var(--border)",
-                backgroundColor: isReviewing ? "#fafafa" : "#fcfcfc",
-                display: "block",
+                  ? "2px solid #FCD34D"
+                  : "1px solid #E5E7EB",
+                backgroundColor: "white",
+                boxShadow: "0 4px 18px rgba(0,0,0,0.04)",
               }}
             >
               <div
@@ -1168,7 +1324,7 @@ function EditContent() {
                 style={{
                   fontFamily: "monospace",
                   fontSize: "1rem",
-                  lineHeight: "1.6",
+                  lineHeight: "1.7",
                   padding: "2rem",
                   border: "none",
                   cursor: isReviewing ? "default" : "text",
@@ -1180,8 +1336,12 @@ function EditContent() {
               <FormatSidebarModal
                 open={showReviewSidebarModal}
                 hasPendingSuggestions={hasPendingSuggestions}
-                formatSuggestions={formatSuggestions.filter((item) =>
-                  canActOnFormatSuggestion(getReviewCtx(), item),
+                formatSuggestions={formatSuggestions.filter(
+                  (item) =>
+                    canActOnFormatSuggestion(
+                      getReviewCtx(),
+                      item
+                    )
                 )}
                 activeFormatId={activeFormatId}
                 onActivateFormat={(groupId) =>
@@ -1190,7 +1350,7 @@ function EditContent() {
                     groupId,
                     setActiveFormatId,
                     setActiveSuggestion,
-                    closeReviewTooltip,
+                    closeReviewTooltip
                   )
                 }
                 onClose={
@@ -1218,24 +1378,28 @@ function EditContent() {
         style={{
           marginTop: "1rem",
           fontSize: "0.75rem",
-          color: "var(--text-muted)",
+          color: "#9CA3AF",
         }}
       >
-        Created at: {new Date(note.createdAt).toLocaleString()}
+        Created at:{" "}
+        {new Date(note.createdAt).toLocaleString()}
       </footer>
 
+      {/* TOOLTIP */}
       {activeSuggestion && (
         <ReviewTooltip
           tooltip={activeSuggestion}
           onAccept={(groupId, type, references) =>
             acceptChange(groupId, type, references)
           }
-          onReject={(groupId, type) => rejectChange(groupId, type)}
+          onReject={(groupId, type) =>
+            rejectChange(groupId, type)
+          }
           onClose={() =>
             closeReviewTooltip(
               getReviewCtx(),
               setActiveFormatId,
-              setActiveSuggestion,
+              setActiveSuggestion
             )
           }
         />
