@@ -1,6 +1,7 @@
 "use client";
 
 import { apiFetch } from "@/src/lib/api";
+import { convertDocumentToDelta } from "@/src/lib/documentToDelta";
 import { Note } from "@/src/types";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -23,8 +24,22 @@ export default function CreateNoteModal({
   const [title, setTitle] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [file, setFile] = useState<File | null>(null);
 
   if (!open) return null;
+
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const selected = e.target.files?.[0];
+    if (!selected) return;
+
+    setFile(selected);
+
+    const extractedName = selected.name.replace(/\.[^/.]+$/, "");
+
+    if (!title.trim()) {
+      setTitle(extractedName);
+    }
+  }
 
   async function onCreate() {
     if (isLoading) return;
@@ -33,26 +48,39 @@ export default function CreateNoteModal({
     setError(null);
 
     try {
-      if (!userId || !email) {
-        throw new Error("User not authenticated");
+      let initialDelta = null;
+      
+      if (file) {
+        try {
+          initialDelta = await convertDocumentToDelta(file);
+        } catch (convError) {
+          setError("Failed to convert document. Please check the file format.");
+          setIsLoading(false);
+          return;
+        }
       }
+
+      const payload = {
+        title: title,
+        initialDelta: initialDelta
+      };
 
       const data = await apiFetch<Note>("notes", {
         method: "POST",
-        body: JSON.stringify({ title }),
+        body: JSON.stringify(payload),
+        headers: {
+          "Content-Type": "application/json"
+        }
       });
 
-      router.push(
-        `/notes/${data.id}/edit?email=${encodeURIComponent(email)}&userId=${encodeURIComponent(userId)}`
-      );
-
+      router.push(`/notes/${data.id}/edit`);
       onClose();
     } catch (err: any) {
-      setError(err.message || "Failed to create Note.");
+      setError(err.message || "Failed to create note.");
     } finally {
       setIsLoading(false);
     }
-  }
+}
 
   return (
     <div
@@ -106,13 +134,88 @@ export default function CreateNoteModal({
           </button>
         </div>
 
-        <input
-          value={title}
-          placeholder="Title..."
-          className="input-field"
-          onChange={(e) => setTitle(e.target.value)}
-          disabled={isLoading}
-        />
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 14,
+          }}
+        >
+          <div>
+            <label
+              style={{
+                fontSize: 13,
+                fontWeight: 600,
+                color: "#374151",
+              }}
+            >
+              Note title
+            </label>
+
+            <input
+              value={title}
+              placeholder="Enter title..."
+              className="input-field"
+              onChange={(e) => setTitle(e.target.value)}
+              disabled={isLoading}
+              style={{ marginTop: 6 }}
+            />
+          </div>
+
+          <div>
+            <label
+              style={{
+                fontSize: 13,
+                fontWeight: 600,
+                color: "#374151",
+              }}
+            >
+              Upload document (optional)
+            </label>
+
+            <div
+              style={{
+                marginTop: 6,
+                border: "2px dashed #D1D5DB",
+                borderRadius: 12,
+                padding: 18,
+                background: "#F9FAFB",
+              }}
+            >
+              <input
+                type="file"
+                accept=".pdf,.doc,.docx,.txt"
+                onChange={handleFileChange}
+                disabled={isLoading}
+              />
+
+              <p
+                style={{
+                  marginTop: 10,
+                  fontSize: 12,
+                  color: "#6B7280",
+                }}
+              >
+                PDF, Word or TXT files supported
+              </p>
+
+              {file && (
+                <div
+                  style={{
+                    marginTop: 10,
+                    padding: 10,
+                    borderRadius: 8,
+                    background: "#fff",
+                    border: "1px solid #E5E7EB",
+                    fontSize: 13,
+                  }}
+                >
+                  📄 {file.name}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
 
         {error && (
           <p style={{ color: "red", fontSize: 12 }}>
