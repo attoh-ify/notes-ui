@@ -1121,7 +1121,7 @@ function EditContent() {
               </button>
             )}
 
-            {(isOwner.current || note.accessRole === "SUPER") && (
+            {(!isReviewing && (note.accessRole === "OWNER" || note.accessRole === "SUPER")) && (
               <button
                 onClick={() => setShowCollaboratorsModal(true)}
                 style={{
@@ -1212,11 +1212,12 @@ function EditContent() {
           </div>
         </div>
 
-        <VisibilitySection
+        {!isReviewing && (note.accessRole === "OWNER" || note.accessRole === "SUPER") && (
+          <VisibilitySection
           noteId={noteId as string}
           accessRole={note.accessRole}
           visibility={note.visibility}
-        />
+        />)}
       </header>
 
       {isReviewing && (
@@ -1411,7 +1412,6 @@ function EditContent() {
         {new Date(note.createdAt).toLocaleString()}
       </footer>
 
-      {/* TOOLTIP */}
       {activeSuggestion && (
         <ReviewTooltip
           tooltip={activeSuggestion}
