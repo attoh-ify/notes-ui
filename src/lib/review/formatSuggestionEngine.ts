@@ -59,7 +59,15 @@ export function activateFormatSuggestion(
     type: "format",
     actorEmail: item.actorEmail,
     createdAt: item.createdAt,
-    references: item.references,
+    references: item.references.map((r) => ({
+      reviewStart: r.reviewStart,
+      componentStart: r.componentStart,
+      length: r.length,
+      ref: {
+        opId: r.ref.opId,
+        componentIndex: r.ref.componentIndex,
+      },
+    })),
   });
 }
 

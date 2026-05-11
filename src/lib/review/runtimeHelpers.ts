@@ -32,12 +32,7 @@ export function captureRuntimeSnapshot(ctx: ReviewRuntimeContext): RuntimeSnapsh
   return {
     segments: cloneSegments(ctx.reviewSegmentsRef.current),
     formatSuggestions: cloneFormatSuggestions(ctx.formatSuggestionsRef.current),
-    activeSuggestion: ctx.activeSuggestionRef.current
-      ? {
-          ...ctx.activeSuggestionRef.current,
-          references: [...ctx.activeSuggestionRef.current.references],
-        }
-      : null,
+    activeSuggestion: cloneTooltipState(ctx.activeSuggestionRef.current),
     activeFormatId: ctx.activeFormatIdRef.current,
   };
 }
@@ -73,7 +68,18 @@ export function cloneTooltipState(
   tooltip: TooltipState | null,
 ): TooltipState | null {
   return tooltip
-    ? { ...tooltip, references: [...tooltip.references] }
+    ? {
+        ...tooltip,
+        references: tooltip.references.map((r) => ({
+          reviewStart: r.reviewStart,
+          componentStart: r.componentStart,
+          length: r.length,
+          ref: {
+            opId: r.ref.opId,
+            componentIndex: r.ref.componentIndex,
+          },
+        })),
+      }
     : null;
 }
 

@@ -276,10 +276,11 @@ function EditContent() {
         client.subscribe(`/topic/note/${noteId}`, (message) => {
           const { type, payload } = JSON.parse(message.body);
 
-          if (type === MessageType.OPERATION)
+          if (type === MessageType.OPERATION) {
             handleRemoteOperation(payload);
+          }
 
-          if (type === MessageType.COLLABORATOR_JOIN)
+          if (type === MessageType.COLLABORATOR_JOIN) {
             setCollaborators(payload.collaborators);
 
             const isAllowed = Object.hasOwn(payload.collaborators, user.email);
@@ -287,12 +288,15 @@ function EditContent() {
             if (!isAllowed) {
               router.push("/notes");
             }
+          }
 
-          if (type === MessageType.COLLABORATOR_CURSOR)
+          if (type === MessageType.COLLABORATOR_CURSOR) {
             handleCursorChange(payload);
+          }
 
-          if (type === MessageType.REVIEW_IN_PROGRESS)
+          if (type === MessageType.REVIEW_IN_PROGRESS) {
             handleReviewInProgress(payload);
+          }
         });
 
         const noteData = await apiFetch<Note>(`notes/${noteId}`, {
@@ -345,6 +349,12 @@ function EditContent() {
 
         setIsloading(false);
       }
+    },
+  
+    (error: any) => {
+      console.error("Websocket auth failed", error);
+      router.push("/notes");
+      setErrorMessageMessage(error);
     });
 
     return () => {
@@ -574,14 +584,17 @@ function EditContent() {
                 text: seg.text.slice(0, leftLen),
                 baseAttributes: { ...(seg.baseAttributes ?? {}) },
                 suggestionAttributes: { ...(seg.suggestionAttributes ?? {}) },
+                references: [],
               });
             }
+
             if (rightLen > 0) {
               nextSegments.push({
                 id: nextRuntimeSegmentId(ctx),
                 text: seg.text.slice(seg.text.length - rightLen),
                 baseAttributes: { ...(seg.baseAttributes ?? {}) },
                 suggestionAttributes: { ...(seg.suggestionAttributes ?? {}) },
+                references: [],
               });
             }
           }
@@ -679,7 +692,12 @@ function EditContent() {
           reviewSegmentsRef.current = mergeAdjacentSegments(
             reviewSegmentsRef.current.map((seg) => {
               if (seg.deleteSuggestion?.groupId !== groupId) return seg;
-              return { ...seg, deleteSuggestion: undefined };
+
+              return {
+                ...seg,
+                references: [],
+                deleteSuggestion: undefined,
+              };
             }),
           );
 
@@ -825,6 +843,9 @@ function EditContent() {
 
     setIsReviewing(true);
     setReviewLoaded(false);
+    setShowReviewSidebarModal(true);
+    setActiveSuggestion(null);
+    setActiveFormatId(null);
 
     await apiFetch(`notes/${noteId}/review`, { method: "GET" });
 
@@ -857,18 +878,23 @@ function EditContent() {
   }
 
   function handleReviewInProgress(payload: ReviewInProgressResponse) {
-    if (
-      payload.state === false &&
-      noteRef.current?.ownerEmail !== userRef.current?.email
-    ) {
+    setIsReviewing(payload.state);
+
+    if (payload.state === false) {
       const quill = quillRef.current;
+
       if (quill) {
         quill.enable(true);
         quill.root.removeEventListener("click", handleClick);
       }
+
+      setShowReviewSidebarModal(false);
+      setActiveSuggestion(null);
+      setActiveFormatId(null);
+      return;
     }
-    setIsReviewing(payload.state);
-    if (isOwner.current && payload.state === true) {
+
+    if (noteRef.current?.ownerEmail === userRef.current?.email) {
       setShowReviewSidebarModal(true);
     }
   }
@@ -1111,7 +1137,7 @@ function EditContent() {
               </button>
             )}
 
-            {isOwner.current && !isReviewing && (
+            {note.accessRole === "OWNER" && !isReviewing && (
               <button
                 onClick={handleReviewNote}
                 style={{
@@ -1146,7 +1172,7 @@ function EditContent() {
               </button>
             )}
 
-            {isReviewing && isOwner.current && (
+            {isReviewing && note.accessRole === "OWNER" && (
               <button
                 onClick={handleUndo}
                 disabled={reviewHistory.current.length === 0}
@@ -1332,7 +1358,7 @@ function EditContent() {
               />
             </div>
 
-            {showReviewSidebarModal && isOwner.current && (
+            {showReviewSidebarModal && note.accessRole === "OWNER" && (
               <FormatSidebarModal
                 open={showReviewSidebarModal}
                 hasPendingSuggestions={hasPendingSuggestions}

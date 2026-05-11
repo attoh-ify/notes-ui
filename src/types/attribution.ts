@@ -16,14 +16,12 @@ export interface InsertSuggestion {
   groupId: string;
   actorEmail: string;
   createdAt: string;
-  references: SuggestionSlice[];
 }
 
 export interface DeleteSuggestion {
   groupId: string;
   actorEmail: string;
   createdAt: string;
-  references: SuggestionSlice[];
 }
 
 export interface FormatSuggestionSpan {
@@ -53,10 +51,9 @@ export interface ReviewProjection {
 export interface ReviewSegment {
   id: string;
   text: string;
-  // attrs: Record<string, any>;
   baseAttributes: Record<string, any>;
   suggestionAttributes: Record<string, any>;
-  // references: SuggestionSlice[];
+  references: SuggestionSlice[];
   insertSuggestion?: InsertSuggestion;
   deleteSuggestion?: DeleteSuggestion;
 }
