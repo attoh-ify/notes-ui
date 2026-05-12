@@ -845,15 +845,15 @@ function EditContent() {
       { method: "GET" },
     );
 
-    const hasPending =
-      projection.visualDelta.ops.length > 0 ||
-      projection.formatSuggestions.length > 0;
-
     quill.setContents(new Delta(projection.baseDelta.ops), "api");
 
     if (projection.visualDelta.ops.length > 0) {
       quill.updateContents(new Delta(projection.visualDelta.ops), "api");
     }
+
+    const hasPending =
+      new Delta(projection.visualDelta.ops).chop.length > 0 ||
+      projection.formatSuggestions.length > 0;
 
     setFormatSuggestions(projection.formatSuggestions);
     setHasPendingSuggestions(hasPending);
