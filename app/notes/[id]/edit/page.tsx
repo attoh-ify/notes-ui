@@ -218,48 +218,7 @@ function EditContent() {
       });
     }
   }, [isLoading, isReviewing, note?.accessRole]);
-
-  const loadNoteAndJoin = useCallback(async () => {
-    if (!noteId || !user) return;
-
-    try {
-      const noteData = await apiFetch<Note>(`notes/${noteId}`, { method: "GET" });
-      setNote(noteData);
-
-      if (noteData.accessRole === "VIEWER") {
-        router.push(`/notes/${noteId}`);
-        return;
-      }
-
-      const joinData = await apiFetch<JoinResponse>(`notes/${noteId}/join`, {
-        method: "GET",
-      });
-
-      if (joinData.isReviewing === true) {
-        setIsReviewing(true);
-        return;
-      }
-
-      docStateRef.current!.lastSyncedRevision = joinData.revision;
-      docStateRef.current!.setDocument(new Delta(joinData.delta.ops || []));
-      setCollaborators(joinData.collaborators);
-
-      const isAllowed = Object.hasOwn(joinData.collaborators, user.email);
-
-      if (!isAllowed) {
-        router.push("/notes");
-      }
-      
-      if (noteData.accessRole === "OWNER") {
-        isOwner.current = true;
-      }
-    } catch (err: any) {
-      setErrorMessageMessage(err.message || "Failed to load note");
-    } finally {
-      setIsloading(false);
-    }
-  }, [noteId, user, router]);
-
+  
   useEffect(() => {
     if (!noteId || !user) return;
 
@@ -543,7 +502,11 @@ function EditContent() {
         rejectedChanges,
       });
 
-      closeReviewTooltip(ctx, setActiveFormatId, setActiveSuggestion);
+      closeReviewTooltip(
+        ctx,
+        setActiveFormatIdSync,
+        setActiveSuggestionSync,
+      );
       return;
     }
 
@@ -928,40 +891,74 @@ function EditContent() {
   }
 
   async function handleExitReview() {
+    const quill = quillRef.current;
+
     try {
-      quillRef.current?.root.removeEventListener("click", handleClick);
-      await apiFetch(`notes/${noteId}/review/exit`, { method: "GET" });
-      setFormatSuggestions([]);
-      setActiveFormatId(null);
-      setHasPendingSuggestions(false);
-      setIsReviewing(false);
-      setShowReviewSidebarModal(false);
-      setActiveSuggestion(null);
-      setReviewLoaded(false);
+      if (quill) {
+        quill.root.removeEventListener("click", handleClick);
+      }
+
+      const currentActive = activeFormatIdRef.current;
+
+      if (quill && currentActive) {
+        const item = formatSuggestionsRef.current.find(
+          (f) => f.groupId === currentActive,
+        );
+
+        if (item) {
+          quill.updateContents(buildFormatOverlayClearDelta(item), "api");
+        }
+      }
+
+      await apiFetch(`notes/${noteId}/review/exit`, {
+        method: "GET",
+      });
+
+      const joinData = await apiFetch<JoinResponse>(`notes/${noteId}/join`, {
+        method: "GET",
+      });
+
+      const cleanDelta = new Delta(joinData.delta.ops || []);
+
+      quill?.setContents(cleanDelta, "api");
+
+      if (docStateRef.current) {
+        docStateRef.current.lastSyncedRevision = joinData.revision;
+        docStateRef.current.setDocument(cleanDelta);
+      }
+      
+      if (joinData.collaborators) {
+        setCollaborators(joinData.collaborators);
+      }
+
+      reviewSegmentsRef.current = [];
+      runtimeSegCtrRef.current = 0;
+
+      formatSuggestionsRef.current = [];
+      activeFormatIdRef.current = null;
+      activeSuggestionRef.current = null;
+
       reviewHistory.current = [];
       rejectedChanges.current = [];
       acceptedReferences.current = [];
-      await loadNoteAndJoin();
+
+      setFormatSuggestions([]);
+      setActiveFormatId(null);
+      setActiveSuggestion(null);
+      setHasPendingSuggestions(false);
+      setShowReviewSidebarModal(false);
+      setShowExitReviewModal(false);
+      setReviewLoaded(false);
+      setIsReviewing(false);
+
+      quill?.enable(true);
     } catch (err: any) {
-      setErrorMessageMessage(err.message);
+      setErrorMessageMessage(err.message || "Failed to exit review");
     }
   }
 
   async function saveReviewChanges() {
     try {
-      const currentActive = activeFormatIdRef.current;
-      if (currentActive) {
-        const item = formatSuggestionsRef.current.find(
-          (f) => f.groupId === currentActive,
-        );
-        if (item) {
-          quillRef.current?.updateContents(
-            buildFormatOverlayClearDelta(item),
-            "api",
-          );
-        }
-      }
-
       const delta =
         rejectedChanges.current.length > 0
           ? rejectedChanges.current.reduce((acc, d) => acc.compose(d))
@@ -984,7 +981,7 @@ function EditContent() {
         }),
       });
 
-      handleExitReview();
+      await handleExitReview();
     } catch (err: any) {
       setErrorMessageMessage(err.message);
     }
