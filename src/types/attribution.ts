@@ -68,14 +68,26 @@ export interface TooltipState {
 
 export type ReviewAction = "ACCEPT" | "REJECT";
 
-export interface RuntimeSnapshot {
-  segments: ReviewSegment[];
-  formatSuggestions: FormatSuggestionItem[];
-  activeSuggestion: TooltipState | null;
-  activeFormatId: string | null;
+export interface SegmentUndoPatch {
+  index: number;
+  deleteCount: number;
+  before: ReviewSegment[];
+}
+
+export interface FormatSuggestionUndoPatch {
+  index: number;
+  deleteCount: number;
+  before: FormatSuggestionItem[];
+}
+
+export interface ReviewUndoPatch {
+  segmentsPatch: SegmentUndoPatch | null;
+  formatSuggestionsPatch: FormatSuggestionUndoPatch | null;
+  activeSuggestionBefore: TooltipState | null;
+  activeFormatIdBefore: string | null;
 }
 
 export interface ReviewEntry {
   type: ReviewAction;
-  snapshot: RuntimeSnapshot;
+  patch: ReviewUndoPatch;
 }

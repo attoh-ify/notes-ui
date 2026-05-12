@@ -1,17 +1,16 @@
 import {
   FormatSuggestionItem,
   ReviewSegment,
-  RuntimeSnapshot,
   TooltipState,
 } from "@/src/types";
+
 import {
   buildFormatOverlayClearDelta,
   buildFormatOverlayDelta,
-  cloneFormatSuggestions,
-  cloneSegments,
   getRuntimeTextInRange,
   segmentsToDelta,
 } from "../attribution";
+
 import Quill from "quill";
 
 export type ReviewRuntimeContext = {
@@ -28,17 +27,9 @@ export function nextRuntimeSegmentId(ctx: ReviewRuntimeContext): string {
   return `seg_${ctx.runtimeSegCtrRef.current}`;
 }
 
-export function captureRuntimeSnapshot(ctx: ReviewRuntimeContext): RuntimeSnapshot {
-  return {
-    segments: cloneSegments(ctx.reviewSegmentsRef.current),
-    formatSuggestions: cloneFormatSuggestions(ctx.formatSuggestionsRef.current),
-    activeSuggestion: cloneTooltipState(ctx.activeSuggestionRef.current),
-    activeFormatId: ctx.activeFormatIdRef.current,
-  };
-}
-
 export function refreshEditorFromRuntime(ctx: ReviewRuntimeContext): void {
   if (!ctx.quill) return;
+
   const delta = segmentsToDelta(ctx.reviewSegmentsRef.current);
   ctx.quill.setContents(delta, "api");
 }
@@ -89,6 +80,7 @@ export function isInsertGroupStillPending(
 ): boolean {
   const quill = ctx.quill;
   if (!quill) return false;
+
   return !!quill.root.querySelector(
     `[data-suggestion-type="insert"][data-group-id="${groupId}"]`,
   );
@@ -129,5 +121,6 @@ export function restoreActiveFormatOverlay(
 ): void {
   const quill = ctx.quill;
   if (!quill || !item) return;
+
   quill.updateContents(buildFormatOverlayDelta(item), "api");
 }

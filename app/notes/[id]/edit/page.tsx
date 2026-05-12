@@ -489,6 +489,30 @@ function EditContent() {
       quill.root.removeEventListener("click", handleClick);
     };
   }, [handleClick]);
+  
+  function setFormatSuggestionsSync(
+    next:
+      | FormatSuggestionItem[]
+      | ((prev: FormatSuggestionItem[]) => FormatSuggestionItem[]),
+  ) {
+    const resolved =
+      typeof next === "function"
+        ? next(formatSuggestionsRef.current)
+        : next;
+
+    formatSuggestionsRef.current = resolved;
+    setFormatSuggestions(resolved);
+  }
+
+  function setActiveFormatIdSync(next: string | null) {
+    activeFormatIdRef.current = next;
+    setActiveFormatId(next);
+  }
+
+  function setActiveSuggestionSync(next: TooltipState | null) {
+    activeSuggestionRef.current = next;
+    setActiveSuggestion(next);
+  }
 
   function applyWithSnapshot(fn: () => void, type: ReviewAction) {
     snapshotAndApply(getReviewCtx(), fn, type, {
@@ -512,8 +536,8 @@ function EditContent() {
 
       acceptFormatSuggestion(ctx, item, {
         snapshotAndApply,
-        setFormatSuggestions,
-        setActiveFormatId,
+        setFormatSuggestions: setFormatSuggestionsSync,
+        setActiveFormatId: setActiveFormatIdSync,
         acceptedReferences,
         reviewHistory,
         rejectedChanges,
@@ -543,7 +567,7 @@ function EditContent() {
 
           refreshEditorFromRuntime(ctx);
 
-          setFormatSuggestions((prev) =>
+          setFormatSuggestionsSync((prev) =>
             refreshPreviewTextsAgainstRuntime(
               ctx,
               resolveFormatSuggestionsAfterMutation(
@@ -602,7 +626,7 @@ function EditContent() {
           reviewSegmentsRef.current = mergeAdjacentSegments(nextSegments);
           refreshEditorFromRuntime(ctx);
 
-          setFormatSuggestions((prev) =>
+          setFormatSuggestionsSync((prev) =>
             refreshPreviewTextsAgainstRuntime(
               ctx,
               resolveFormatSuggestionsAfterMutation(
@@ -620,7 +644,9 @@ function EditContent() {
       }
     }, "ACCEPT");
 
-    setActiveSuggestion((prev) => (prev?.groupId === groupId ? null : prev));
+    if (activeSuggestionRef.current?.groupId === groupId) {
+      setActiveSuggestionSync(null);
+    }
   }
 
   function rejectChange(groupId: string, type: "insert" | "delete" | "format") {
@@ -634,8 +660,8 @@ function EditContent() {
 
       rejectFormatSuggestion(ctx, item, {
         snapshotAndApply,
-        setFormatSuggestions,
-        setActiveFormatId,
+        setFormatSuggestions: setFormatSuggestionsSync,
+        setActiveFormatId: setActiveFormatIdSync,
         reviewHistory,
         rejectedChanges,
       });
@@ -676,7 +702,7 @@ function EditContent() {
 
           refreshEditorFromRuntime(ctx);
 
-          setFormatSuggestions((prev) =>
+          setFormatSuggestionsSync((prev) =>
             refreshPreviewTextsAgainstRuntime(
               ctx,
               resolveFormatSuggestionsAfterMutation(
@@ -703,7 +729,7 @@ function EditContent() {
 
           refreshEditorFromRuntime(ctx);
 
-          setFormatSuggestions((prev) =>
+          setFormatSuggestionsSync((prev) =>
             refreshPreviewTextsAgainstRuntime(
               ctx,
               resolveFormatSuggestionsAfterMutation(
@@ -721,7 +747,9 @@ function EditContent() {
       }
     }, "REJECT");
 
-    setActiveSuggestion((prev) => (prev?.groupId === groupId ? null : prev));
+    if (activeSuggestionRef.current?.groupId === groupId) {
+      setActiveSuggestionSync(null);
+    }
   }
 
   function handleUndo() {
@@ -729,9 +757,9 @@ function EditContent() {
       reviewHistory,
       rejectedChanges,
       acceptedReferences,
-      setFormatSuggestions,
-      setActiveFormatId,
-      setActiveSuggestion,
+      setFormatSuggestions: setFormatSuggestionsSync,
+      setActiveFormatId: setActiveFormatIdSync,
+      setActiveSuggestion: setActiveSuggestionSync,
     });
   }
 
@@ -1373,12 +1401,12 @@ function EditContent() {
                 activeFormatId={activeFormatId}
                 onActivateFormat={(groupId) =>
                   activateFormatSuggestion(
-                    getReviewCtx(),
-                    groupId,
-                    setActiveFormatId,
-                    setActiveSuggestion,
-                    closeReviewTooltip
-                  )
+  getReviewCtx(),
+  groupId,
+  setActiveFormatIdSync,
+  setActiveSuggestionSync,
+  closeReviewTooltip
+)
                 }
                 onClose={
                   hasPendingSuggestions
@@ -1423,10 +1451,10 @@ function EditContent() {
           }
           onClose={() =>
             closeReviewTooltip(
-              getReviewCtx(),
-              setActiveFormatId,
-              setActiveSuggestion
-            )
+  getReviewCtx(),
+  setActiveFormatIdSync,
+  setActiveSuggestionSync
+)
           }
         />
       )}

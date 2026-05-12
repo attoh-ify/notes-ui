@@ -1,12 +1,21 @@
-import { ReviewAction, ReviewEntry, TooltipState } from "@/src/types";
 import {
-  captureRuntimeSnapshot,
+  FormatSuggestionItem,
+  FormatSuggestionUndoPatch,
+  ReviewAction,
+  ReviewEntry,
+  ReviewSegment,
+  SegmentUndoPatch,
+  TooltipState,
+} from "@/src/types";
+
+import {
   cloneTooltipState,
   refreshEditorFromRuntime,
   restoreActiveFormatOverlay,
   ReviewRuntimeContext,
   suspendActiveFormatOverlay,
 } from "./runtimeHelpers";
+
 import {
   cloneFormatSuggestions,
   cloneSegments,
@@ -14,30 +23,194 @@ import {
   stripSuggestionAttributes,
 } from "../attribution";
 
-// ---------------------------------------------------------------------------
-// snapshotAndApply
-// ---------------------------------------------------------------------------
-// Captures a runtime snapshot, runs fn(), then pushes an entry to
-// reviewHistory. If the action is REJECT it also computes the stripped
-// redo-delta and pushes it to rejectedChanges.
-// ---------------------------------------------------------------------------
+import type Delta from "quill-delta";
+
+function stableStringify(value: any): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringify).join(",")}]`;
+  }
+
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`)
+      .join(",")}}`;
+  }
+
+  return JSON.stringify(value);
+}
+
+function sameSegment(a: ReviewSegment, b: ReviewSegment): boolean {
+  return stableStringify(a) === stableStringify(b);
+}
+
+function sameFormatSuggestion(
+  a: FormatSuggestionItem,
+  b: FormatSuggestionItem,
+): boolean {
+  return stableStringify(a) === stableStringify(b);
+}
+
+function buildSegmentUndoPatch(
+  before: ReviewSegment[],
+  after: ReviewSegment[],
+): SegmentUndoPatch | null {
+  let prefix = 0;
+
+  while (
+    prefix < before.length &&
+    prefix < after.length &&
+    sameSegment(before[prefix], after[prefix])
+  ) {
+    prefix++;
+  }
+
+  let beforeSuffix = before.length - 1;
+  let afterSuffix = after.length - 1;
+
+  while (
+    beforeSuffix >= prefix &&
+    afterSuffix >= prefix &&
+    sameSegment(before[beforeSuffix], after[afterSuffix])
+  ) {
+    beforeSuffix--;
+    afterSuffix--;
+  }
+
+  const beforeChanged = before.slice(prefix, beforeSuffix + 1);
+  const afterChanged = after.slice(prefix, afterSuffix + 1);
+
+  if (beforeChanged.length === 0 && afterChanged.length === 0) {
+    return null;
+  }
+
+  return {
+    index: prefix,
+    deleteCount: afterChanged.length,
+    before: cloneSegments(beforeChanged),
+  };
+}
+
+function buildFormatSuggestionUndoPatch(
+  before: FormatSuggestionItem[],
+  after: FormatSuggestionItem[],
+): FormatSuggestionUndoPatch | null {
+  let prefix = 0;
+
+  while (
+    prefix < before.length &&
+    prefix < after.length &&
+    sameFormatSuggestion(before[prefix], after[prefix])
+  ) {
+    prefix++;
+  }
+
+  let beforeSuffix = before.length - 1;
+  let afterSuffix = after.length - 1;
+
+  while (
+    beforeSuffix >= prefix &&
+    afterSuffix >= prefix &&
+    sameFormatSuggestion(before[beforeSuffix], after[afterSuffix])
+  ) {
+    beforeSuffix--;
+    afterSuffix--;
+  }
+
+  const beforeChanged = before.slice(prefix, beforeSuffix + 1);
+  const afterChanged = after.slice(prefix, afterSuffix + 1);
+
+  if (beforeChanged.length === 0 && afterChanged.length === 0) {
+    return null;
+  }
+
+  return {
+    index: prefix,
+    deleteCount: afterChanged.length,
+    before: cloneFormatSuggestions(beforeChanged),
+  };
+}
+
+function applySegmentUndoPatch(
+  current: ReviewSegment[],
+  patch: SegmentUndoPatch | null,
+): ReviewSegment[] {
+  if (!patch) return current;
+
+  const next = [...current];
+
+  next.splice(
+    patch.index,
+    patch.deleteCount,
+    ...cloneSegments(patch.before),
+  );
+
+  return next;
+}
+
+function applyFormatSuggestionUndoPatch(
+  current: FormatSuggestionItem[],
+  patch: FormatSuggestionUndoPatch | null,
+): FormatSuggestionItem[] {
+  if (!patch) return current;
+
+  const next = [...current];
+
+  next.splice(
+    patch.index,
+    patch.deleteCount,
+    ...cloneFormatSuggestions(patch.before),
+  );
+
+  return next;
+}
+
 export function snapshotAndApply(
   ctx: ReviewRuntimeContext,
   fn: () => void,
   type: ReviewAction,
   deps: {
     reviewHistory: { current: ReviewEntry[] };
-    rejectedChanges: { current: import("quill-delta").default[] };
+    rejectedChanges: { current: Delta[] };
   },
 ) {
-  const snapshot = captureRuntimeSnapshot(ctx);
+  const beforeSegments = cloneSegments(ctx.reviewSegmentsRef.current);
+
+  const beforeFormatSuggestions = cloneFormatSuggestions(
+    ctx.formatSuggestionsRef.current,
+  );
+
+  const activeSuggestionBefore = cloneTooltipState(
+    ctx.activeSuggestionRef.current,
+  );
+
+  const activeFormatIdBefore = ctx.activeFormatIdRef.current;
 
   const beforeDelta =
-    type === "REJECT" ? segmentsToDelta(snapshot.segments) : null;
+    type === "REJECT" ? segmentsToDelta(beforeSegments) : null;
 
   fn();
 
-  deps.reviewHistory.current.push({ type, snapshot });
+  const afterSegments = cloneSegments(ctx.reviewSegmentsRef.current);
+
+  const afterFormatSuggestions = cloneFormatSuggestions(
+    ctx.formatSuggestionsRef.current,
+  );
+
+  const patch = {
+    segmentsPatch: buildSegmentUndoPatch(beforeSegments, afterSegments),
+    formatSuggestionsPatch: buildFormatSuggestionUndoPatch(
+      beforeFormatSuggestions,
+      afterFormatSuggestions,
+    ),
+    activeSuggestionBefore,
+    activeFormatIdBefore,
+  };
+
+  deps.reviewHistory.current.push({
+    type,
+    patch,
+  });
 
   if (type === "REJECT") {
     const afterDelta = ctx.quill!.getContents();
@@ -46,18 +219,13 @@ export function snapshotAndApply(
   }
 }
 
-// ---------------------------------------------------------------------------
-// undo
-// ---------------------------------------------------------------------------
-// Pops the last history entry and restores the runtime to that snapshot.
-// ---------------------------------------------------------------------------
 export function undo(
   ctx: ReviewRuntimeContext,
   deps: {
     reviewHistory: { current: ReviewEntry[] };
     rejectedChanges: { current: any[] };
     acceptedReferences: { current: any[] };
-    setFormatSuggestions: (v: any) => void;
+    setFormatSuggestions: (v: FormatSuggestionItem[]) => void;
     setActiveFormatId: (v: string | null) => void;
     setActiveSuggestion: (v: TooltipState | null) => void;
   },
@@ -70,15 +238,30 @@ export function undo(
   const suspended = suspendActiveFormatOverlay(ctx);
 
   try {
-    ctx.reviewSegmentsRef.current = cloneSegments(entry.snapshot.segments);
+    ctx.reviewSegmentsRef.current = applySegmentUndoPatch(
+      ctx.reviewSegmentsRef.current,
+      entry.patch.segmentsPatch,
+    );
 
     refreshEditorFromRuntime(ctx);
 
-    deps.setFormatSuggestions(
-      cloneFormatSuggestions(entry.snapshot.formatSuggestions),
+    const restoredFormatSuggestions = applyFormatSuggestionUndoPatch(
+      ctx.formatSuggestionsRef.current,
+      entry.patch.formatSuggestionsPatch,
     );
-    deps.setActiveFormatId(entry.snapshot.activeFormatId);
-    deps.setActiveSuggestion(cloneTooltipState(entry.snapshot.activeSuggestion));
+
+    ctx.formatSuggestionsRef.current = restoredFormatSuggestions;
+    deps.setFormatSuggestions(restoredFormatSuggestions);
+
+    ctx.activeFormatIdRef.current = entry.patch.activeFormatIdBefore;
+    deps.setActiveFormatId(entry.patch.activeFormatIdBefore);
+
+    const restoredActiveSuggestion = cloneTooltipState(
+      entry.patch.activeSuggestionBefore,
+    );
+
+    ctx.activeSuggestionRef.current = restoredActiveSuggestion;
+    deps.setActiveSuggestion(restoredActiveSuggestion);
   } finally {
     restoreActiveFormatOverlay(ctx, suspended);
   }
