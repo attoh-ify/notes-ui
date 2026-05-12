@@ -17,6 +17,7 @@ const roleStyles: Record<NoteAccessRole, React.CSSProperties> = {
   SUPER: { background: "#2563EB", color: "white" },
   EDITOR: { background: "#059669", color: "white" },
   VIEWER: { background: "#6B7280", color: "white" },
+  RESTRICTED: { background: "#f50b0bff", color: "white" },
 };
 
 export default function CollaboratorsModal({

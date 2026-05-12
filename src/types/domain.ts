@@ -28,7 +28,7 @@ export interface NoteVersion {
 
 export type NoteVisibility = "PRIVATE" | "PUBLIC";
 
-export type NoteAccessRole = "OWNER" | "SUPER" | "EDITOR" | "VIEWER";
+export type NoteAccessRole = "OWNER" | "SUPER" | "EDITOR" | "VIEWER" | "RESTRICTED";
 
 export interface LoginResponse {
   userId: string;
