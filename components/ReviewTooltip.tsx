@@ -9,6 +9,7 @@ interface ReviewTooltipProps {
   ) => void;
   onReject: (groupId: string, type: "insert" | "delete" | "format") => void;
   onClose: () => void;
+  readOnly?: boolean;
 }
 
 export function ReviewTooltip({
@@ -16,6 +17,7 @@ export function ReviewTooltip({
   onAccept,
   onReject,
   onClose,
+  readOnly = false,
 }: ReviewTooltipProps) {
   const config = TYPE_CONFIG[tooltip.type];
 
@@ -36,7 +38,14 @@ export function ReviewTooltip({
         width: "320px",
       }}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: "14px",
+        }}
+      >
         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
           <span
             style={{
@@ -48,6 +57,7 @@ export function ReviewTooltip({
               flexShrink: 0,
             }}
           />
+
           <strong style={{ fontSize: "0.9rem", color: "#111" }}>
             {config.label}
           </strong>
@@ -69,8 +79,23 @@ export function ReviewTooltip({
         </button>
       </div>
 
-      <div style={{ background: "#f8f8f8", borderRadius: "6px", padding: "10px 12px", marginBottom: "12px" }}>
-        <div style={{ fontSize: "0.7rem", color: "#999", marginBottom: "2px", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+      <div
+        style={{
+          background: "#f8f8f8",
+          borderRadius: "6px",
+          padding: "10px 12px",
+          marginBottom: readOnly ? 0 : "12px",
+        }}
+      >
+        <div
+          style={{
+            fontSize: "0.7rem",
+            color: "#999",
+            marginBottom: "2px",
+            textTransform: "uppercase",
+            letterSpacing: "0.04em",
+          }}
+        >
           Made by
         </div>
 
@@ -87,45 +112,59 @@ export function ReviewTooltip({
         <div style={{ fontSize: "0.75rem", color: "#888", marginTop: "4px" }}>
           Group ID: {tooltip.groupId || "Unknown group"}
         </div>
+
+        {readOnly && (
+          <div
+            style={{
+              fontSize: "0.75rem",
+              color: "#888",
+              marginTop: "4px",
+            }}
+          >
+            Operation refs: {tooltip.references.length}
+          </div>
+        )}
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-        <button
-          onClick={() =>
-            onAccept(tooltip.groupId, tooltip.type, tooltip.references)
-          }
-          style={{
-            background: config.color,
-            color: "#fff",
-            border: "none",
-            borderRadius: "6px",
-            padding: "9px 0",
-            cursor: "pointer",
-            fontWeight: 600,
-            fontSize: "0.82rem",
-            width: "100%",
-          }}
-        >
-          ✓ Accept change
-        </button>
+      {!readOnly && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+          <button
+            onClick={() =>
+              onAccept(tooltip.groupId, tooltip.type, tooltip.references)
+            }
+            style={{
+              background: config.color,
+              color: "#fff",
+              border: "none",
+              borderRadius: "6px",
+              padding: "9px 0",
+              cursor: "pointer",
+              fontWeight: 600,
+              fontSize: "0.82rem",
+              width: "100%",
+            }}
+          >
+            ✓ Accept change
+          </button>
 
-        <button
-          onClick={() => onReject(tooltip.groupId, tooltip.type)}
-          style={{
-            background: "#fff",
-            color: "#C62828",
-            border: "1.5px solid #C62828",
-            borderRadius: "6px",
-            padding: "9px 0",
-            cursor: "pointer",
-            fontWeight: 600,
-            fontSize: "0.82rem",
-            width: "100%",
-          }}
-        >
-          ✕ Reject change
-        </button>
-      </div>
+          <button
+            onClick={() => onReject(tooltip.groupId, tooltip.type)}
+            style={{
+              background: "#fff",
+              color: "#C62828",
+              border: "1.5px solid #C62828",
+              borderRadius: "6px",
+              padding: "9px 0",
+              cursor: "pointer",
+              fontWeight: 600,
+              fontSize: "0.82rem",
+              width: "100%",
+            }}
+          >
+            ✕ Reject change
+          </button>
+        </div>
+      )}
     </div>
   );
 }
