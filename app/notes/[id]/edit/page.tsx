@@ -2,7 +2,7 @@
 
 import { API_BASE_URL, apiFetch } from "@/src/lib/api";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useState, useRef, Suspense, useCallback, useMemo } from "react";
+import { useEffect, useState, useRef, Suspense, useCallback } from "react";
 import { Stomp, CompatClient } from "@stomp/stompjs";
 import SockJS from "sockjs-client";
 import { DocState } from "@/src/lib/docState";
@@ -958,6 +958,11 @@ function EditContent() {
   }
 
   async function saveReviewChanges() {
+    if (!hasPendingSuggestions) {
+      setErrorMessageMessage("There are currently no changes made to this document. Please make changes before creating a new version.");
+      return;
+    }
+
     try {
       const delta =
         rejectedChanges.current.length > 0
@@ -1398,12 +1403,12 @@ function EditContent() {
                 activeFormatId={activeFormatId}
                 onActivateFormat={(groupId) =>
                   activateFormatSuggestion(
-  getReviewCtx(),
-  groupId,
-  setActiveFormatIdSync,
-  setActiveSuggestionSync,
-  closeReviewTooltip
-)
+                    getReviewCtx(),
+                    groupId,
+                    setActiveFormatIdSync,
+                    setActiveSuggestionSync,
+                    closeReviewTooltip
+                  )
                 }
                 onClose={
                   hasPendingSuggestions
@@ -1448,10 +1453,10 @@ function EditContent() {
           }
           onClose={() =>
             closeReviewTooltip(
-  getReviewCtx(),
-  setActiveFormatIdSync,
-  setActiveSuggestionSync
-)
+              getReviewCtx(),
+              setActiveFormatIdSync,
+              setActiveSuggestionSync
+            )
           }
         />
       )}

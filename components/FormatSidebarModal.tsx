@@ -87,7 +87,6 @@ export default function FormatSidebarModal({
       overflowY: "auto",
       boxShadow: "0 2px 8px rgba(0,0,0,0.07)",
     }}>
-      {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <h3 style={{ margin: 0, fontSize: "0.95rem", fontWeight: "600", color: "var(--text-main)" }}>
           Review Changes
@@ -102,14 +101,12 @@ export default function FormatSidebarModal({
         </button>
       </div>
 
-      {/* Inline suggestion count */}
       {hasPendingSuggestions && (
         <p style={{ margin: 0, fontSize: "0.8rem", color: "var(--text-muted)", lineHeight: 1.4 }}>
           Click any highlighted text in the editor to accept or reject insert and delete suggestions.
         </p>
       )}
 
-      {/* Format suggestions */}
       {formatSuggestions.length > 0 && (
         <div>
           <p style={{ margin: "0 0 0.5rem 0", fontSize: "0.8rem", fontWeight: "600", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
@@ -129,7 +126,6 @@ export default function FormatSidebarModal({
                     transition: "all 0.15s ease",
                   }}
                 >
-                  {/* Label row */}
                   <button
                     onClick={() => onActivateFormat(item.groupId)}
                     style={{
@@ -177,42 +173,96 @@ export default function FormatSidebarModal({
         </div>
       )}
 
-      {/* No suggestions at all */}
       {!hasPendingSuggestions && formatSuggestions.length === 0 && (
         <p style={{ margin: 0, fontSize: "0.85rem", color: "var(--text-muted)", textAlign: "center" }}>
           All changes reviewed.
         </p>
       )}
 
-      {/* Save version */}
       <div style={{ marginTop: "auto", paddingTop: "0.5rem", borderTop: "1px solid var(--border)" }}>
-        <SaveVersionForm onSave={onSave} />
+        <SaveVersionForm onSave={onSave} disabled={!hasPendingSuggestions} />
       </div>
     </div>
   );
 }
 
-function SaveVersionForm({ onSave }: { onSave: (comment: string) => void }) {
+function SaveVersionForm({
+  onSave,
+  disabled,
+}: {
+  onSave: (comment: string) => void;
+  disabled: boolean;
+}) {
   return (
     <form
-      onSubmit={e => {
+      onSubmit={(e) => {
         e.preventDefault();
-        const input = (e.currentTarget.elements.namedItem("comment") as HTMLInputElement);
+
+        if (disabled) return;
+
+        const input = e.currentTarget.elements.namedItem(
+          "comment",
+        ) as HTMLInputElement;
+
         onSave(input.value.trim() || "Reviewed version");
         input.value = "";
       }}
       style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}
     >
-      <label style={{ fontSize: "0.8rem", fontWeight: "500", color: "var(--text-muted)" }}>
+      <label
+        style={{
+          fontSize: "0.8rem",
+          fontWeight: "500",
+          color: "var(--text-muted)",
+        }}
+      >
         Save as version
       </label>
+
       <input
         name="comment"
         className="input-field"
-        placeholder="Version comment…"
-        style={{ fontSize: "0.8rem", padding: "6px 10px" }}
+        placeholder={
+          disabled
+            ? "Accept or reject a change first…"
+            : "Version comment…"
+        }
+        disabled={disabled}
+        style={{
+          fontSize: "0.8rem",
+          padding: "6px 10px",
+          opacity: disabled ? 0.55 : 1,
+          cursor: disabled ? "not-allowed" : "text",
+        }}
       />
-      <button type="submit" className="btn-primary" style={{ fontSize: "0.8rem" }}>
+      
+      {disabled && (
+        <p
+          style={{
+            margin: 0,
+            fontSize: "0.72rem",
+            color: "#92400e",
+            lineHeight: 1.35,
+            background: "#FEF3C7",
+            border: "1px solid #FCD34D",
+            borderRadius: "6px",
+            padding: "6px 8px",
+          }}
+        >
+          No changes have been made to this document yet. Make changes before you can create a new version.
+        </p>
+      )}
+
+      <button
+        type="submit"
+        className="btn-primary"
+        disabled={disabled}
+        style={{
+          fontSize: "0.8rem",
+          opacity: disabled ? 0.45 : 1,
+          cursor: disabled ? "not-allowed" : "pointer",
+        }}
+      >
         Save version
       </button>
     </form>
