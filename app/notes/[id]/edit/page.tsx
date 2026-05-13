@@ -93,6 +93,7 @@ function EditContent() {
   const acceptedReferences = useRef<SuggestionSlice[][]>([]);
   const reviewSegmentsRef = useRef<ReviewSegment[]>([]);
   const runtimeSegCtrRef = useRef(0);
+  const isReviewingRef = useRef(false);
 
   const formatSuggestionsRef = useRef<FormatSuggestionItem[]>([]);
   const activeFormatIdRef = useRef<string | null>(null);
@@ -109,6 +110,7 @@ function EditContent() {
   useEffect(() => { collaboratorsRef.current = collaborators; }, [collaborators]);
   useEffect(() => { noteRef.current = note; }, [note]);
   useEffect(() => { userRef.current = user; }, [user]);
+  useEffect(() => { isReviewingRef.current = isReviewing; }, [isReviewing]);
 
   const getReviewCtx = () => ({
     quill: quillRef.current,
@@ -727,7 +729,8 @@ function EditContent() {
   }
 
   async function sendCursorChange(position: number) {
-    if (isReviewing) return;
+    if (isReviewingRef.current) return;
+
     await apiFetch(`notes/${noteId}/cursor`, {
       method: "POST",
       body: JSON.stringify({ position }),
@@ -735,7 +738,7 @@ function EditContent() {
   }
 
   function handleCursorChange(payload: CursorPayload) {
-    if (isReviewing || payload.actorEmail === userRef.current?.email) return;
+    if (isReviewingRef.current || payload.actorEmail === userRef.current?.email) return;
     const cursor = quillRef.current!.getModule("cursors") as CursorModule;
     cursor.createCursor(
       payload.actorEmail,
@@ -775,7 +778,7 @@ function EditContent() {
   }
 
   async function sendOperationToServer(operation: TextOperation) {
-    if (isReviewing) return;
+    if (isReviewingRef.current) return;
 
     pendingSendQueueRef.current.push(operation);
     if (isSendingRef.current) return;
