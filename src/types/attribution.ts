@@ -1,15 +1,11 @@
 import Delta from "quill-delta";
 
-export interface OpReference {
-  opId: string;
-  componentIndex: number;
-}
-
-export interface SuggestionSlice {
+export interface Reference {
   reviewStart: number;
   componentStart: number;
   length: number;
-  ref: OpReference;
+  opId: string;
+  componentIndex: number;
 }
 
 export interface InsertSuggestion {
@@ -24,19 +20,13 @@ export interface DeleteSuggestion {
   createdAt: string;
 }
 
-export interface FormatSuggestionSpan {
-  start: number;
-  length: number;
-}
-
 export interface FormatSuggestionItem {
   groupId: string;
   actorEmail: string;
   createdAt: string;
   attributeKey: string;
   attributeValue: any;
-  references: SuggestionSlice[];
-  spans: FormatSuggestionSpan[];
+  references: Reference[];
   previewText: string;
   dependsOnInsertGroupIds: string[];
   dependsOnDeleteGroupIds: string[];
@@ -53,7 +43,7 @@ export interface ReviewSegment {
   text: string;
   baseAttributes: Record<string, any>;
   suggestionAttributes: Record<string, any>;
-  references: SuggestionSlice[];
+  references: Reference[];
   insertSuggestion?: InsertSuggestion;
   deleteSuggestion?: DeleteSuggestion;
 }
@@ -63,7 +53,7 @@ export interface TooltipState {
   type: "insert" | "delete" | "format";
   actorEmail: string;
   createdAt: string;
-  references: SuggestionSlice[];
+  references: Reference[];
 }
 
 export type ReviewAction = "ACCEPT" | "REJECT";

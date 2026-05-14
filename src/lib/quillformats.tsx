@@ -1,5 +1,5 @@
 import type Quill from "quill";
-import type { SuggestionSlice } from "@/src/types";
+import type { Reference } from "@/src/types";
 
 let formatsRegistered = false;
 
@@ -7,7 +7,7 @@ type SuggestionPayload = {
   groupId: string;
   actorEmail: string;
   createdAt: string;
-  references?: SuggestionSlice[];
+  references?: Reference[];
   baseAttributes?: Record<string, any>;
   suggestionAttributes?: Record<string, any>;
 };
@@ -17,7 +17,7 @@ type FormatPayload = {
   actorEmail: string;
   createdAt: string;
   attributes?: Record<string, any>;
-  references?: SuggestionSlice[];
+  references?: Reference[];
 };
 
 const getJsonObject = <T,>(
@@ -34,39 +34,35 @@ const getJsonObject = <T,>(
   }
 };
 
-function cloneSlice(slice: SuggestionSlice): SuggestionSlice {
+function cloneReference(ref: Reference): Reference {
   return {
-    reviewStart: slice.reviewStart,
-    componentStart: slice.componentStart,
-    length: slice.length,
-    ref: {
-      opId: slice.ref.opId,
-      componentIndex: slice.ref.componentIndex,
-    },
+    reviewStart: ref.reviewStart,
+    componentStart: ref.componentStart,
+    length: ref.length,
+    opId: ref.opId,
+    componentIndex: ref.componentIndex,
   };
 }
 
-function dedupeSuggestionSlices(
-  references: SuggestionSlice[] = [],
-): SuggestionSlice[] {
+function dedupeSuggestionReferences(
+  references: Reference[] = [],
+): Reference[] {
   const seen = new Set<string>();
-  const out: SuggestionSlice[] = [];
+  const out: Reference[] = [];
 
-  for (const slice of references) {
-    if (!slice?.ref) continue;
-
+  for (const ref of references) {
     const key = [
-      slice.ref.opId,
-      slice.ref.componentIndex,
-      slice.reviewStart,
-      slice.componentStart,
-      slice.length,
+      ref.opId,
+      ref.componentIndex,
+      ref.reviewStart,
+      ref.componentStart,
+      ref.length,
     ].join(":");
 
     if (seen.has(key)) continue;
 
     seen.add(key);
-    out.push(cloneSlice(slice));
+    out.push(cloneReference(ref));
   }
 
   return out;
@@ -84,7 +80,7 @@ function setCommonSuggestionAttrs(
 
   node.setAttribute(
     "data-references",
-    JSON.stringify(dedupeSuggestionSlices(data.references ?? [])),
+    JSON.stringify(dedupeSuggestionReferences(data.references ?? [])),
   );
 
   node.setAttribute(
@@ -103,7 +99,7 @@ function readCommonSuggestionAttrs(node: HTMLElement) {
     groupId: node.getAttribute("data-group-id") ?? "",
     actorEmail: node.getAttribute("data-actor-email") ?? "",
     createdAt: node.getAttribute("data-created-at") ?? "",
-    references: getJsonObject<SuggestionSlice[]>(
+    references: getJsonObject<Reference[]>(
       node,
       "data-references",
       [],
@@ -195,7 +191,7 @@ export function registerFormats(QuillModule: typeof Quill) {
 
       node.setAttribute(
         "data-references",
-        JSON.stringify(dedupeSuggestionSlices(data.references ?? [])),
+        JSON.stringify(dedupeSuggestionReferences(data.references ?? [])),
       );
 
       node.setAttribute(
@@ -213,7 +209,7 @@ export function registerFormats(QuillModule: typeof Quill) {
         groupId: node.getAttribute("data-group-id") ?? "",
         actorEmail: node.getAttribute("data-actor-email") ?? "",
         createdAt: node.getAttribute("data-created-at") ?? "",
-        references: getJsonObject<SuggestionSlice[]>(
+        references: getJsonObject<Reference[]>(
           node,
           "data-references",
           [],
@@ -227,8 +223,27 @@ export function registerFormats(QuillModule: typeof Quill) {
     }
   }
 
+  class AuditFormatActive extends Inline {
+    static blotName = "audit-format-active";
+    static tagName = "span";
+    static className = "audit-format-active";
+
+    static create(value: boolean) {
+      const node = super.create();
+      if (value) {
+        node.classList.add("audit-format-active");
+      }
+      return node;
+    }
+
+    static formats(node: HTMLElement) {
+      return node.classList.contains("audit-format-active");
+    }
+  }
+
   QuillModule.register(SuggestionInsert, true);
   QuillModule.register(SuggestionDelete, true);
   QuillModule.register(SuggestionDeleteNewline, true);
   QuillModule.register(SuggestionFormat, true);
+  QuillModule.register(AuditFormatActive, true);
 }

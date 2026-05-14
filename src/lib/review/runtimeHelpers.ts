@@ -8,6 +8,7 @@ import {
   buildFormatOverlayClearDelta,
   buildFormatOverlayDelta,
   getRuntimeTextInRange,
+  rangesFromReferences,
   segmentsToDelta,
 } from "../attribution";
 
@@ -39,19 +40,26 @@ export function refreshPreviewTextsAgainstRuntime(
   items: FormatSuggestionItem[],
 ): FormatSuggestionItem[] {
   return items.map((item) => {
-    const text = item.spans
-      .map((span) =>
-        getRuntimeTextInRange(
-          ctx.reviewSegmentsRef.current,
-          span.start,
-          span.length,
-        ),
-      )
-      .join("")
-      .replace(/\n/g, " ↵ ")
-      .slice(0, 60);
+    const ranges = rangesFromReferences(item.references ?? []);
 
-    return { ...item, previewText: text };
+    let text = "";
+    let previousEnd: number | null = null;
+
+    for (const range of ranges) {
+      if (previousEnd !== null && range.start > previousEnd) {
+        text += " ... ";
+      }
+
+      text += getRuntimeTextInRange(
+        ctx.reviewSegmentsRef.current,
+        range.start,
+        range.length,
+      ).replace(/\n/g, " ↵ ");
+
+      previousEnd = range.start + range.length;
+    }
+
+    return { ...item, previewText: text.slice(0, 60) };
   });
 }
 
@@ -65,10 +73,8 @@ export function cloneTooltipState(
           reviewStart: r.reviewStart,
           componentStart: r.componentStart,
           length: r.length,
-          ref: {
-            opId: r.ref.opId,
-            componentIndex: r.ref.componentIndex,
-          },
+          opId: r.opId,
+          componentIndex: r.componentIndex,
         })),
       }
     : null;

@@ -1,11 +1,11 @@
-import { SuggestionSlice, TooltipState, TYPE_CONFIG } from "@/src/types";
+import { Reference, TooltipState, TYPE_CONFIG } from "@/src/types";
 
 interface ReviewTooltipProps {
   tooltip: TooltipState;
   onAccept: (
     groupId: string,
     type: "insert" | "delete" | "format",
-    references: SuggestionSlice[],
+    references: Reference[],
   ) => void;
   onReject: (groupId: string, type: "insert" | "delete" | "format") => void;
   onClose: () => void;

@@ -2,10 +2,9 @@ import Delta from "quill-delta";
 import {
   DeleteSuggestion,
   FormatSuggestionItem,
-  FormatSuggestionSpan,
   InsertSuggestion,
   ReviewSegment,
-  SuggestionSlice,
+  Reference,
   TooltipState,
 } from "../types";
 
@@ -20,8 +19,7 @@ export function cloneFormatSuggestions(
     createdAt: item.createdAt,
     attributeKey: item.attributeKey,
     attributeValue: cloneJsonValue(item.attributeValue),
-    references: cloneSuggestionSlices(item.references ?? []),
-    spans: item.spans.map((s) => ({ ...s })),
+    references: cloneSuggestionReferences(item.references ?? []),
     previewText: item.previewText,
     dependsOnInsertGroupIds: [...(item.dependsOnInsertGroupIds ?? [])],
     dependsOnDeleteGroupIds: [...(item.dependsOnDeleteGroupIds ?? [])],
@@ -59,24 +57,24 @@ export function buildFormatOverlayDelta(item: FormatSuggestionItem): Delta {
     [item.attributeKey]: item.attributeValue,
   };
 
-  const spans = [...item.spans].sort((a, b) => a.start - b.start);
+  const ranges = rangesFromReferences(item.references ?? []);
 
-  for (const span of spans) {
-    if (span.start > pos) {
-      delta.retain(span.start - pos);
+  for (const range of ranges) {
+    if (range.start > pos) {
+      delta.retain(range.start - pos);
     }
 
-    delta.retain(span.length, {
+    delta.retain(range.length, {
       "suggestion-format": {
         groupId: item.groupId,
         actorEmail: item.actorEmail,
         createdAt: item.createdAt,
         attributes,
-        references: cloneSuggestionSlices(item.references ?? []),
+        references: cloneSuggestionReferences(item.references ?? []),
       },
     });
 
-    pos = span.start + span.length;
+    pos = range.start + range.length;
   }
 
   return delta;
@@ -86,18 +84,18 @@ export function buildFormatOverlayClearDelta(item: FormatSuggestionItem): Delta 
   const delta = new Delta();
   let pos = 0;
 
-  const spans = [...item.spans].sort((a, b) => a.start - b.start);
+  const ranges = rangesFromReferences(item.references ?? []);
 
-  for (const span of spans) {
-    if (span.start > pos) {
-      delta.retain(span.start - pos);
+  for (const range of ranges) {
+    if (range.start > pos) {
+      delta.retain(range.start - pos);
     }
 
-    delta.retain(span.length, {
+    delta.retain(range.length, {
       "suggestion-format": null,
     });
 
-    pos = span.start + span.length;
+    pos = range.start + range.length;
   }
 
   return delta;
@@ -134,7 +132,7 @@ export function deltaToSegments(
         deleteMeta?.suggestionAttributes ??
         {};
 
-      const references: SuggestionSlice[] = cloneSuggestionSlices(
+      const references: Reference[] = cloneSuggestionReferences(
         insertMeta?.references ??
           deleteMeta?.references ??
           [],
@@ -186,7 +184,7 @@ export function mergeAdjacentSegments(
     if (canMerge) {
       last.text += seg.text;
 
-      last.references = dedupeSuggestionSlices([
+      last.references = dedupeSuggestionReferences([
         ...(last.references ?? []),
         ...(seg.references ?? []),
       ]);
@@ -199,7 +197,7 @@ export function mergeAdjacentSegments(
       text: seg.text,
       baseAttributes: { ...(seg.baseAttributes ?? {}) },
       suggestionAttributes: { ...(seg.suggestionAttributes ?? {}) },
-      references: cloneSuggestionSlices(seg.references ?? []),
+      references: cloneSuggestionReferences(seg.references ?? []),
       insertSuggestion: seg.insertSuggestion
         ? cloneInsertSuggestion(seg.insertSuggestion)
         : undefined,
@@ -221,7 +219,7 @@ export function segmentsToDelta(segments: ReviewSegment[]): Delta {
       ...(seg.suggestionAttributes ?? {}),
     };
 
-    const references = cloneSuggestionSlices(seg.references ?? []);
+    const references = cloneSuggestionReferences(seg.references ?? []);
 
     if (seg.insertSuggestion) {
       attrs["suggestion-insert"] = {
@@ -260,7 +258,7 @@ export function cloneSegments(items: ReviewSegment[]): ReviewSegment[] {
     text: s.text,
     baseAttributes: { ...(s.baseAttributes ?? {}) },
     suggestionAttributes: { ...(s.suggestionAttributes ?? {}) },
-    references: cloneSuggestionSlices(s.references ?? []),
+    references: cloneSuggestionReferences(s.references ?? []),
     insertSuggestion: s.insertSuggestion
       ? cloneInsertSuggestion(s.insertSuggestion)
       : undefined,
@@ -362,7 +360,7 @@ export function removeInsertSuggestionFromSegments(
         text: seg.text,
         baseAttributes: seg.baseAttributes,
         suggestionAttributes: seg.suggestionAttributes,
-        references: cloneSuggestionSlices(seg.references ?? []),
+        references: cloneSuggestionReferences(seg.references ?? []),
       };
     }),
   );
@@ -563,8 +561,10 @@ export function restoreFormatSuggestionToBase(
     const segEnd = cursor + seg.text.length;
     cursor = segEnd;
 
-    const overlaps = item.spans.some(
-      (span) => span.start < segEnd && span.start + span.length > segStart,
+    const ranges = rangesFromReferences(item.references ?? []);
+
+    const overlaps = ranges.some(
+      (range) => range.start < segEnd && range.start + range.length > segStart,
     );
 
     if (!overlaps) return seg;
@@ -576,7 +576,7 @@ export function restoreFormatSuggestionToBase(
       ...seg,
       baseAttributes: { ...(seg.baseAttributes ?? {}) },
       suggestionAttributes: newSuggestion,
-      references: cloneSuggestionSlices(seg.references ?? []),
+      references: cloneSuggestionReferences(seg.references ?? []),
     };
   });
 
@@ -589,76 +589,84 @@ export function resolveFormatSuggestionsAfterMutation(
   mutationGroupId: string,
   mutationType: "insert" | "delete",
   action: "ACCEPT" | "REJECT",
-) {
+): FormatSuggestionItem[] {
   const rangeStart = mutation.index;
   const rangeEnd = rangeStart + mutation.length;
+
+  const shouldShrink =
+    (mutationType === "insert" && action === "REJECT") ||
+    (mutationType === "delete" && action === "ACCEPT");
 
   const next: FormatSuggestionItem[] = [];
 
   for (const item of items) {
-    const updatedSpans: FormatSuggestionSpan[] = [];
+    const updatedReferences = shouldShrink
+      ? removeRangeFromReferences(item.references ?? [], rangeStart, mutation.length)
+      : cloneSuggestionReferences(item.references ?? []);
 
-    const shouldShrink =
-      (mutationType === "insert" && action === "REJECT") ||
-      (mutationType === "delete" && action === "ACCEPT");
+    if (updatedReferences.length === 0) continue;
 
-    for (const span of item.spans) {
-      const spanStart = span.start;
-      const spanEnd = span.start + span.length;
-
-      const overlapStart = Math.max(spanStart, rangeStart);
-      const overlapEnd = Math.min(spanEnd, rangeEnd);
-
-      const hasOverlap = overlapStart < overlapEnd;
-
-      if (!hasOverlap) {
-        updatedSpans.push(span);
-        continue;
-      }
-
-      if (shouldShrink) {
-        if (spanStart < overlapStart) {
-          updatedSpans.push({
-            start: spanStart,
-            length: overlapStart - spanStart,
-          });
-        }
-
-        if (overlapEnd < spanEnd) {
-          updatedSpans.push({
-            start: overlapEnd,
-            length: spanEnd - overlapEnd,
-          });
-        }
-
-        continue;
-      }
-
-      updatedSpans.push(span);
-    }
-
-    if (updatedSpans.length === 0) continue;
-
-    const filterInsert =
+    const dependsOnInsertGroupIds =
       mutationType === "insert"
         ? item.dependsOnInsertGroupIds.filter((id) => id !== mutationGroupId)
-        : item.dependsOnInsertGroupIds;
+        : [...item.dependsOnInsertGroupIds];
 
-    const filterDelete =
+    const dependsOnDeleteGroupIds =
       mutationType === "delete"
         ? item.dependsOnDeleteGroupIds.filter((id) => id !== mutationGroupId)
-        : item.dependsOnDeleteGroupIds;
+        : [...item.dependsOnDeleteGroupIds];
 
     next.push({
       ...item,
-      references: cloneSuggestionSlices(item.references ?? []),
-      spans: updatedSpans,
-      dependsOnInsertGroupIds: filterInsert,
-      dependsOnDeleteGroupIds: filterDelete,
+      references: updatedReferences,
+      dependsOnInsertGroupIds,
+      dependsOnDeleteGroupIds,
     });
   }
 
   return next;
+}
+
+function removeRangeFromReferences(
+  refs: Reference[] = [],
+  removeStart: number,
+  removeLength: number,
+): Reference[] {
+  if (removeLength <= 0) return cloneSuggestionReferences(refs);
+
+  const removeEnd = removeStart + removeLength;
+  const out: Reference[] = [];
+
+  for (const ref of refs) {
+    const refStart = ref.reviewStart;
+    const refEnd = ref.reviewStart + ref.length;
+
+    if (refEnd <= removeStart || refStart >= removeEnd) {
+      out.push({ ...ref });
+      continue;
+    }
+
+    const leftLen = Math.max(0, removeStart - refStart);
+    const rightLen = Math.max(0, refEnd - removeEnd);
+
+    if (leftLen > 0) {
+      out.push({
+        ...ref,
+        length: leftLen,
+      });
+    }
+
+    if (rightLen > 0) {
+      out.push({
+        ...ref,
+        reviewStart: removeEnd,
+        componentStart: ref.componentStart + Math.max(0, removeEnd - refStart),
+        length: rightLen,
+      });
+    }
+  }
+
+  return dedupeSuggestionReferences(out);
 }
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
@@ -690,39 +698,34 @@ function cloneDeleteSuggestion(
   };
 }
 
-function cloneSuggestionSlices(
-  refs: SuggestionSlice[] = [],
-): SuggestionSlice[] {
+function cloneSuggestionReferences(
+  refs: Reference[] = [],
+): Reference[] {
   return refs.map((r) => ({
     reviewStart: r.reviewStart,
     componentStart: r.componentStart,
     length: r.length,
-    ref: {
-      opId: r.ref.opId,
-      componentIndex: r.ref.componentIndex,
-    },
+    opId: r.opId,
+    componentIndex: r.componentIndex,
   }));
 }
 
-function splitSuggestionSlices(
-  refs: SuggestionSlice[] = [],
+function splitSuggestionReferences(
+  refs: Reference[] = [],
   splitOffset: number,
 ): {
-  left: SuggestionSlice[];
-  right: SuggestionSlice[];
+  left: Reference[];
+  right: Reference[];
 } {
-  const left: SuggestionSlice[] = [];
-  const right: SuggestionSlice[] = [];
+  const left: Reference[] = [];
+  const right: Reference[] = [];
 
   for (const ref of refs) {
     const refStart = ref.componentStart;
     const refEnd = ref.componentStart + ref.length;
 
     if (refEnd <= splitOffset) {
-      left.push({
-        ...ref,
-        ref: { ...ref.ref },
-      });
+      left.push({ ...ref });
       continue;
     }
 
@@ -730,7 +733,6 @@ function splitSuggestionSlices(
       right.push({
         ...ref,
         componentStart: ref.componentStart - splitOffset,
-        ref: { ...ref.ref },
       });
       continue;
     }
@@ -742,7 +744,6 @@ function splitSuggestionSlices(
       left.push({
         ...ref,
         length: leftLen,
-        ref: { ...ref.ref },
       });
     }
 
@@ -751,7 +752,6 @@ function splitSuggestionSlices(
         ...ref,
         componentStart: 0,
         length: rightLen,
-        ref: { ...ref.ref },
       });
     }
   }
@@ -771,7 +771,7 @@ function splitSegmentAt(
     return segmentIndex;
   }
 
-  const split = splitSuggestionSlices(seg.references ?? [], offset);
+  const split = splitSuggestionReferences(seg.references ?? [], offset);
 
   const left: ReviewSegment = {
     id: seg.id,
@@ -806,15 +806,15 @@ function splitSegmentAt(
   return segmentIndex + 1;
 }
 
-function dedupeSuggestionSlices(
-  refs: SuggestionSlice[],
-): SuggestionSlice[] {
+function dedupeSuggestionReferences(
+  refs: Reference[],
+): Reference[] {
   const seen = new Set<string>();
 
   return refs.filter((r) => {
     const key = [
-      r.ref.opId,
-      r.ref.componentIndex,
+      r.opId,
+      r.componentIndex,
       r.reviewStart,
       r.componentStart,
       r.length,
@@ -854,4 +854,41 @@ function cloneJsonValue<T>(value: T): T {
   }
 
   return JSON.parse(JSON.stringify(value));
+}
+export type ReviewRange = {
+  start: number;
+  length: number;
+};
+
+export function rangesFromReferences(references: Reference[] = []): ReviewRange[] {
+  const raw = references
+    .filter((ref) => ref.length > 0)
+    .map((ref) => ({
+      start: ref.reviewStart,
+      length: ref.length,
+    }))
+    .sort((a, b) => a.start - b.start);
+
+  const merged: ReviewRange[] = [];
+
+  for (const range of raw) {
+    const last = merged[merged.length - 1];
+    const start = range.start;
+    const end = range.start + range.length;
+
+    if (!last) {
+      merged.push({ start, length: range.length });
+      continue;
+    }
+
+    const lastEnd = last.start + last.length;
+
+    if (start <= lastEnd) {
+      last.length = Math.max(lastEnd, end) - last.start;
+    } else {
+      merged.push({ start, length: range.length });
+    }
+  }
+
+  return merged;
 }

@@ -63,10 +63,8 @@ export function activateFormatSuggestion(
       reviewStart: r.reviewStart,
       componentStart: r.componentStart,
       length: r.length,
-      ref: {
-        opId: r.ref.opId,
-        componentIndex: r.ref.componentIndex,
-      },
+      opId: r.opId,
+      componentIndex: r.componentIndex,
     })),
   });
 }

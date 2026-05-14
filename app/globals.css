@@ -200,11 +200,13 @@ body {
   background-color: transparent !important;
 }
 
-.suggestion-format.active {
+.suggestion-format.active,
+.audit-format-active {
   background-color: #facc15 !important;
-  border-radius: 2px;
+  border-radius: 0 !important;
   padding: 0 1px;
   cursor: pointer;
+  box-shadow: none !important;
 }
 
 /* .ql-toolbar {
@@ -351,4 +353,21 @@ body {
   color: red;
   background: none;
   border: none;
+}
+
+/* Temporarily hide insert/delete styling while audit format is active */
+.audit-inline-suspended {
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  color: inherit !important;
+}
+
+/* Keep format highlight visible even when it is on suspended insert/delete text */
+.audit-inline-suspended.audit-format-active,
+.audit-inline-suspended .audit-format-active {
+  background-color: #facc15 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  color: inherit !important;
 }

@@ -25,7 +25,7 @@ import {
   ReviewProjection,
   ReviewSegment,
   TooltipState,
-  SuggestionSlice,
+  Reference,
 } from "../../../../src/types";
 import { ReviewTooltip } from "@/components/ReviewTooltip";
 import ExitReviewModal from "@/components/ExitReviewModal";
@@ -90,7 +90,7 @@ function EditContent() {
   const isOwner = useRef<boolean>(false);
   const reviewHistory = useRef<ReviewEntry[]>([]);
   const rejectedChanges = useRef<Delta[]>([]);
-  const acceptedReferences = useRef<SuggestionSlice[][]>([]);
+  const acceptedReferences = useRef<Reference[][]>([]);
   const reviewSegmentsRef = useRef<ReviewSegment[]>([]);
   const runtimeSegCtrRef = useRef(0);
   const isReviewingRef = useRef(false);
@@ -273,22 +273,13 @@ function EditContent() {
 
         const joinData = await apiFetch<JoinResponse>(
           `notes/${noteId}/join`,
-          {
-            method: "GET",
-          }
+          { method: "GET" },
         );
 
-        if (joinData.isReviewing === true) {
-          setIsReviewing(true);
-          return;
-        }
+        docStateRef.current!.lastSyncedRevision = joinData.revision;
 
-        docStateRef.current!.lastSyncedRevision =
-          joinData.revision;
-
-        docStateRef.current!.setDocument(
-          new Delta(joinData.delta.ops || [])
-        );
+        const cleanDelta = new Delta(joinData.delta.ops || []);
+        docStateRef.current!.setDocument(cleanDelta);
 
         setCollaborators(joinData.collaborators);
 
@@ -296,12 +287,12 @@ function EditContent() {
 
         if (!isAllowed) {
           router.push("/notes");
+          return;
         }
 
-        if (noteData.accessRole === "OWNER") {
-          isOwner.current = true;
-        }
+        isOwner.current = noteData.accessRole === "OWNER";
 
+        setIsReviewing(joinData.isReviewing === true);
         setIsloading(false);
       } catch (err: any) {
         setErrorMessageMessage(
@@ -485,7 +476,7 @@ function EditContent() {
   function acceptChange(
     groupId: string,
     type: "insert" | "delete" | "format",
-    references: SuggestionSlice[],
+    references: Reference[],
   ) {
     const ctx = getReviewCtx();
 
@@ -829,11 +820,32 @@ function EditContent() {
     }
   }
 
+  function clearCollaboratorCursors() {
+    const quill = quillRef.current;
+    if (!quill) return;
+
+    const cursor = quill.getModule("cursors") as CursorModule | undefined;
+    if (!cursor) return;
+
+    Object.keys(collaboratorsRef.current).forEach((email) => {
+      if (email !== userRef.current?.email) {
+        cursor.removeCursor(email);
+      }
+    });
+
+    quill.root
+      .querySelectorAll(".ql-cursors, .ql-cursor")
+      .forEach((el) => el.remove());
+  }
+
   async function handleReviewNote() {
     await saveNote();
 
     const quill = quillRef.current;
     if (!quill) return;
+
+    clearCollaboratorCursors();
+    await sendCursorChange(-1);
 
     setIsReviewing(true);
     setReviewLoaded(false);
@@ -854,8 +866,10 @@ function EditContent() {
       quill.updateContents(new Delta(projection.visualDelta.ops), "api");
     }
 
+    const renderedDelta = quill.getContents();
+
     const hasPending =
-      new Delta(projection.visualDelta.ops).chop.length > 0 ||
+      hasSuggestionAttributes(renderedDelta) ||
       projection.formatSuggestions.length > 0;
 
     setFormatSuggestions(projection.formatSuggestions);
@@ -871,26 +885,106 @@ function EditContent() {
     quill.root.addEventListener("click", handleClick);
   }
 
-  function handleReviewInProgress(payload: ReviewInProgressResponse) {
-    setIsReviewing(payload.state);
+  function hasSuggestionAttributes(delta: Delta): boolean {
+    return (delta.ops ?? []).some((op: any) => {
+      const attrs = op.attributes ?? {};
 
-    if (payload.state === false) {
-      const quill = quillRef.current;
+      return Boolean(
+        attrs["suggestion-insert"] ||
+          attrs["suggestion-delete"] ||
+          attrs["suggestion-delete-newline"] ||
+          attrs["suggestion-format"],
+      );
+    });
+  }
 
-      if (quill) {
-        quill.enable(true);
-        quill.root.removeEventListener("click", handleClick);
+  function destroyQuillInstance() {
+    if (!quillRef.current) return;
+
+    quillRef.current.root.removeEventListener("click", handleClick);
+
+    const toolbar = editorRef.current?.previousSibling as HTMLElement | null;
+    const container = editorRef.current?.parentElement;
+
+    quillRef.current = null;
+
+    if (toolbar?.classList.contains("ql-toolbar")) {
+      toolbar.remove();
+    }
+
+    if (container) {
+      const editor = container.querySelector(".ql-container");
+      editor?.remove();
+    }
+  }
+
+  async function restoreEditorAfterReviewEnd() {
+    try {
+      const joinData = await apiFetch<JoinResponse>(
+        `notes/${noteId}/join`,
+        { method: "GET" },
+      );
+
+      const cleanDelta = new Delta(joinData.delta.ops || []);
+
+      docStateRef.current!.lastSyncedRevision = joinData.revision;
+      docStateRef.current!.setDocument(cleanDelta);
+
+      setCollaborators(joinData.collaborators);
+
+      reviewSegmentsRef.current = [];
+      runtimeSegCtrRef.current = 0;
+      formatSuggestionsRef.current = [];
+      activeFormatIdRef.current = null;
+      activeSuggestionRef.current = null;
+      reviewHistory.current = [];
+      rejectedChanges.current = [];
+      acceptedReferences.current = [];
+
+      setFormatSuggestions([]);
+      setActiveFormatId(null);
+      setActiveSuggestion(null);
+      setHasPendingSuggestions(false);
+      setShowReviewSidebarModal(false);
+      setShowExitReviewModal(false);
+      setReviewLoaded(false);
+
+      if (quillRef.current) {
+        quillRef.current.root.removeEventListener("click", handleClick);
+        quillRef.current.setContents(cleanDelta, "api");
+        quillRef.current.enable(true);
       }
 
-      setShowReviewSidebarModal(false);
-      setActiveSuggestion(null);
-      setActiveFormatId(null);
+      setTimeout(() => {
+        if (quillRef.current) {
+          quillRef.current.setContents(cleanDelta, "api");
+          quillRef.current.enable(true);
+        }
+      }, 0);
+    } catch (err: any) {
+      setErrorMessageMessage(err.message || "Failed to restore note after review");
+    }
+  }
+
+  function handleReviewInProgress(payload: ReviewInProgressResponse) {
+    if (payload.noteId !== noteId) return;
+
+    if (payload.state === true) {
+      setIsReviewing(true);
+
+      if (noteRef.current?.accessRole !== "OWNER") {
+        destroyQuillInstance();
+      }
+
+      if (noteRef.current?.accessRole === "OWNER") {
+        setShowReviewSidebarModal(true);
+      }
+
       return;
     }
 
-    if (noteRef.current?.ownerEmail === userRef.current?.email) {
-      setShowReviewSidebarModal(true);
-    }
+    setIsReviewing(false);
+    restoreEditorAfterReviewEnd();
   }
 
   async function handleExitReview() {
@@ -1287,7 +1381,7 @@ function EditContent() {
         </div>
       )}
 
-      {isReviewing && !isOwner.current ? (
+      {isReviewing && note.accessRole !== "OWNER" ? (
         <div
           style={{
             minHeight: "500px",
