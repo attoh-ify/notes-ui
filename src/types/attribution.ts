@@ -14,10 +14,13 @@ export interface InsertSuggestion {
   createdAt: string;
 }
 
+export type DeleteSuggestionType = "TEXT" | "SINGLE_LINE" | "MULTI_LINE";
+
 export interface DeleteSuggestion {
   groupId: string;
   actorEmail: string;
   createdAt: string;
+  type?: DeleteSuggestionType;
 }
 
 export interface FormatSuggestionItem {
@@ -80,4 +83,12 @@ export interface ReviewUndoPatch {
 export interface ReviewEntry {
   type: ReviewAction;
   patch: ReviewUndoPatch;
+}
+
+export interface ReviewDecisionReference {
+  opId: string;
+  componentIndex: number;
+  componentStart: number;
+  length: number;
+  attributeKey?: string | null;
 }

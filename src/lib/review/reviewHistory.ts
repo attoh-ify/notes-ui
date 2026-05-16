@@ -19,11 +19,7 @@ import {
 import {
   cloneFormatSuggestions,
   cloneSegments,
-  segmentsToDelta,
-  stripSuggestionAttributes,
 } from "../attribution";
-
-import type Delta from "quill-delta";
 
 function stableStringify(value: any): string {
   if (Array.isArray(value)) {
@@ -171,7 +167,6 @@ export function snapshotAndApply(
   type: ReviewAction,
   deps: {
     reviewHistory: { current: ReviewEntry[] };
-    rejectedChanges: { current: Delta[] };
   },
 ) {
   const beforeSegments = cloneSegments(ctx.reviewSegmentsRef.current);
@@ -186,9 +181,6 @@ export function snapshotAndApply(
 
   const activeFormatIdBefore = ctx.activeFormatIdRef.current;
 
-  const beforeDelta =
-    type === "REJECT" ? segmentsToDelta(beforeSegments) : null;
-
   fn();
 
   const afterSegments = cloneSegments(ctx.reviewSegmentsRef.current);
@@ -197,38 +189,30 @@ export function snapshotAndApply(
     ctx.formatSuggestionsRef.current,
   );
 
-  const patch = {
-    segmentsPatch: buildSegmentUndoPatch(beforeSegments, afterSegments),
-    formatSuggestionsPatch: buildFormatSuggestionUndoPatch(
-      beforeFormatSuggestions,
-      afterFormatSuggestions,
-    ),
-    activeSuggestionBefore,
-    activeFormatIdBefore,
-  };
-
   deps.reviewHistory.current.push({
     type,
-    patch,
+    patch: {
+      segmentsPatch: buildSegmentUndoPatch(beforeSegments, afterSegments),
+      formatSuggestionsPatch: buildFormatSuggestionUndoPatch(
+        beforeFormatSuggestions,
+        afterFormatSuggestions,
+      ),
+      activeSuggestionBefore,
+      activeFormatIdBefore,
+    },
   });
-
-  if (type === "REJECT") {
-    const afterDelta = ctx.quill!.getContents();
-    const redoDelta = stripSuggestionAttributes(beforeDelta!.diff(afterDelta));
-    deps.rejectedChanges.current.push(redoDelta);
-  }
 }
 
 export function undo(
   ctx: ReviewRuntimeContext,
   deps: {
     reviewHistory: { current: ReviewEntry[] };
-    rejectedChanges: { current: any[] };
+    rejectedReferences: { current: any[] };
     acceptedReferences: { current: any[] };
     setFormatSuggestions: (v: FormatSuggestionItem[]) => void;
     setActiveFormatId: (v: string | null) => void;
     setActiveSuggestion: (v: TooltipState | null) => void;
-  },
+  }
 ) {
   if (deps.reviewHistory.current.length === 0) return;
 
@@ -267,7 +251,7 @@ export function undo(
   }
 
   if (entry.type === "REJECT") {
-    deps.rejectedChanges.current.pop();
+    deps.rejectedReferences.current.pop();
   } else {
     deps.acceptedReferences.current.pop();
   }

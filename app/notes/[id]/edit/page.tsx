@@ -26,6 +26,7 @@ import {
   ReviewSegment,
   TooltipState,
   Reference,
+  ReviewDecisionReference,
 } from "../../../../src/types";
 import { ReviewTooltip } from "@/components/ReviewTooltip";
 import ExitReviewModal from "@/components/ExitReviewModal";
@@ -42,6 +43,8 @@ import {
   removeInsertSuggestionFromSegments,
   getRuntimeTextInRange,
   resolveFormatSuggestionsAfterMutation,
+  restoreRejectedDeleteSegments,
+  collectSuggestionReferencesByGroup,
 } from "@/src/lib/attribution";
 import {
   canActOnFormatSuggestion,
@@ -89,8 +92,8 @@ function EditContent() {
   const isSyncComplete = useRef<boolean>(false);
   const isOwner = useRef<boolean>(false);
   const reviewHistory = useRef<ReviewEntry[]>([]);
-  const rejectedChanges = useRef<Delta[]>([]);
-  const acceptedReferences = useRef<Reference[][]>([]);
+  const acceptedReferences = useRef<ReviewDecisionReference[][]>([]);
+  const rejectedReferences = useRef<ReviewDecisionReference[][]>([]);
   const reviewSegmentsRef = useRef<ReviewSegment[]>([]);
   const runtimeSegCtrRef = useRef(0);
   const isReviewingRef = useRef(false);
@@ -469,14 +472,43 @@ function EditContent() {
   function applyWithSnapshot(fn: () => void, type: ReviewAction) {
     snapshotAndApply(getReviewCtx(), fn, type, {
       reviewHistory,
-      rejectedChanges,
     });
+  }
+
+  function toReviewDecisionReferences(
+    references: Reference[],
+    attributeKey?: string | null,
+  ): ReviewDecisionReference[] {
+    return references.map((ref) => ({
+      opId: ref.opId,
+      componentIndex: ref.componentIndex,
+      componentStart: ref.componentStart,
+      length: ref.length,
+      attributeKey: attributeKey ?? null,
+    }));
+  }
+
+  function recordAcceptedReferences(
+    references: Reference[],
+    attributeKey?: string | null,
+  ) {
+    acceptedReferences.current.push(
+      toReviewDecisionReferences(references, attributeKey),
+    );
+  }
+
+  function recordRejectedReferences(
+    references: Reference[],
+    attributeKey?: string | null,
+  ) {
+    rejectedReferences.current.push(
+      toReviewDecisionReferences(references, attributeKey),
+    );
   }
 
   function acceptChange(
     groupId: string,
     type: "insert" | "delete" | "format",
-    references: Reference[],
   ) {
     const ctx = getReviewCtx();
 
@@ -492,7 +524,6 @@ function EditContent() {
         setActiveFormatId: setActiveFormatIdSync,
         acceptedReferences,
         reviewHistory,
-        rejectedChanges,
       });
 
       closeReviewTooltip(
@@ -513,7 +544,13 @@ function EditContent() {
             : findInsertGroupRangeInRuntime(reviewSegmentsRef.current, groupId);
         if (!range) return;
 
-        acceptedReferences.current.push(references);
+        recordAcceptedReferences(
+          collectSuggestionReferencesByGroup(
+            reviewSegmentsRef.current,
+            groupId,
+            type,
+          ),
+        );
 
         if (type === "insert") {
           reviewSegmentsRef.current = removeInsertSuggestionFromSegments(
@@ -618,8 +655,8 @@ function EditContent() {
         snapshotAndApply,
         setFormatSuggestions: setFormatSuggestionsSync,
         setActiveFormatId: setActiveFormatIdSync,
+        rejectedReferences,
         reviewHistory,
-        rejectedChanges,
       });
 
       closeReviewTooltip(ctx, setActiveFormatId, setActiveSuggestion);
@@ -637,6 +674,15 @@ function EditContent() {
         if (!range) return;
 
         if (type === "insert") {
+
+          recordRejectedReferences(
+            collectSuggestionReferencesByGroup(
+              reviewSegmentsRef.current,
+              groupId,
+              "insert",
+            ),
+          );
+
           const removedText = getRuntimeTextInRange(
             reviewSegmentsRef.current,
             range.index,
@@ -671,16 +717,17 @@ function EditContent() {
             ),
           );
         } else if (type === "delete") {
-          reviewSegmentsRef.current = mergeAdjacentSegments(
-            reviewSegmentsRef.current.map((seg) => {
-              if (seg.deleteSuggestion?.groupId !== groupId) return seg;
+          recordRejectedReferences(
+            collectSuggestionReferencesByGroup(
+              reviewSegmentsRef.current,
+              groupId,
+              "delete",
+            ),
+          );
 
-              return {
-                ...seg,
-                references: [],
-                deleteSuggestion: undefined,
-              };
-            }),
+          reviewSegmentsRef.current = restoreRejectedDeleteSegments(
+            reviewSegmentsRef.current,
+            groupId,
           );
 
           refreshEditorFromRuntime(ctx);
@@ -711,7 +758,7 @@ function EditContent() {
   function handleUndo() {
     undo(getReviewCtx(), {
       reviewHistory,
-      rejectedChanges,
+      rejectedReferences,
       acceptedReferences,
       setFormatSuggestions: setFormatSuggestionsSync,
       setActiveFormatId: setActiveFormatIdSync,
@@ -892,6 +939,8 @@ function EditContent() {
       return Boolean(
         attrs["suggestion-insert"] ||
           attrs["suggestion-delete"] ||
+          attrs["suggestion-delete-singleline"] ||
+          attrs["suggestion-delete-multiline"] ||
           attrs["suggestion-delete-newline"] ||
           attrs["suggestion-format"],
       );
@@ -938,8 +987,8 @@ function EditContent() {
       activeFormatIdRef.current = null;
       activeSuggestionRef.current = null;
       reviewHistory.current = [];
-      rejectedChanges.current = [];
       acceptedReferences.current = [];
+      rejectedReferences.current = [];
 
       setFormatSuggestions([]);
       setActiveFormatId(null);
@@ -1036,8 +1085,8 @@ function EditContent() {
       activeSuggestionRef.current = null;
 
       reviewHistory.current = [];
-      rejectedChanges.current = [];
       acceptedReferences.current = [];
+      rejectedReferences.current = [];
 
       setFormatSuggestions([]);
       setActiveFormatId(null);
@@ -1056,30 +1105,18 @@ function EditContent() {
 
   async function saveReviewChanges() {
     if (!hasPendingSuggestions) {
-      setErrorMessageMessage("There are currently no changes made to this document. Please make changes before creating a new version.");
+      setErrorMessageMessage(
+        "There are currently no changes made to this document. Please make changes before creating a new version.",
+      );
       return;
     }
 
     try {
-      const delta =
-        rejectedChanges.current.length > 0
-          ? rejectedChanges.current.reduce((acc, d) => acc.compose(d))
-          : new Delta();
-
-      const acceptedSlices = acceptedReferences.current.flat();
-
       await apiFetch(`notes/${noteId}/review`, {
         method: "POST",
         body: JSON.stringify({
-          rejectedChange: new TextOperation(
-            "",
-            delta,
-            user!.email,
-            0,
-            OperationState.PENDING,
-            new Date().toISOString().slice(0, 19),
-          ),
-          acceptedReferences: acceptedSlices,
+          acceptedReferences: acceptedReferences.current.flat(),
+          rejectedReferences: rejectedReferences.current.flat(),
         }),
       });
 
@@ -1542,8 +1579,8 @@ function EditContent() {
       {activeSuggestion && (
         <ReviewTooltip
           tooltip={activeSuggestion}
-          onAccept={(groupId, type, references) =>
-            acceptChange(groupId, type, references)
+          onAccept={(groupId, type) =>
+            acceptChange(groupId, type)
           }
           onReject={(groupId, type) =>
             rejectChange(groupId, type)

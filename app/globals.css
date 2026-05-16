@@ -166,7 +166,7 @@ body {
   background-color: #f87171;
 }
 
-.suggestion-delete-newline {
+.suggestion-delete-singleline {
   display: inline-block;
   padding: 0 3px;
   margin: 0 1px;
@@ -179,11 +179,30 @@ body {
   text-decoration: none !important;
 }
 
-.suggestion-delete-newline.hover {
+.suggestion-delete-singleline.hover {
   background-color: #fecaca;
 }
 
-.suggestion-delete-newline.active {
+.suggestion-delete-singleline.active {
+  background-color: #f87171;
+}
+
+.suggestion-delete-multiline {
+  text-decoration: line-through;
+  text-decoration-color: #dc2626;
+  background-color: #fee2e2;
+  border-radius: 2px;
+  padding: 0 1px;
+  cursor: pointer;
+  color: #b91c1c;
+  transition: background-color 0.15s;
+}
+
+.suggestion-delete-multiline.hover {
+  background-color: #fecaca;
+}
+
+.suggestion-delete-multiline.active {
   background-color: #f87171;
 }
 

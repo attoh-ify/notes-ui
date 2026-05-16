@@ -37,6 +37,8 @@ export function stripSuggestionAttributes(delta: Delta): Delta {
         "suggestion-format": _f,
         "suggestion-delete": _d,
         "suggestion-delete-newline": _dn,
+        "suggestion-delete-singleline": _dsl,
+        "suggestion-delete-multiline": _dml,
         "suggestion-insert": _i,
         ...attrs
       } = op.attributes;
@@ -119,6 +121,8 @@ export function deltaToSegments(
       const insertMeta = allAttrs["suggestion-insert"] ?? null;
       const deleteMeta =
         allAttrs["suggestion-delete"] ??
+        allAttrs["suggestion-delete-singleline"] ??
+        allAttrs["suggestion-delete-multiline"] ??
         allAttrs["suggestion-delete-newline"] ??
         null;
 
@@ -158,6 +162,13 @@ export function deltaToSegments(
               groupId: deleteMeta.groupId,
               actorEmail: deleteMeta.actorEmail,
               createdAt: deleteMeta.createdAt,
+              type:
+                deleteMeta.type ??
+                (allAttrs["suggestion-delete-singleline"]
+                  ? "SINGLE_LINE"
+                  : allAttrs["suggestion-delete-multiline"]
+                    ? "MULTI_LINE"
+                    : "TEXT"),
             }
           : undefined,
       };
@@ -176,9 +187,11 @@ export function mergeAdjacentSegments(
       !!last &&
       last.text !== "\n" &&
       seg.text !== "\n" &&
+      !last.text.includes("\n") &&
+      !seg.text.includes("\n") &&
       shallowEqual(getEffectiveAttributes(last), getEffectiveAttributes(seg)) &&
-      last.insertSuggestion?.groupId === seg.insertSuggestion?.groupId &&
-      last.deleteSuggestion?.groupId === seg.deleteSuggestion?.groupId &&
+      sameInsertSuggestion(last, seg) &&
+      sameDeleteSuggestion(last, seg) &&
       shallowEqual(last.baseAttributes ?? {}, seg.baseAttributes ?? {});
 
     if (canMerge) {
@@ -219,6 +232,12 @@ export function segmentsToDelta(segments: ReviewSegment[]): Delta {
       ...(seg.suggestionAttributes ?? {}),
     };
 
+    delete attrs["suggestion-insert"];
+    delete attrs["suggestion-delete"];
+    delete attrs["suggestion-delete-newline"];
+    delete attrs["suggestion-delete-singleline"];
+    delete attrs["suggestion-delete-multiline"];
+    delete attrs["suggestion-format"];
     const references = cloneSuggestionReferences(seg.references ?? []);
 
     if (seg.insertSuggestion) {
@@ -233,14 +252,25 @@ export function segmentsToDelta(segments: ReviewSegment[]): Delta {
     }
 
     if (seg.deleteSuggestion) {
-      attrs["suggestion-delete"] = {
+      const type = seg.deleteSuggestion.type ?? "TEXT";
+
+      const deletePayload = {
         groupId: seg.deleteSuggestion.groupId,
         actorEmail: seg.deleteSuggestion.actorEmail,
         createdAt: seg.deleteSuggestion.createdAt,
+        type,
         references,
         baseAttributes: seg.baseAttributes ?? null,
         suggestionAttributes: seg.suggestionAttributes ?? null,
       };
+
+      if (type === "SINGLE_LINE") {
+        attrs["suggestion-delete-singleline"] = deletePayload;
+      } else if (type === "MULTI_LINE") {
+        attrs["suggestion-delete-multiline"] = deletePayload;
+      } else {
+        attrs["suggestion-delete"] = deletePayload;
+      }
     }
 
     delta.insert(
@@ -695,6 +725,7 @@ function cloneDeleteSuggestion(
     groupId: suggestion.groupId,
     actorEmail: suggestion.actorEmail,
     createdAt: suggestion.createdAt,
+    type: suggestion.type ?? "TEXT",
   };
 }
 
@@ -891,4 +922,69 @@ export function rangesFromReferences(references: Reference[] = []): ReviewRange[
   }
 
   return merged;
+}
+
+export function restoreRejectedDeleteSegments(
+  segments: ReviewSegment[],
+  groupId: string,
+): ReviewSegment[] {
+  return mergeAdjacentSegments(
+    segments.map((seg) => {
+      if (seg.deleteSuggestion?.groupId !== groupId) return seg;
+
+      return {
+        ...seg,
+        text:
+          seg.deleteSuggestion.type === "SINGLE_LINE" && seg.text === " ↵ "
+            ? "\n"
+            : seg.text,
+        references: [],
+        deleteSuggestion: undefined,
+      };
+    }),
+  );
+}
+
+function sameInsertSuggestion(a: ReviewSegment, b: ReviewSegment) {
+  if (!!a.insertSuggestion !== !!b.insertSuggestion) return false;
+  if (!a.insertSuggestion && !b.insertSuggestion) return true;
+
+  return (
+    a.insertSuggestion?.groupId === b.insertSuggestion?.groupId &&
+    a.insertSuggestion?.actorEmail === b.insertSuggestion?.actorEmail &&
+    a.insertSuggestion?.createdAt === b.insertSuggestion?.createdAt
+  );
+}
+
+function sameDeleteSuggestion(a: ReviewSegment, b: ReviewSegment) {
+  if (!!a.deleteSuggestion !== !!b.deleteSuggestion) return false;
+  if (!a.deleteSuggestion && !b.deleteSuggestion) return true;
+
+  return (
+    a.deleteSuggestion?.groupId === b.deleteSuggestion?.groupId &&
+    a.deleteSuggestion?.actorEmail === b.deleteSuggestion?.actorEmail &&
+    a.deleteSuggestion?.createdAt === b.deleteSuggestion?.createdAt &&
+    a.deleteSuggestion?.type === b.deleteSuggestion?.type
+  );
+}
+
+export function collectSuggestionReferencesByGroup(
+  segments: ReviewSegment[],
+  groupId: string,
+  type: "insert" | "delete",
+): Reference[] {
+  const refs: Reference[] = [];
+
+  for (const seg of segments) {
+    const matches =
+      type === "insert"
+        ? seg.insertSuggestion?.groupId === groupId
+        : seg.deleteSuggestion?.groupId === groupId;
+
+    if (!matches) continue;
+
+    refs.push(...cloneSuggestionReferences(seg.references ?? []));
+  }
+
+  return dedupeSuggestionReferences(refs);
 }

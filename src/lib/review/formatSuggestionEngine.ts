@@ -111,8 +111,7 @@ export function acceptFormatSuggestion(
     setActiveFormatId: (v: string | null) => void;
     acceptedReferences: { current: any[] };
     reviewHistory: { current: ReviewEntry[] };
-    rejectedChanges: { current: Delta[] };
-  },
+  }
 ) {
   if (!canActOnFormatSuggestion(ctx, item)) return;
 
@@ -121,16 +120,26 @@ export function acceptFormatSuggestion(
     () => {
       const quill = ctx.quill!;
       quill.updateContents(buildFormatOverlayClearDelta(item), "api");
-      deps.acceptedReferences.current.push(item.references);
+
+      deps.acceptedReferences.current.push(
+        item.references.map((ref) => ({
+          opId: ref.opId,
+          componentIndex: ref.componentIndex,
+          componentStart: ref.componentStart,
+          length: ref.length,
+          attributeKey: item.attributeKey,
+        })),
+      );
+
       deps.setFormatSuggestions((prev) =>
         prev.filter((f) => f.groupId !== item.groupId),
       );
+
       deps.setActiveFormatId(null);
     },
     "ACCEPT",
     {
       reviewHistory: deps.reviewHistory,
-      rejectedChanges: deps.rejectedChanges,
     },
   );
 }
@@ -148,8 +157,8 @@ export function rejectFormatSuggestion(
     snapshotAndApply: typeof snapshotAndApply;
     setFormatSuggestions: (updater: (prev: FormatSuggestionItem[]) => FormatSuggestionItem[]) => void;
     setActiveFormatId: (v: string | null) => void;
+    rejectedReferences: { current: any[] };
     reviewHistory: { current: ReviewEntry[] };
-    rejectedChanges: { current: Delta[] };
   },
 ) {
   if (!canActOnFormatSuggestion(ctx, item)) return;
@@ -159,6 +168,15 @@ export function rejectFormatSuggestion(
     () => {
       const quill = ctx.quill!;
       quill.updateContents(buildFormatOverlayClearDelta(item), "api");
+      deps.rejectedReferences.current.push(
+        item.references.map((ref) => ({
+          opId: ref.opId,
+          componentIndex: ref.componentIndex,
+          componentStart: ref.componentStart,
+          length: ref.length,
+          attributeKey: item.attributeKey,
+        })),
+      );
 
       ctx.reviewSegmentsRef.current = restoreFormatSuggestionToBase(
         ctx.reviewSegmentsRef.current,
@@ -175,7 +193,6 @@ export function rejectFormatSuggestion(
     "REJECT",
     {
       reviewHistory: deps.reviewHistory,
-      rejectedChanges: deps.rejectedChanges,
     },
   );
 }

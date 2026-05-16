@@ -159,15 +159,33 @@ export function registerFormats(QuillModule: typeof Quill) {
     }
   }
 
-  class SuggestionDeleteNewline extends Inline {
-    static blotName = "suggestion-delete-newline";
+  class SuggestionDeleteSingleLine extends Inline {
+    static blotName = "suggestion-delete-singleline";
     static tagName = "span";
 
     static create(data: SuggestionPayload) {
       const node = super.create() as HTMLElement;
 
       setCommonSuggestionAttrs(node, data, "delete");
-      node.classList.add("suggestion-delete-newline");
+      node.classList.add("suggestion-delete-singleline");
+
+      return node;
+    }
+
+    static formats(node: HTMLElement) {
+      return readCommonSuggestionAttrs(node);
+    }
+  }
+
+  class SuggestionDeleteMultiLine extends Inline {
+    static blotName = "suggestion-delete-multiline";
+    static tagName = "span";
+
+    static create(data: SuggestionPayload) {
+      const node = super.create() as HTMLElement;
+
+      setCommonSuggestionAttrs(node, data, "delete");
+      node.classList.add("suggestion-delete-multiline");
 
       return node;
     }
@@ -243,7 +261,7 @@ export function registerFormats(QuillModule: typeof Quill) {
 
   QuillModule.register(SuggestionInsert, true);
   QuillModule.register(SuggestionDelete, true);
-  QuillModule.register(SuggestionDeleteNewline, true);
-  QuillModule.register(SuggestionFormat, true);
+  QuillModule.register(SuggestionDeleteSingleLine, true);
+  QuillModule.register(SuggestionDeleteMultiLine, true);
   QuillModule.register(AuditFormatActive, true);
 }
