@@ -114,11 +114,12 @@ export function deltaToSegments(
   nextId: () => string,
 ): ReviewSegment[] {
   return (delta.ops ?? [])
-    .filter((op: any) => typeof op.insert === "string")
+    .filter((op: any) => op.insert !== undefined && op.insert !== null)
     .map((op: any) => {
       const allAttrs: Record<string, any> = { ...(op.attributes ?? {}) };
 
       const insertMeta = allAttrs["suggestion-insert"] ?? null;
+
       const deleteMeta =
         allAttrs["suggestion-delete"] ??
         allAttrs["suggestion-delete-singleline"] ??
@@ -129,7 +130,7 @@ export function deltaToSegments(
       const baseAttributes: Record<string, any> =
         insertMeta?.baseAttributes ??
         deleteMeta?.baseAttributes ??
-        {};
+        stripRuntimeSuggestionAttrs(allAttrs);
 
       const suggestionAttributes: Record<string, any> =
         insertMeta?.suggestionAttributes ??
@@ -142,9 +143,13 @@ export function deltaToSegments(
           [],
       );
 
+      const isTextInsert = typeof op.insert === "string";
+
       return {
         id: nextId(),
-        text: op.insert as string,
+        text: isTextInsert ? op.insert : "",
+        embed: isTextInsert ? undefined : cloneJsonValue(op.insert),
+
         baseAttributes,
         suggestionAttributes,
         references,
@@ -185,6 +190,8 @@ export function mergeAdjacentSegments(
 
     const canMerge =
       !!last &&
+      !last.embed &&
+      !seg.embed &&
       last.text !== "\n" &&
       seg.text !== "\n" &&
       !last.text.includes("\n") &&
@@ -205,19 +212,7 @@ export function mergeAdjacentSegments(
       continue;
     }
 
-    merged.push({
-      id: seg.id,
-      text: seg.text,
-      baseAttributes: { ...(seg.baseAttributes ?? {}) },
-      suggestionAttributes: { ...(seg.suggestionAttributes ?? {}) },
-      references: cloneSuggestionReferences(seg.references ?? []),
-      insertSuggestion: seg.insertSuggestion
-        ? cloneInsertSuggestion(seg.insertSuggestion)
-        : undefined,
-      deleteSuggestion: seg.deleteSuggestion
-        ? cloneDeleteSuggestion(seg.deleteSuggestion)
-        : undefined,
-    });
+    merged.push(cloneSegment(seg));
   }
 
   return merged;
@@ -238,6 +233,7 @@ export function segmentsToDelta(segments: ReviewSegment[]): Delta {
     delete attrs["suggestion-delete-singleline"];
     delete attrs["suggestion-delete-multiline"];
     delete attrs["suggestion-format"];
+
     const references = cloneSuggestionReferences(seg.references ?? []);
 
     if (seg.insertSuggestion) {
@@ -274,7 +270,7 @@ export function segmentsToDelta(segments: ReviewSegment[]): Delta {
     }
 
     delta.insert(
-      seg.text,
+      segmentInsertValue(seg),
       Object.keys(attrs).length > 0 ? attrs : undefined,
     );
   }
@@ -283,23 +279,11 @@ export function segmentsToDelta(segments: ReviewSegment[]): Delta {
 }
 
 export function cloneSegments(items: ReviewSegment[]): ReviewSegment[] {
-  return items.map((s) => ({
-    id: s.id,
-    text: s.text,
-    baseAttributes: { ...(s.baseAttributes ?? {}) },
-    suggestionAttributes: { ...(s.suggestionAttributes ?? {}) },
-    references: cloneSuggestionReferences(s.references ?? []),
-    insertSuggestion: s.insertSuggestion
-      ? cloneInsertSuggestion(s.insertSuggestion)
-      : undefined,
-    deleteSuggestion: s.deleteSuggestion
-      ? cloneDeleteSuggestion(s.deleteSuggestion)
-      : undefined,
-  }));
+  return items.map(cloneSegment);
 }
 
 function getRuntimePlainText(segments: ReviewSegment[]): string {
-  return segments.map((s) => s.text).join("");
+  return segments.map(segmentPreviewText).join("");
 }
 
 export function getRuntimeTextInRange(
@@ -312,8 +296,9 @@ export function getRuntimeTextInRange(
   let out = "";
 
   for (const seg of segments) {
+    const segLen = segmentLength(seg);
     const segStart = cursor;
-    const segEnd = cursor + seg.text.length;
+    const segEnd = cursor + segLen;
 
     if (segEnd <= start) {
       cursor = segEnd;
@@ -321,6 +306,12 @@ export function getRuntimeTextInRange(
     }
 
     if (segStart >= end) break;
+
+    if (seg.embed) {
+      out += "[image]";
+      cursor = segEnd;
+      continue;
+    }
 
     out += seg.text.slice(
       Math.max(start, segStart) - segStart,
@@ -342,7 +333,7 @@ export function findInsertGroupRangeInRuntime(
   let end = -1;
 
   for (const seg of segments) {
-    const len = seg.text.length;
+    const len = segmentLength(seg);
 
     if (seg.insertSuggestion?.groupId === groupId) {
       if (start === -1) start = cursor;
@@ -364,7 +355,7 @@ export function findDeleteGroupRangeInRuntime(
   let end = -1;
 
   for (const seg of segments) {
-    const len = seg.text.length;
+    const len = segmentLength(seg);
 
     if (seg.deleteSuggestion?.groupId === groupId) {
       if (start === -1) start = cursor;
@@ -387,9 +378,10 @@ export function removeInsertSuggestionFromSegments(
 
       return {
         id: seg.id,
-        text: seg.text,
-        baseAttributes: seg.baseAttributes,
-        suggestionAttributes: seg.suggestionAttributes,
+        text: seg.text ?? "",
+        embed: seg.embed ? cloneJsonValue(seg.embed) : undefined,
+        baseAttributes: { ...(seg.baseAttributes ?? {}) },
+        suggestionAttributes: { ...(seg.suggestionAttributes ?? {}) },
         references: cloneSuggestionReferences(seg.references ?? []),
       };
     }),
@@ -413,11 +405,14 @@ export function deleteInsertGroupSegments(
   let cursor = 0;
 
   const cleaned = afterDelete.filter((seg) => {
+    const segLen = segmentLength(seg);
     const segStart = cursor;
-    const segEnd = cursor + seg.text.length;
+    const segEnd = cursor + segLen;
     cursor = segEnd;
 
-    const isCommittedNewline = seg.text === "\n" && !hasSuggestionAttr(seg);
+    const isCommittedNewline =
+      !seg.embed && seg.text === "\n" && !hasSuggestionAttr(seg);
+
     const isInsideRange =
       segStart >= insertRange.index && segEnd <= rangeEnd;
 
@@ -439,12 +434,18 @@ function removeRuntimeCharAt(
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i];
 
+    const len = segmentLength(seg);
     const start = cursor;
-    const end = cursor + seg.text.length;
+    const end = cursor + len;
 
     if (index >= end) {
       cursor = end;
       continue;
+    }
+
+    if (seg.embed) {
+      segments.splice(i, 1);
+      return mergeAdjacentSegments(segments);
     }
 
     const offset = index - start;
@@ -484,8 +485,9 @@ function insertRuntimeTextAt(
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i];
 
+    const len = segmentLength(seg);
     const start = cursor;
-    const end = cursor + seg.text.length;
+    const end = cursor + len;
 
     if (index > end) {
       cursor = end;
@@ -498,6 +500,11 @@ function insertRuntimeTextAt(
     }
 
     if (index === end) {
+      segments.splice(i + 1, 0, newSeg);
+      return mergeAdjacentSegments(segments);
+    }
+
+    if (seg.embed) {
       segments.splice(i + 1, 0, newSeg);
       return mergeAdjacentSegments(segments);
     }
@@ -586,12 +593,13 @@ export function restoreFormatSuggestionToBase(
 
   let cursor = 0;
 
-  const updated = segments.map((seg) => {
-    const segStart = cursor;
-    const segEnd = cursor + seg.text.length;
-    cursor = segEnd;
+  const ranges = rangesFromReferences(item.references ?? []);
 
-    const ranges = rangesFromReferences(item.references ?? []);
+  const updated = segments.map((seg) => {
+    const segLen = segmentLength(seg);
+    const segStart = cursor;
+    const segEnd = cursor + segLen;
+    cursor = segEnd;
 
     const overlaps = ranges.some(
       (range) => range.start < segEnd && range.start + range.length > segStart,
@@ -604,6 +612,7 @@ export function restoreFormatSuggestionToBase(
 
     return {
       ...seg,
+      embed: seg.embed ? cloneJsonValue(seg.embed) : undefined,
       baseAttributes: { ...(seg.baseAttributes ?? {}) },
       suggestionAttributes: newSuggestion,
       references: cloneSuggestionReferences(seg.references ?? []),
@@ -798,7 +807,11 @@ function splitSegmentAt(
 ): number {
   const seg = segments[segmentIndex];
 
-  if (!seg || offset <= 0 || offset >= seg.text.length) {
+  if (!seg || seg.embed) {
+    return segmentIndex;
+  }
+
+  if (offset <= 0 || offset >= seg.text.length) {
     return segmentIndex;
   }
 
@@ -877,15 +890,6 @@ function normalize(obj: any): any {
   return obj ?? null;
 }
 
-function cloneJsonValue<T>(value: T): T {
-  if (value === null || value === undefined) return value;
-
-  if (typeof structuredClone === "function") {
-    return structuredClone(value);
-  }
-
-  return JSON.parse(JSON.stringify(value));
-}
 export type ReviewRange = {
   start: number;
   length: number;
@@ -933,7 +937,7 @@ export function restoreRejectedDeleteSegments(
       if (seg.deleteSuggestion?.groupId !== groupId) return seg;
 
       return {
-        ...seg,
+        ...cloneSegment(seg),
         text:
           seg.deleteSuggestion.type === "SINGLE_LINE" && seg.text === " ↵ "
             ? "\n"
@@ -987,4 +991,55 @@ export function collectSuggestionReferencesByGroup(
   }
 
   return dedupeSuggestionReferences(refs);
+}
+
+function cloneJsonValue<T>(value: T): T {
+  if (value === undefined || value === null) return value;
+  return JSON.parse(JSON.stringify(value));
+}
+
+export function segmentLength(seg: ReviewSegment): number {
+  return seg.embed ? 1 : seg.text.length;
+}
+
+export function segmentInsertValue(seg: ReviewSegment): any {
+  return seg.embed ? cloneJsonValue(seg.embed) : seg.text;
+}
+
+export function segmentPreviewText(seg: ReviewSegment): string {
+  if (seg.embed) return "[image]";
+  return seg.text;
+}
+
+function stripRuntimeSuggestionAttrs(
+  attrs: Record<string, any>,
+): Record<string, any> {
+  const {
+    "suggestion-format": _f,
+    "suggestion-delete": _d,
+    "suggestion-delete-newline": _dn,
+    "suggestion-delete-singleline": _dsl,
+    "suggestion-delete-multiline": _dml,
+    "suggestion-insert": _i,
+    ...clean
+  } = attrs ?? {};
+
+  return clean;
+}
+
+function cloneSegment(seg: ReviewSegment): ReviewSegment {
+  return {
+    id: seg.id,
+    text: seg.text ?? "",
+    embed: seg.embed ? cloneJsonValue(seg.embed) : undefined,
+    baseAttributes: { ...(seg.baseAttributes ?? {}) },
+    suggestionAttributes: { ...(seg.suggestionAttributes ?? {}) },
+    references: cloneSuggestionReferences(seg.references ?? []),
+    insertSuggestion: seg.insertSuggestion
+      ? cloneInsertSuggestion(seg.insertSuggestion)
+      : undefined,
+    deleteSuggestion: seg.deleteSuggestion
+      ? cloneDeleteSuggestion(seg.deleteSuggestion)
+      : undefined,
+  };
 }

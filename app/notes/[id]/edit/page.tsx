@@ -4,7 +4,6 @@ import { API_BASE_URL, apiFetch } from "@/src/lib/api";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState, useRef, Suspense, useCallback } from "react";
 import { Stomp, CompatClient } from "@stomp/stompjs";
-import SockJS from "sockjs-client";
 import { DocState } from "@/src/lib/docState";
 import { OperationState, TextOperation } from "@/src/lib/textOperation";
 import { useAuth } from "@/src/context/AuthContext";
@@ -45,6 +44,7 @@ import {
   resolveFormatSuggestionsAfterMutation,
   restoreRejectedDeleteSegments,
   collectSuggestionReferencesByGroup,
+  segmentLength,
 } from "@/src/lib/attribution";
 import {
   canActOnFormatSuggestion,
@@ -226,94 +226,106 @@ function EditContent() {
   
   useEffect(() => {
     if (!noteId || !user) return;
+    console.log(user)
 
-    const client = Stomp.over(
-      () => new SockJS(`${API_BASE_URL}/relay?noteId=${noteId}`)
-    );
+    let client: CompatClient | null = null;
+    let cancelled = false;
 
-    client.debug = () => {};
+    async function start() {
+      const { default: SockJS } = await import("sockjs-client");
 
-    stompClientRef.current = client;
+      if (cancelled) return;
 
-    client.connect({}, async () => {
-      try {
-        client.subscribe(`/topic/note/${noteId}`, (message) => {
-          const { type, payload } = JSON.parse(message.body);
+      client = Stomp.over(
+        () => new SockJS(`${API_BASE_URL}/relay?noteId=${noteId}`),
+      );
 
-          if (type === MessageType.OPERATION) {
-            handleRemoteOperation(payload);
-          }
+      client.debug = () => {};
+      stompClientRef.current = client;
 
-          if (type === MessageType.COLLABORATOR_JOIN) {
-            setCollaborators(payload.collaborators);
+      client.connect(
+        {},
+        async () => {
+          try {
+            client!.subscribe(`/topic/note/${noteId}`, (message) => {
+              const { type, payload } = JSON.parse(message.body);
 
-            const isAllowed = Object.hasOwn(payload.collaborators, user.email);
+              if (type === MessageType.OPERATION) {
+                handleRemoteOperation(payload);
+              }
+
+              if (type === MessageType.COLLABORATOR_JOIN) {
+                setCollaborators(payload.collaborators);
+
+                const isAllowed = Object.hasOwn(payload.collaborators, user!.email);
+
+                if (!isAllowed) {
+                  router.push("/notes");
+                }
+              }
+
+              if (type === MessageType.COLLABORATOR_CURSOR) {
+                handleCursorChange(payload);
+              }
+
+              if (type === MessageType.REVIEW_IN_PROGRESS) {
+                handleReviewInProgress(payload);
+              }
+            });
+
+            const noteData = await apiFetch<Note>(`notes/${noteId}`, {
+              method: "GET",
+            });
+
+            setNote(noteData);
+
+            if (noteData.accessRole === "VIEWER") {
+              router.push(`/notes/${noteId}`);
+              return;
+            }
+
+            const joinData = await apiFetch<JoinResponse>(
+              `notes/${noteId}/join`,
+              { method: "GET" },
+            );
+
+            docStateRef.current!.lastSyncedRevision = joinData.revision;
+
+            const cleanDelta = new Delta(joinData.delta.ops || []);
+            docStateRef.current!.setDocument(cleanDelta);
+
+            setCollaborators(joinData.collaborators);
+
+            const isAllowed = Object.hasOwn(joinData.collaborators, user!.email);
 
             if (!isAllowed) {
               router.push("/notes");
+              return;
             }
+
+            isOwner.current = noteData.accessRole === "OWNER";
+
+            setIsReviewing(joinData.isReviewing === true);
+            setIsloading(false);
+          } catch (err: any) {
+            setErrorMessageMessage(err.message || "Failed to load note");
+            setIsloading(false);
           }
-
-          if (type === MessageType.COLLABORATOR_CURSOR) {
-            handleCursorChange(payload);
-          }
-
-          if (type === MessageType.REVIEW_IN_PROGRESS) {
-            handleReviewInProgress(payload);
-          }
-        });
-
-        const noteData = await apiFetch<Note>(`notes/${noteId}`, {
-          method: "GET",
-        });
-
-        setNote(noteData);
-
-        if (noteData.accessRole === "VIEWER") {
-          router.push(`/notes/${noteId}`);
-          return;
-        }
-
-        const joinData = await apiFetch<JoinResponse>(
-          `notes/${noteId}/join`,
-          { method: "GET" },
-        );
-
-        docStateRef.current!.lastSyncedRevision = joinData.revision;
-
-        const cleanDelta = new Delta(joinData.delta.ops || []);
-        docStateRef.current!.setDocument(cleanDelta);
-
-        setCollaborators(joinData.collaborators);
-
-        const isAllowed = Object.hasOwn(joinData.collaborators, user.email);
-
-        if (!isAllowed) {
+        },
+        (error: any) => {
+          console.error("Websocket auth failed", error);
           router.push("/notes");
-          return;
-        }
+          setErrorMessageMessage(String(error));
+        },
+      );
+    }
 
-        isOwner.current = noteData.accessRole === "OWNER";
-
-        setIsReviewing(joinData.isReviewing === true);
-        setIsloading(false);
-      } catch (err: any) {
-        setErrorMessageMessage(
-          err.message || "Failed to load note"
-        );
-
-        setIsloading(false);
-      }
-    },
-  
-    (error: any) => {
-      console.error("Websocket auth failed", error);
-      router.push("/notes");
-      setErrorMessageMessage(error);
-    });
+    start();
 
     return () => {
-      if (client.active) {
+      cancelled = true;
+
+      if (client?.active) {
         client.disconnect();
       }
     };
@@ -577,8 +589,9 @@ function EditContent() {
           const nextSegments: ReviewSegment[] = [];
 
           for (const seg of reviewSegmentsRef.current) {
+            const segLen = segmentLength(seg);
             const segStart = cursor;
-            const segEnd = cursor + seg.text.length;
+            const segEnd = cursor + segLen;
             cursor = segEnd;
 
             if (
@@ -586,6 +599,10 @@ function EditContent() {
               segStart >= range.index + range.length
             ) {
               nextSegments.push(seg);
+              continue;
+            }
+
+            if (seg.embed) {
               continue;
             }
 
@@ -659,7 +676,7 @@ function EditContent() {
         reviewHistory,
       });
 
-      closeReviewTooltip(ctx, setActiveFormatId, setActiveSuggestion);
+      closeReviewTooltip(ctx, setActiveFormatIdSync, setActiveSuggestionSync);
       return;
     }
 

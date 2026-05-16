@@ -390,3 +390,69 @@ body {
   box-shadow: none !important;
   color: inherit !important;
 }
+
+/* Image suggestions: same suggestion types, different visual treatment */
+.ql-editor .suggestion-insert img,
+.ql-editor img.suggestion-insert,
+.ql-editor [data-suggestion-type="insert"] img,
+.ql-editor img[data-suggestion-type="insert"] {
+  outline: 3px solid #60a5fa;
+  outline-offset: 4px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.ql-editor .suggestion-insert.active img,
+.ql-editor img.suggestion-insert.active,
+.ql-editor [data-suggestion-type="insert"].active img,
+.ql-editor img[data-suggestion-type="insert"].active {
+  outline: 4px solid #2563eb;
+  outline-offset: 5px;
+}
+
+.ql-editor .suggestion-delete img,
+.ql-editor .suggestion-delete-multiline img,
+.ql-editor img.suggestion-delete,
+.ql-editor img.suggestion-delete-multiline,
+.ql-editor [data-suggestion-type="delete"] img,
+.ql-editor img[data-suggestion-type="delete"] {
+  outline: 3px solid #dc2626;
+  outline-offset: 4px;
+  border-radius: 4px;
+  opacity: 0.65;
+  cursor: pointer;
+}
+
+.ql-editor .suggestion-delete.active img,
+.ql-editor .suggestion-delete-multiline.active img,
+.ql-editor img.suggestion-delete.active,
+.ql-editor img.suggestion-delete-multiline.active,
+.ql-editor [data-suggestion-type="delete"].active img,
+.ql-editor img[data-suggestion-type="delete"].active {
+  outline: 4px solid #b91c1c;
+  outline-offset: 5px;
+  opacity: 0.75;
+}
+
+.ql-editor .suggestion-format.active img,
+.ql-editor .audit-format-active img,
+.ql-editor img.suggestion-format.active,
+.ql-editor img.audit-format-active,
+.ql-editor [data-suggestion-type="format"].active img,
+.ql-editor img[data-suggestion-type="format"].active {
+  outline: 3px solid #f97316;
+  outline-offset: 4px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.ql-editor .suggestion-insert:has(img),
+.ql-editor .suggestion-delete:has(img),
+.ql-editor .suggestion-delete-multiline:has(img),
+.ql-editor .suggestion-format:has(img),
+.ql-editor .audit-format-active:has(img) {
+  background: transparent !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+  text-decoration: none !important;
+}

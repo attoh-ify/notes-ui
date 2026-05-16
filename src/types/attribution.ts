@@ -44,6 +44,7 @@ export interface ReviewProjection {
 export interface ReviewSegment {
   id: string;
   text: string;
+  embed?: any;
   baseAttributes: Record<string, any>;
   suggestionAttributes: Record<string, any>;
   references: Reference[];

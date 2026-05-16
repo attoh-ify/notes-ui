@@ -263,5 +263,6 @@ export function registerFormats(QuillModule: typeof Quill) {
   QuillModule.register(SuggestionDelete, true);
   QuillModule.register(SuggestionDeleteSingleLine, true);
   QuillModule.register(SuggestionDeleteMultiLine, true);
+  QuillModule.register(SuggestionFormat, true);
   QuillModule.register(AuditFormatActive, true);
 }
