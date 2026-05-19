@@ -33,7 +33,6 @@ import { ReviewTooltip } from "@/components/ReviewTooltip";
 import ExitReviewModal from "@/components/ExitReviewModal";
 import FormatSidebarModal from "@/components/FormatSidebarModal";
 import {
-  buildFormatOverlayClearDelta,
   deleteInsertGroupSegments,
   deltaToSegments,
   findDeleteGroupRangeInRuntime,
@@ -65,7 +64,7 @@ import {
 } from "@/src/lib/review/formatSuggestionEngine";
 import { snapshotAndApply, undo } from "@/src/lib/review/reviewHistory";
 import CollaboratorsModal from "@/components/CollaboratorsSection";
-import VisibilitySection from "@/components/VisibilitySection";
+import VisibilityModal from "@/components/VisibilityModal";
 
 function EditContent() {
   const { id: noteId } = useParams();
@@ -87,6 +86,7 @@ function EditContent() {
   const [hasPendingSuggestions, setHasPendingSuggestions] = useState(false);
   const [reviewLoaded, setReviewLoaded] = useState(false);
   const [showCollaboratorsModal, setShowCollaboratorsModal] = useState(false);
+  const [showVisibilityModal, setShowVisibilityModal] = useState(false);
 
   const editorRef = useRef<HTMLDivElement>(null);
   const quillRef = useRef<Quill | null>(null);
@@ -1453,6 +1453,22 @@ function EditContent() {
               </button>
             )}
 
+            {!isReviewing && (note.accessRole === "OWNER" || note.accessRole === "SUPER") && (
+              <button
+                onClick={() => setShowVisibilityModal(true)}
+                style={{
+                  padding: "10px 16px",
+                  borderRadius: 10,
+                  border: "1px solid #E5E7EB",
+                  background: "white",
+                  cursor: "pointer",
+                  fontWeight: 600,
+                }}
+              >
+                Visibility: {note.visibility}
+              </button>
+            )}
+
             {note.accessRole === "OWNER" && !isReviewing && (
               <button
                 onClick={handleReviewNote}
@@ -1527,13 +1543,6 @@ function EditContent() {
             </button>
           </div>
         </div>
-
-        {!isReviewing && (note.accessRole === "OWNER" || note.accessRole === "SUPER") && (
-          <VisibilitySection
-          noteId={noteId as string}
-          accessRole={note.accessRole}
-          visibility={note.visibility}
-        />)}
       </header>
 
       {isReviewing && (
@@ -1745,6 +1754,21 @@ function EditContent() {
           noteId={noteId as string}
           email={user.email}
           accessRole={note.accessRole}
+        />
+      )}
+
+      {showVisibilityModal && (
+        <VisibilityModal
+          open={showVisibilityModal}
+          onClose={() => setShowVisibilityModal(false)}
+          noteId={noteId as string}
+          accessRole={note.accessRole}
+          visibility={note.visibility}
+          onVisibilityChanged={(visibility) => {
+            setNote((prev) =>
+              prev ? { ...prev, visibility } : prev,
+            );
+          }}
         />
       )}
     </main>

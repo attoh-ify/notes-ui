@@ -208,7 +208,7 @@ export function clearBlockFormatDomOverlay(ctx: ReviewRuntimeContext): void {
   if (!quill) return;
 
   quill.root
-    .querySelectorAll(".suggestion-block-format-active")
+    .querySelectorAll(".format-block-active")
     .forEach((el) => {
       el.classList.remove("format-block-active");
       el.removeAttribute("data-active-format-block-group-id");
