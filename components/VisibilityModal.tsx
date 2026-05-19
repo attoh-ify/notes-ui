@@ -46,15 +46,7 @@ export default function VisibilityModal({
         if (cancelled) return;
 
         setCurrentVisibility(note.visibility);
-
-        /**
-         * Important:
-         * Do NOT call onVisibilityChanged here.
-         *
-         * This fetch is only to refresh the modal UI.
-         * Calling onVisibilityChanged here updates the parent note state,
-         * which can cause the effect to run repeatedly.
-         */
+        onVisibilityChanged?.(note.visibility);
       } catch (err: any) {
         if (cancelled) return;
 
