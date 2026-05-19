@@ -456,3 +456,28 @@ body {
   border-radius: 0 !important;
   text-decoration: none !important;
 }
+
+/* Block format marker — applied to the whole Quill line/block */
+.ql-editor [data-suggestion-block-format] {
+  background-color: #ffedd5 !important;
+  box-shadow: inset 4px 0 0 #f97316;
+  border-radius: 0 !important;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+/* Stronger active-looking block marker while the overlay exists */
+.ql-editor [data-suggestion-block-format]:hover {
+  background-color: #fed7aa !important;
+}
+
+.ql-editor .suggestion-block-format-active {
+  background-color: #ffedd5 !important;
+  box-shadow: inset 4px 0 0 #f97316;
+  border-radius: 0 !important;
+  transition: background-color 0.15s ease;
+}
+
+.ql-editor .suggestion-block-format-active:hover {
+  background-color: #fed7aa !important;
+}

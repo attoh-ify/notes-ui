@@ -1,4 +1,6 @@
 import {
+  BlockFormatSuggestionItem,
+  BlockFormatSuggestionUndoPatch,
   FormatSuggestionItem,
   FormatSuggestionUndoPatch,
   ReviewAction,
@@ -9,14 +11,14 @@ import {
 } from "@/src/types";
 
 import {
+  clearActiveFormatOverlay,
   cloneTooltipState,
   refreshEditorFromRuntime,
-  restoreActiveFormatOverlay,
   ReviewRuntimeContext,
-  suspendActiveFormatOverlay,
 } from "./runtimeHelpers";
 
 import {
+  cloneBlockFormatSuggestions,
   cloneFormatSuggestions,
   cloneSegments,
 } from "../attribution";
@@ -43,6 +45,13 @@ function sameSegment(a: ReviewSegment, b: ReviewSegment): boolean {
 function sameFormatSuggestion(
   a: FormatSuggestionItem,
   b: FormatSuggestionItem,
+): boolean {
+  return stableStringify(a) === stableStringify(b);
+}
+
+function sameBlockFormatSuggestion(
+  a: BlockFormatSuggestionItem,
+  b: BlockFormatSuggestionItem,
 ): boolean {
   return stableStringify(a) === stableStringify(b);
 }
@@ -127,6 +136,46 @@ function buildFormatSuggestionUndoPatch(
   };
 }
 
+function buildBlockFormatSuggestionUndoPatch(
+  before: BlockFormatSuggestionItem[],
+  after: BlockFormatSuggestionItem[],
+): BlockFormatSuggestionUndoPatch | null {
+  let prefix = 0;
+
+  while (
+    prefix < before.length &&
+    prefix < after.length &&
+    sameBlockFormatSuggestion(before[prefix], after[prefix])
+  ) {
+    prefix++;
+  }
+
+  let beforeSuffix = before.length - 1;
+  let afterSuffix = after.length - 1;
+
+  while (
+    beforeSuffix >= prefix &&
+    afterSuffix >= prefix &&
+    sameBlockFormatSuggestion(before[beforeSuffix], after[afterSuffix])
+  ) {
+    beforeSuffix--;
+    afterSuffix--;
+  }
+
+  const beforeChanged = before.slice(prefix, beforeSuffix + 1);
+  const afterChanged = after.slice(prefix, afterSuffix + 1);
+
+  if (beforeChanged.length === 0 && afterChanged.length === 0) {
+    return null;
+  }
+
+  return {
+    index: prefix,
+    deleteCount: afterChanged.length,
+    before: cloneBlockFormatSuggestions(beforeChanged),
+  };
+}
+
 function applySegmentUndoPatch(
   current: ReviewSegment[],
   patch: SegmentUndoPatch | null,
@@ -161,6 +210,23 @@ function applyFormatSuggestionUndoPatch(
   return next;
 }
 
+function applyBlockFormatSuggestionUndoPatch(
+  current: BlockFormatSuggestionItem[],
+  patch: BlockFormatSuggestionUndoPatch | null,
+): BlockFormatSuggestionItem[] {
+  if (!patch) return current;
+
+  const next = [...current];
+
+  next.splice(
+    patch.index,
+    patch.deleteCount,
+    ...cloneBlockFormatSuggestions(patch.before),
+  );
+
+  return next;
+}
+
 export function snapshotAndApply(
   ctx: ReviewRuntimeContext,
   fn: () => void,
@@ -173,6 +239,10 @@ export function snapshotAndApply(
 
   const beforeFormatSuggestions = cloneFormatSuggestions(
     ctx.formatSuggestionsRef.current,
+  );
+
+  const beforeBlockFormatSuggestions = cloneBlockFormatSuggestions(
+    ctx.blockFormatSuggestionsRef.current,
   );
 
   const activeSuggestionBefore = cloneTooltipState(
@@ -189,6 +259,10 @@ export function snapshotAndApply(
     ctx.formatSuggestionsRef.current,
   );
 
+  const afterBlockFormatSuggestions = cloneBlockFormatSuggestions(
+    ctx.blockFormatSuggestionsRef.current,
+  );
+
   deps.reviewHistory.current.push({
     type,
     patch: {
@@ -196,6 +270,10 @@ export function snapshotAndApply(
       formatSuggestionsPatch: buildFormatSuggestionUndoPatch(
         beforeFormatSuggestions,
         afterFormatSuggestions,
+      ),
+      blockFormatSuggestionsPatch: buildBlockFormatSuggestionUndoPatch(
+        beforeBlockFormatSuggestions,
+        afterBlockFormatSuggestions,
       ),
       activeSuggestionBefore,
       activeFormatIdBefore,
@@ -210,45 +288,44 @@ export function undo(
     rejectedReferences: { current: any[] };
     acceptedReferences: { current: any[] };
     setFormatSuggestions: (v: FormatSuggestionItem[]) => void;
+    setBlockFormatSuggestions: (v: BlockFormatSuggestionItem[]) => void;
     setActiveFormatId: (v: string | null) => void;
     setActiveSuggestion: (v: TooltipState | null) => void;
-  }
+  },
 ) {
   if (deps.reviewHistory.current.length === 0) return;
 
   const entry =
     deps.reviewHistory.current[deps.reviewHistory.current.length - 1];
 
-  const suspended = suspendActiveFormatOverlay(ctx);
+  clearActiveFormatOverlay(ctx);
+  ctx.activeFormatIdRef.current = null;
+  ctx.activeSuggestionRef.current = null;
+  deps.setActiveFormatId(null);
+  deps.setActiveSuggestion(null);
 
-  try {
-    ctx.reviewSegmentsRef.current = applySegmentUndoPatch(
-      ctx.reviewSegmentsRef.current,
-      entry.patch.segmentsPatch,
-    );
+  ctx.reviewSegmentsRef.current = applySegmentUndoPatch(
+    ctx.reviewSegmentsRef.current,
+    entry.patch.segmentsPatch,
+  );
 
-    refreshEditorFromRuntime(ctx);
+  refreshEditorFromRuntime(ctx);
 
-    const restoredFormatSuggestions = applyFormatSuggestionUndoPatch(
-      ctx.formatSuggestionsRef.current,
-      entry.patch.formatSuggestionsPatch,
-    );
+  const restoredFormatSuggestions = applyFormatSuggestionUndoPatch(
+    ctx.formatSuggestionsRef.current,
+    entry.patch.formatSuggestionsPatch,
+  );
 
-    ctx.formatSuggestionsRef.current = restoredFormatSuggestions;
-    deps.setFormatSuggestions(restoredFormatSuggestions);
+  const restoredBlockFormatSuggestions = applyBlockFormatSuggestionUndoPatch(
+    ctx.blockFormatSuggestionsRef.current,
+    entry.patch.blockFormatSuggestionsPatch,
+  );
 
-    ctx.activeFormatIdRef.current = entry.patch.activeFormatIdBefore;
-    deps.setActiveFormatId(entry.patch.activeFormatIdBefore);
+  ctx.formatSuggestionsRef.current = restoredFormatSuggestions;
+  ctx.blockFormatSuggestionsRef.current = restoredBlockFormatSuggestions;
 
-    const restoredActiveSuggestion = cloneTooltipState(
-      entry.patch.activeSuggestionBefore,
-    );
-
-    ctx.activeSuggestionRef.current = restoredActiveSuggestion;
-    deps.setActiveSuggestion(restoredActiveSuggestion);
-  } finally {
-    restoreActiveFormatOverlay(ctx, suspended);
-  }
+  deps.setFormatSuggestions(restoredFormatSuggestions);
+  deps.setBlockFormatSuggestions(restoredBlockFormatSuggestions);
 
   if (entry.type === "REJECT") {
     deps.rejectedReferences.current.pop();

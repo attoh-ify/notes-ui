@@ -26,6 +26,8 @@ import {
   TooltipState,
   Reference,
   ReviewDecisionReference,
+  BlockFormatSuggestionItem,
+  ReviewFormatSuggestion,
 } from "../../../../src/types";
 import { ReviewTooltip } from "@/components/ReviewTooltip";
 import ExitReviewModal from "@/components/ExitReviewModal";
@@ -47,17 +49,18 @@ import {
   segmentLength,
 } from "@/src/lib/attribution";
 import {
-  canActOnFormatSuggestion,
+  clearActiveFormatOverlay,
   nextRuntimeSegmentId,
+  refreshBlockPreviewTextsAgainstRuntime,
   refreshEditorFromRuntime,
   refreshPreviewTextsAgainstRuntime,
-  restoreActiveFormatOverlay,
-  suspendActiveFormatOverlay,
 } from "@/src/lib/review/runtimeHelpers";
 import {
+  acceptBlockFormatSuggestion,
   acceptFormatSuggestion,
   activateFormatSuggestion,
   closeReviewTooltip,
+  rejectBlockFormatSuggestion,
   rejectFormatSuggestion,
 } from "@/src/lib/review/formatSuggestionEngine";
 import { snapshotAndApply, undo } from "@/src/lib/review/reviewHistory";
@@ -76,6 +79,7 @@ function EditContent() {
 
   const [isReviewing, setIsReviewing] = useState<boolean>(false);
   const [formatSuggestions, setFormatSuggestions] = useState<FormatSuggestionItem[]>([]);
+  const [blockFormatSuggestions, setBlockFormatSuggestions] = useState<BlockFormatSuggestionItem[]>([]);
   const [activeFormatId, setActiveFormatId] = useState<string | null>(null);
   const [activeSuggestion, setActiveSuggestion] = useState<TooltipState | null>(null);
   const [showExitReviewModal, setShowExitReviewModal] = useState(false);
@@ -99,6 +103,7 @@ function EditContent() {
   const isReviewingRef = useRef(false);
 
   const formatSuggestionsRef = useRef<FormatSuggestionItem[]>([]);
+  const blockFormatSuggestionsRef = useRef<BlockFormatSuggestionItem[]>([]);
   const activeFormatIdRef = useRef<string | null>(null);
   const activeSuggestionRef = useRef<TooltipState | null>(null);
   const collaboratorsRef = useRef<Record<string, string>>({});
@@ -108,6 +113,7 @@ function EditContent() {
   const pendingSendQueueRef = useRef<TextOperation[]>([]);
 
   useEffect(() => { formatSuggestionsRef.current = formatSuggestions; }, [formatSuggestions]);
+  useEffect(() => { blockFormatSuggestionsRef.current = blockFormatSuggestions; }, [blockFormatSuggestions]);
   useEffect(() => { activeFormatIdRef.current = activeFormatId; }, [activeFormatId]);
   useEffect(() => { activeSuggestionRef.current = activeSuggestion; }, [activeSuggestion]);
   useEffect(() => { collaboratorsRef.current = collaborators; }, [collaborators]);
@@ -120,6 +126,7 @@ function EditContent() {
     runtimeSegCtrRef,
     reviewSegmentsRef,
     formatSuggestionsRef,
+    blockFormatSuggestionsRef,
     activeSuggestionRef,
     activeFormatIdRef,
   });
@@ -226,7 +233,6 @@ function EditContent() {
   
   useEffect(() => {
     if (!noteId || !user) return;
-    console.log(user)
 
     let client: CompatClient | null = null;
     let cancelled = false;
@@ -430,11 +436,13 @@ function EditContent() {
     ) as HTMLElement | null;
 
     if (!node) {
-      setActiveSuggestion(null);
+      deactivateActiveFormatSuggestion();
+      setActiveSuggestionSync(null);
       return;
     }
 
     const type = node.getAttribute("data-suggestion-type") as TooltipState["type"];
+
     if (type === "format") return;
 
     const groupId = node.getAttribute("data-group-id")!;
@@ -442,8 +450,10 @@ function EditContent() {
     const createdAt = node.getAttribute("data-created-at")!;
     const references = JSON.parse(node.getAttribute("data-references") ?? "[]");
 
-    setActiveSuggestion((prev) =>
-      prev?.groupId === groupId
+    deactivateActiveFormatSuggestion();
+
+    setActiveSuggestionSync(
+      activeSuggestionRef.current?.groupId === groupId
         ? null
         : { groupId, type, actorEmail, createdAt, references },
     );
@@ -469,6 +479,99 @@ function EditContent() {
 
     formatSuggestionsRef.current = resolved;
     setFormatSuggestions(resolved);
+  }
+
+  function setBlockFormatSuggestionsSync(
+    next:
+      | BlockFormatSuggestionItem[]
+      | ((prev: BlockFormatSuggestionItem[]) => BlockFormatSuggestionItem[]),
+  ) {
+    const resolved =
+      typeof next === "function"
+        ? next(blockFormatSuggestionsRef.current)
+        : next;
+
+    blockFormatSuggestionsRef.current = resolved;
+    setBlockFormatSuggestions(resolved);
+  }
+
+  function getPendingInsertGroupIds(): Set<string> {
+    const ids = new Set<string>();
+
+    for (const seg of reviewSegmentsRef.current) {
+      if (seg.insertSuggestion?.groupId) {
+        ids.add(seg.insertSuggestion.groupId);
+      }
+    }
+
+    return ids;
+  }
+
+  function getPendingDeleteGroupIds(): Set<string> {
+    const ids = new Set<string>();
+
+    for (const seg of reviewSegmentsRef.current) {
+      if (seg.deleteSuggestion?.groupId) {
+        ids.add(seg.deleteSuggestion.groupId);
+      }
+    }
+
+    return ids;
+  }
+
+  function isFormatSuggestionUnlocked(item: ReviewFormatSuggestion): boolean {
+    const pendingInsertIds = getPendingInsertGroupIds();
+    const pendingDeleteIds = getPendingDeleteGroupIds();
+
+    const insertDepsResolved = (item.dependsOnInsertGroupIds ?? []).every(
+      (groupId) => !pendingInsertIds.has(groupId),
+    );
+
+    const deleteDepsResolved = (item.dependsOnDeleteGroupIds ?? []).every(
+      (groupId) => !pendingDeleteIds.has(groupId),
+    );
+
+    return insertDepsResolved && deleteDepsResolved;
+  }
+
+  function getVisibleFormatSuggestions(): ReviewFormatSuggestion[] {
+    return [...formatSuggestionsRef.current, ...blockFormatSuggestionsRef.current].filter(
+      isFormatSuggestionUnlocked,
+    );
+  }
+
+  function findFormatSuggestionByGroupId(
+    groupId: string,
+  ): {
+    item: ReviewFormatSuggestion;
+    kind: "inline" | "block";
+  } | null {
+    const inline = formatSuggestionsRef.current.find(
+      (f) => f.groupId === groupId,
+    );
+
+    if (inline) {
+      return { item: inline, kind: "inline" };
+    }
+
+    const block = blockFormatSuggestionsRef.current.find(
+      (f) => f.groupId === groupId,
+    );
+
+    if (block) {
+      return { item: block, kind: "block" };
+    }
+
+    return null;
+  }
+
+  function deactivateActiveFormatSuggestion() {
+    const ctx = getReviewCtx();
+
+    clearActiveFormatOverlay(ctx);
+
+    activeFormatIdRef.current = null;
+    setActiveFormatId(null);
   }
 
   function setActiveFormatIdSync(next: string | null) {
@@ -525,132 +628,163 @@ function EditContent() {
     const ctx = getReviewCtx();
 
     if (type === "format") {
-      const item = ctx.formatSuggestionsRef.current.find(
-        (f) => f.groupId === groupId,
-      );
-      if (!item) return;
+      const found = findFormatSuggestionByGroupId(groupId);
+      if (!found) return;
 
-      acceptFormatSuggestion(ctx, item, {
-        snapshotAndApply,
-        setFormatSuggestions: setFormatSuggestionsSync,
-        setActiveFormatId: setActiveFormatIdSync,
-        acceptedReferences,
-        reviewHistory,
-      });
+      if (found.kind === "inline") {
+        acceptFormatSuggestion(ctx, found.item as FormatSuggestionItem, {
+          snapshotAndApply,
+          setFormatSuggestions: setFormatSuggestionsSync,
+          setActiveFormatId: setActiveFormatIdSync,
+          acceptedReferences,
+          reviewHistory,
+        });
+      } else {
+        acceptBlockFormatSuggestion(
+          ctx,
+          found.item as BlockFormatSuggestionItem,
+          {
+            snapshotAndApply,
+            setBlockFormatSuggestions: setBlockFormatSuggestionsSync,
+            setActiveFormatId: setActiveFormatIdSync,
+            acceptedReferences,
+            reviewHistory,
+          },
+        );
+      }
 
-      closeReviewTooltip(
-        ctx,
-        setActiveFormatIdSync,
-        setActiveSuggestionSync,
-      );
+      closeReviewTooltip(ctx, setActiveFormatIdSync, setActiveSuggestionSync);
       return;
     }
 
     applyWithSnapshot(() => {
-      const suspended = suspendActiveFormatOverlay(ctx);
+      deactivateActiveFormatSuggestion();
 
-      try {
-        const range =
-          type === "delete"
-            ? findDeleteGroupRangeInRuntime(reviewSegmentsRef.current, groupId)
-            : findInsertGroupRangeInRuntime(reviewSegmentsRef.current, groupId);
-        if (!range) return;
+      const range =
+        type === "delete"
+          ? findDeleteGroupRangeInRuntime(reviewSegmentsRef.current, groupId)
+          : findInsertGroupRangeInRuntime(reviewSegmentsRef.current, groupId);
 
-        recordAcceptedReferences(
-          collectSuggestionReferencesByGroup(
-            reviewSegmentsRef.current,
-            groupId,
-            type,
+      if (!range) return;
+
+      recordAcceptedReferences(
+        collectSuggestionReferencesByGroup(
+          reviewSegmentsRef.current,
+          groupId,
+          type,
+        ),
+      );
+
+      if (type === "insert") {
+        reviewSegmentsRef.current = removeInsertSuggestionFromSegments(
+          reviewSegmentsRef.current,
+          groupId,
+        );
+
+        refreshEditorFromRuntime(ctx);
+
+        setFormatSuggestionsSync((prev) =>
+          refreshPreviewTextsAgainstRuntime(
+            ctx,
+            resolveFormatSuggestionsAfterMutation(
+              prev,
+              range,
+              groupId,
+              "insert",
+              "ACCEPT",
+            ),
           ),
         );
 
-        if (type === "insert") {
-          reviewSegmentsRef.current = removeInsertSuggestionFromSegments(
-            reviewSegmentsRef.current,
-            groupId,
-          );
-
-          refreshEditorFromRuntime(ctx);
-
-          setFormatSuggestionsSync((prev) =>
-            refreshPreviewTextsAgainstRuntime(
-              ctx,
-              resolveFormatSuggestionsAfterMutation(
-                prev,
-                range,
-                groupId,
-                "insert",
-                "ACCEPT",
-              ),
+        setBlockFormatSuggestionsSync((prev) =>
+          refreshBlockPreviewTextsAgainstRuntime(
+            ctx,
+            resolveFormatSuggestionsAfterMutation(
+              prev,
+              range,
+              groupId,
+              "insert",
+              "ACCEPT",
             ),
-          );
-        } else if (type === "delete") {
-          let cursor = 0;
-          const nextSegments: ReviewSegment[] = [];
+          ),
+        );
+      } else if (type === "delete") {
+        let cursor = 0;
+        const nextSegments: ReviewSegment[] = [];
 
-          for (const seg of reviewSegmentsRef.current) {
-            const segLen = segmentLength(seg);
-            const segStart = cursor;
-            const segEnd = cursor + segLen;
-            cursor = segEnd;
+        for (const seg of reviewSegmentsRef.current) {
+          const segLen = segmentLength(seg);
+          const segStart = cursor;
+          const segEnd = cursor + segLen;
+          cursor = segEnd;
 
-            if (
-              segEnd <= range.index ||
-              segStart >= range.index + range.length
-            ) {
-              nextSegments.push(seg);
-              continue;
-            }
-
-            if (seg.embed) {
-              continue;
-            }
-
-            const leftLen = Math.max(0, range.index - segStart);
-            const rightLen = Math.max(
-              0,
-              segEnd - (range.index + range.length),
-            );
-
-            if (leftLen > 0) {
-              nextSegments.push({
-                id: nextRuntimeSegmentId(ctx),
-                text: seg.text.slice(0, leftLen),
-                baseAttributes: { ...(seg.baseAttributes ?? {}) },
-                suggestionAttributes: { ...(seg.suggestionAttributes ?? {}) },
-                references: [],
-              });
-            }
-
-            if (rightLen > 0) {
-              nextSegments.push({
-                id: nextRuntimeSegmentId(ctx),
-                text: seg.text.slice(seg.text.length - rightLen),
-                baseAttributes: { ...(seg.baseAttributes ?? {}) },
-                suggestionAttributes: { ...(seg.suggestionAttributes ?? {}) },
-                references: [],
-              });
-            }
+          if (
+            segEnd <= range.index ||
+            segStart >= range.index + range.length
+          ) {
+            nextSegments.push(seg);
+            continue;
           }
 
-          reviewSegmentsRef.current = mergeAdjacentSegments(nextSegments);
-          refreshEditorFromRuntime(ctx);
+          if (seg.embed) {
+            continue;
+          }
 
-          setFormatSuggestionsSync((prev) =>
-            refreshPreviewTextsAgainstRuntime(
-              ctx,
-              resolveFormatSuggestionsAfterMutation(
-                prev,
-                range,
-                groupId,
-                "delete",
-                "ACCEPT",
-              ),
-            ),
+          const leftLen = Math.max(0, range.index - segStart);
+          const rightLen = Math.max(
+            0,
+            segEnd - (range.index + range.length),
           );
+
+          if (leftLen > 0) {
+            nextSegments.push({
+              id: nextRuntimeSegmentId(ctx),
+              text: seg.text.slice(0, leftLen),
+              baseAttributes: { ...(seg.baseAttributes ?? {}) },
+              suggestionAttributes: { ...(seg.suggestionAttributes ?? {}) },
+              references: [],
+            });
+          }
+
+          if (rightLen > 0) {
+            nextSegments.push({
+              id: nextRuntimeSegmentId(ctx),
+              text: seg.text.slice(seg.text.length - rightLen),
+              baseAttributes: { ...(seg.baseAttributes ?? {}) },
+              suggestionAttributes: { ...(seg.suggestionAttributes ?? {}) },
+              references: [],
+            });
+          }
         }
-      } finally {
-        restoreActiveFormatOverlay(ctx, suspended);
+
+        reviewSegmentsRef.current = mergeAdjacentSegments(nextSegments);
+        refreshEditorFromRuntime(ctx);
+
+        setFormatSuggestionsSync((prev) =>
+          refreshPreviewTextsAgainstRuntime(
+            ctx,
+            resolveFormatSuggestionsAfterMutation(
+              prev,
+              range,
+              groupId,
+              "delete",
+              "ACCEPT",
+            ),
+          ),
+        );
+
+        setBlockFormatSuggestionsSync((prev) =>
+          refreshBlockPreviewTextsAgainstRuntime(
+            ctx,
+            resolveFormatSuggestionsAfterMutation(
+              prev,
+              range,
+              groupId,
+              "delete",
+              "ACCEPT",
+            ),
+          ),
+        );
       }
     }, "ACCEPT");
 
@@ -663,107 +797,141 @@ function EditContent() {
     const ctx = getReviewCtx();
 
     if (type === "format") {
-      const item = ctx.formatSuggestionsRef.current.find(
-        (f) => f.groupId === groupId,
-      );
-      if (!item) return;
+      const found = findFormatSuggestionByGroupId(groupId);
+      if (!found) return;
 
-      rejectFormatSuggestion(ctx, item, {
-        snapshotAndApply,
-        setFormatSuggestions: setFormatSuggestionsSync,
-        setActiveFormatId: setActiveFormatIdSync,
-        rejectedReferences,
-        reviewHistory,
-      });
+      if (found.kind === "inline") {
+        rejectFormatSuggestion(ctx, found.item as FormatSuggestionItem, {
+          snapshotAndApply,
+          setFormatSuggestions: setFormatSuggestionsSync,
+          setActiveFormatId: setActiveFormatIdSync,
+          rejectedReferences,
+          reviewHistory,
+        });
+      } else {
+        rejectBlockFormatSuggestion(
+          ctx,
+          found.item as BlockFormatSuggestionItem,
+          {
+            snapshotAndApply,
+            setBlockFormatSuggestions: setBlockFormatSuggestionsSync,
+            setActiveFormatId: setActiveFormatIdSync,
+            rejectedReferences,
+            reviewHistory,
+          },
+        );
+      }
 
       closeReviewTooltip(ctx, setActiveFormatIdSync, setActiveSuggestionSync);
       return;
     }
 
     applyWithSnapshot(() => {
-      const suspended = suspendActiveFormatOverlay(ctx);
+      deactivateActiveFormatSuggestion();
 
-      try {
-        const range =
-          type === "delete"
-            ? findDeleteGroupRangeInRuntime(reviewSegmentsRef.current, groupId)
-            : findInsertGroupRangeInRuntime(reviewSegmentsRef.current, groupId);
-        if (!range) return;
+      const range =
+        type === "delete"
+          ? findDeleteGroupRangeInRuntime(reviewSegmentsRef.current, groupId)
+          : findInsertGroupRangeInRuntime(reviewSegmentsRef.current, groupId);
 
-        if (type === "insert") {
+      if (!range) return;
 
-          recordRejectedReferences(
-            collectSuggestionReferencesByGroup(
-              reviewSegmentsRef.current,
+      if (type === "insert") {
+        recordRejectedReferences(
+          collectSuggestionReferencesByGroup(
+            reviewSegmentsRef.current,
+            groupId,
+            "insert",
+          ),
+        );
+
+        const removedText = getRuntimeTextInRange(
+          reviewSegmentsRef.current,
+          range.index,
+          range.length,
+        );
+
+        reviewSegmentsRef.current = deleteInsertGroupSegments(
+          reviewSegmentsRef.current,
+          groupId,
+          range,
+        );
+
+        reviewSegmentsRef.current = normalizeLineBreaksAfterRejectedInsert(
+          reviewSegmentsRef.current,
+          range,
+          removedText,
+          () => nextRuntimeSegmentId(ctx),
+        );
+
+        refreshEditorFromRuntime(ctx);
+
+        setFormatSuggestionsSync((prev) =>
+          refreshPreviewTextsAgainstRuntime(
+            ctx,
+            resolveFormatSuggestionsAfterMutation(
+              prev,
+              range,
               groupId,
               "insert",
+              "REJECT",
             ),
-          );
+          ),
+        );
 
-          const removedText = getRuntimeTextInRange(
-            reviewSegmentsRef.current,
-            range.index,
-            range.length,
-          );
-
-          reviewSegmentsRef.current = deleteInsertGroupSegments(
+        setBlockFormatSuggestionsSync((prev) =>
+          refreshBlockPreviewTextsAgainstRuntime(
+            ctx,
+            resolveFormatSuggestionsAfterMutation(
+              prev,
+              range,
+              groupId,
+              "insert",
+              "REJECT",
+            ),
+          ),
+        );
+      } else if (type === "delete") {
+        recordRejectedReferences(
+          collectSuggestionReferencesByGroup(
             reviewSegmentsRef.current,
             groupId,
-            range,
-          );
+            "delete",
+          ),
+        );
 
-          reviewSegmentsRef.current = normalizeLineBreaksAfterRejectedInsert(
-            reviewSegmentsRef.current,
-            range,
-            removedText,
-            () => nextRuntimeSegmentId(ctx),
-          );
+        reviewSegmentsRef.current = restoreRejectedDeleteSegments(
+          reviewSegmentsRef.current,
+          groupId,
+        );
 
-          refreshEditorFromRuntime(ctx);
+        refreshEditorFromRuntime(ctx);
 
-          setFormatSuggestionsSync((prev) =>
-            refreshPreviewTextsAgainstRuntime(
-              ctx,
-              resolveFormatSuggestionsAfterMutation(
-                prev,
-                range,
-                groupId,
-                "insert",
-                "REJECT",
-              ),
-            ),
-          );
-        } else if (type === "delete") {
-          recordRejectedReferences(
-            collectSuggestionReferencesByGroup(
-              reviewSegmentsRef.current,
+        setFormatSuggestionsSync((prev) =>
+          refreshPreviewTextsAgainstRuntime(
+            ctx,
+            resolveFormatSuggestionsAfterMutation(
+              prev,
+              range,
               groupId,
               "delete",
+              "REJECT",
             ),
-          );
+          ),
+        );
 
-          reviewSegmentsRef.current = restoreRejectedDeleteSegments(
-            reviewSegmentsRef.current,
-            groupId,
-          );
-
-          refreshEditorFromRuntime(ctx);
-
-          setFormatSuggestionsSync((prev) =>
-            refreshPreviewTextsAgainstRuntime(
-              ctx,
-              resolveFormatSuggestionsAfterMutation(
-                prev,
-                range,
-                groupId,
-                "delete",
-                "REJECT",
-              ),
+        setBlockFormatSuggestionsSync((prev) =>
+          refreshBlockPreviewTextsAgainstRuntime(
+            ctx,
+            resolveFormatSuggestionsAfterMutation(
+              prev,
+              range,
+              groupId,
+              "delete",
+              "REJECT",
             ),
-          );
-        }
-      } finally {
-        restoreActiveFormatOverlay(ctx, suspended);
+          ),
+        );
       }
     }, "REJECT");
 
@@ -778,6 +946,7 @@ function EditContent() {
       rejectedReferences,
       acceptedReferences,
       setFormatSuggestions: setFormatSuggestionsSync,
+      setBlockFormatSuggestions: setBlockFormatSuggestionsSync,
       setActiveFormatId: setActiveFormatIdSync,
       setActiveSuggestion: setActiveSuggestionSync,
     });
@@ -914,8 +1083,8 @@ function EditContent() {
     setIsReviewing(true);
     setReviewLoaded(false);
     setShowReviewSidebarModal(true);
-    setActiveSuggestion(null);
-    setActiveFormatId(null);
+    setActiveSuggestionSync(null);
+    setActiveFormatIdSync(null);
 
     await apiFetch(`notes/${noteId}/review`, { method: "GET" });
 
@@ -924,26 +1093,35 @@ function EditContent() {
       { method: "GET" },
     );
 
-    quill.setContents(new Delta(projection.baseDelta.ops), "api");
+    const baseDelta = new Delta(projection.baseDelta?.ops || []);
+    const visualDelta = new Delta(projection.visualDelta?.ops || []);
 
-    if (projection.visualDelta.ops.length > 0) {
-      quill.updateContents(new Delta(projection.visualDelta.ops), "api");
-    }
-
-    const renderedDelta = quill.getContents();
-
-    const hasPending =
-      hasSuggestionAttributes(renderedDelta) ||
-      projection.formatSuggestions.length > 0;
-
-    setFormatSuggestions(projection.formatSuggestions);
-    setHasPendingSuggestions(hasPending);
-    setReviewLoaded(true);
+    quill.setContents(baseDelta, "api");
+    quill.updateContents(visualDelta, "api");
+    
+    const runtimeReviewDelta = baseDelta.compose(visualDelta);
 
     reviewSegmentsRef.current = deltaToSegments(
-      quill.getContents(),
+      runtimeReviewDelta,
       () => nextRuntimeSegmentId(getReviewCtx()),
     );
+
+    const inlineFormatItems = projection.formatSuggestions ?? [];
+    const blockFormatItems = projection.blockFormatSuggestions ?? [];
+
+    formatSuggestionsRef.current = inlineFormatItems;
+    blockFormatSuggestionsRef.current = blockFormatItems;
+
+    setFormatSuggestions(inlineFormatItems);
+    setBlockFormatSuggestions(blockFormatItems);
+
+    setHasPendingSuggestions(
+      hasSuggestionAttributes(runtimeReviewDelta) ||
+        inlineFormatItems.length > 0 ||
+        blockFormatItems.length > 0,
+    );
+
+    setReviewLoaded(true);
 
     quill.root.removeEventListener("click", handleClick);
     quill.root.addEventListener("click", handleClick);
@@ -959,7 +1137,8 @@ function EditContent() {
           attrs["suggestion-delete-singleline"] ||
           attrs["suggestion-delete-multiline"] ||
           attrs["suggestion-delete-newline"] ||
-          attrs["suggestion-format"],
+          attrs["suggestion-format"] ||
+          attrs["suggestion-block-format"],
       );
     });
   }
@@ -1001,13 +1180,15 @@ function EditContent() {
       reviewSegmentsRef.current = [];
       runtimeSegCtrRef.current = 0;
       formatSuggestionsRef.current = [];
+      blockFormatSuggestionsRef.current = [];
       activeFormatIdRef.current = null;
       activeSuggestionRef.current = null;
       reviewHistory.current = [];
       acceptedReferences.current = [];
       rejectedReferences.current = [];
-
+      
       setFormatSuggestions([]);
+      setBlockFormatSuggestions([]);
       setActiveFormatId(null);
       setActiveSuggestion(null);
       setHasPendingSuggestions(false);
@@ -1098,14 +1279,16 @@ function EditContent() {
       runtimeSegCtrRef.current = 0;
 
       formatSuggestionsRef.current = [];
+      blockFormatSuggestionsRef.current = [];
       activeFormatIdRef.current = null;
       activeSuggestionRef.current = null;
-
+      
       reviewHistory.current = [];
       acceptedReferences.current = [];
       rejectedReferences.current = [];
-
+      
       setFormatSuggestions([]);
+      setBlockFormatSuggestions([]);
       setActiveFormatId(null);
       setActiveSuggestion(null);
       setHasPendingSuggestions(false);
@@ -1540,17 +1723,11 @@ function EditContent() {
               />
             </div>
 
-            {showReviewSidebarModal && note.accessRole === "OWNER" && (
+            {showReviewSidebarModal && reviewLoaded && note.accessRole === "OWNER" && (
               <FormatSidebarModal
                 open={showReviewSidebarModal}
                 hasPendingSuggestions={hasPendingSuggestions}
-                formatSuggestions={formatSuggestions.filter(
-                  (item) =>
-                    canActOnFormatSuggestion(
-                      getReviewCtx(),
-                      item
-                    )
-                )}
+                formatSuggestions={getVisibleFormatSuggestions()}
                 activeFormatId={activeFormatId}
                 onActivateFormat={(groupId) =>
                   activateFormatSuggestion(
@@ -1558,14 +1735,11 @@ function EditContent() {
                     groupId,
                     setActiveFormatIdSync,
                     setActiveSuggestionSync,
-                    closeReviewTooltip
+                    closeReviewTooltip,
                   )
                 }
-                onClose={
-                  hasPendingSuggestions
-                    ? () => setShowExitReviewModal(true)
-                    : handleExitReview
-                }
+                canActOnFormat={(item) => isFormatSuggestionUnlocked(item)}
+                onClose={() => setShowExitReviewModal(true)}
                 onSave={saveVersion}
               />
             )}

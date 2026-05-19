@@ -6,6 +6,8 @@ import {
   ReviewSegment,
   Reference,
   TooltipState,
+  BlockFormatSuggestionItem,
+  ReviewFormatSuggestion,
 } from "../types";
 
 // ─── Format suggestion utilities ──────────────────────────────────────────────
@@ -26,6 +28,24 @@ export function cloneFormatSuggestions(
   }));
 }
 
+export function cloneBlockFormatSuggestions(
+  items: BlockFormatSuggestionItem[],
+): BlockFormatSuggestionItem[] {
+  return items.map((item) => ({
+    groupId: item.groupId,
+    actorEmail: item.actorEmail,
+    createdAt: item.createdAt,
+    attributeKey: item.attributeKey,
+    attributeValue: cloneJsonValue(item.attributeValue),
+    behavior: item.behavior,
+    conflictGroup: item.conflictGroup,
+    references: cloneSuggestionReferences(item.references ?? []),
+    previewText: item.previewText,
+    dependsOnInsertGroupIds: [...(item.dependsOnInsertGroupIds ?? [])],
+    dependsOnDeleteGroupIds: [...(item.dependsOnDeleteGroupIds ?? [])],
+  }));
+}
+
 // ─── Quill delta utilities ────────────────────────────────────────────────────
 
 export function stripSuggestionAttributes(delta: Delta): Delta {
@@ -35,6 +55,7 @@ export function stripSuggestionAttributes(delta: Delta): Delta {
 
       const {
         "suggestion-format": _f,
+        "suggestion-block-format": _bf,
         "suggestion-delete": _d,
         "suggestion-delete-newline": _dn,
         "suggestion-delete-singleline": _dsl,
@@ -51,15 +72,21 @@ export function stripSuggestionAttributes(delta: Delta): Delta {
   );
 }
 
-export function buildFormatOverlayDelta(item: FormatSuggestionItem): Delta {
+export function buildFormatOverlayDelta(
+  item: ReviewFormatSuggestion,
+): Delta {
   const delta = new Delta();
   let pos = 0;
+
+  const ranges = rangesFromReferences(item.references ?? []);
+
+  if (isBlockFormatSuggestion(item)) {
+    return delta;
+  }
 
   const attributes = {
     [item.attributeKey]: item.attributeValue,
   };
-
-  const ranges = rangesFromReferences(item.references ?? []);
 
   for (const range of ranges) {
     if (range.start > pos) {
@@ -82,11 +109,17 @@ export function buildFormatOverlayDelta(item: FormatSuggestionItem): Delta {
   return delta;
 }
 
-export function buildFormatOverlayClearDelta(item: FormatSuggestionItem): Delta {
+export function buildFormatOverlayClearDelta(
+  item: ReviewFormatSuggestion,
+): Delta {
   const delta = new Delta();
   let pos = 0;
 
   const ranges = rangesFromReferences(item.references ?? []);
+
+  if (isBlockFormatSuggestion(item)) {
+    return delta;
+  }
 
   for (const range of ranges) {
     if (range.start > pos) {
@@ -127,15 +160,19 @@ export function deltaToSegments(
         allAttrs["suggestion-delete-newline"] ??
         null;
 
-      const baseAttributes: Record<string, any> =
-        insertMeta?.baseAttributes ??
-        deleteMeta?.baseAttributes ??
-        stripRuntimeSuggestionAttrs(allAttrs);
+      let baseAttributes: Record<string, any>;
+      let suggestionAttributes: Record<string, any>;
 
-      const suggestionAttributes: Record<string, any> =
-        insertMeta?.suggestionAttributes ??
-        deleteMeta?.suggestionAttributes ??
-        {};
+      if (insertMeta) {
+        baseAttributes = { ...(insertMeta.baseAttributes ?? {}) };
+        suggestionAttributes = { ...(insertMeta.suggestionAttributes ?? {}) };
+      } else if (deleteMeta) {
+        baseAttributes = { ...(deleteMeta.baseAttributes ?? {}) };
+        suggestionAttributes = { ...(deleteMeta.suggestionAttributes ?? {}) };
+      } else {
+        baseAttributes = stripRuntimeSuggestionAttrs(allAttrs);
+        suggestionAttributes = {};
+      }
 
       const references: Reference[] = cloneSuggestionReferences(
         insertMeta?.references ??
@@ -218,7 +255,7 @@ export function mergeAdjacentSegments(
   return merged;
 }
 
-export function segmentsToDelta(segments: ReviewSegment[]): Delta {
+export function segmentsToBaseDelta(segments: ReviewSegment[]): Delta {
   const delta = new Delta();
 
   for (const seg of segments) {
@@ -233,8 +270,31 @@ export function segmentsToDelta(segments: ReviewSegment[]): Delta {
     delete attrs["suggestion-delete-singleline"];
     delete attrs["suggestion-delete-multiline"];
     delete attrs["suggestion-format"];
+    delete attrs["suggestion-block-format"];
+
+    delta.insert(
+      segmentInsertValue(seg),
+      Object.keys(attrs).length > 0 ? attrs : undefined,
+    );
+  }
+
+  return delta;
+}
+
+export function segmentsToSuggestionOverlayDelta(
+  segments: ReviewSegment[],
+): Delta {
+  const delta = new Delta();
+
+  let cursor = 0;
+
+  for (const seg of segments) {
+    const len = segmentLength(seg);
+
+    if (len <= 0) continue;
 
     const references = cloneSuggestionReferences(seg.references ?? []);
+    const attrs: Record<string, any> = {};
 
     if (seg.insertSuggestion) {
       attrs["suggestion-insert"] = {
@@ -269,10 +329,13 @@ export function segmentsToDelta(segments: ReviewSegment[]): Delta {
       }
     }
 
-    delta.insert(
-      segmentInsertValue(seg),
-      Object.keys(attrs).length > 0 ? attrs : undefined,
-    );
+    if (Object.keys(attrs).length > 0) {
+      delta.retain(len, attrs);
+    } else {
+      delta.retain(len);
+    }
+
+    cursor += len;
   }
 
   return delta;
@@ -587,7 +650,7 @@ export function getSuggestionSelector(
 
 export function restoreFormatSuggestionToBase(
   segments: ReviewSegment[],
-  item: FormatSuggestionItem,
+  item: ReviewFormatSuggestion,
 ): ReviewSegment[] {
   const key = item.attributeKey;
 
@@ -622,25 +685,30 @@ export function restoreFormatSuggestionToBase(
   return mergeAdjacentSegments(updated);
 }
 
-export function resolveFormatSuggestionsAfterMutation(
-  items: FormatSuggestionItem[],
+export function resolveFormatSuggestionsAfterMutation<
+  T extends ReviewFormatSuggestion,
+>(
+  items: T[],
   mutation: { index: number; length: number },
   mutationGroupId: string,
   mutationType: "insert" | "delete",
   action: "ACCEPT" | "REJECT",
-): FormatSuggestionItem[] {
+): T[] {
   const rangeStart = mutation.index;
-  const rangeEnd = rangeStart + mutation.length;
 
   const shouldShrink =
     (mutationType === "insert" && action === "REJECT") ||
     (mutationType === "delete" && action === "ACCEPT");
 
-  const next: FormatSuggestionItem[] = [];
+  const next: T[] = [];
 
   for (const item of items) {
     const updatedReferences = shouldShrink
-      ? removeRangeFromReferences(item.references ?? [], rangeStart, mutation.length)
+      ? removeRangeFromReferences(
+          item.references ?? [],
+          rangeStart,
+          mutation.length,
+        )
       : cloneSuggestionReferences(item.references ?? []);
 
     if (updatedReferences.length === 0) continue;
@@ -1016,6 +1084,7 @@ function stripRuntimeSuggestionAttrs(
 ): Record<string, any> {
   const {
     "suggestion-format": _f,
+    "suggestion-block-format": _bf,
     "suggestion-delete": _d,
     "suggestion-delete-newline": _dn,
     "suggestion-delete-singleline": _dsl,
@@ -1042,4 +1111,13 @@ function cloneSegment(seg: ReviewSegment): ReviewSegment {
       ? cloneDeleteSuggestion(seg.deleteSuggestion)
       : undefined,
   };
+}
+
+export function isBlockFormatSuggestion(
+  item: ReviewFormatSuggestion,
+): item is BlockFormatSuggestionItem {
+  return (
+    "behavior" in item ||
+    "conflictGroup" in item
+  );
 }

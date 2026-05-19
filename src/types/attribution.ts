@@ -35,10 +35,40 @@ export interface FormatSuggestionItem {
   dependsOnDeleteGroupIds: string[];
 }
 
+export type BlockFormatBehavior =
+  | "CONTINUING"
+  | "NON_CONTINUING"
+  | "COEXISTING";
+
+export type BlockFormatConflictGroup =
+  | "EXCLUSIVE_BLOCK_STYLE"
+  | "ALIGNMENT"
+  | "INDENT"
+  | "DIRECTION";
+
+export interface BlockFormatSuggestionItem {
+  groupId: string;
+  actorEmail: string;
+  createdAt: string;
+  attributeKey: string;
+  attributeValue: any;
+  behavior: BlockFormatBehavior;
+  conflictGroup: BlockFormatConflictGroup;
+  references: Reference[];
+  previewText: string;
+  dependsOnInsertGroupIds: string[];
+  dependsOnDeleteGroupIds: string[];
+}
+
+export type ReviewFormatSuggestion =
+  | FormatSuggestionItem
+  | BlockFormatSuggestionItem;
+
 export interface ReviewProjection {
   baseDelta: Delta;
   visualDelta: Delta;
   formatSuggestions: FormatSuggestionItem[];
+  blockFormatSuggestions: BlockFormatSuggestionItem[];
 }
 
 export interface ReviewSegment {
@@ -74,9 +104,16 @@ export interface FormatSuggestionUndoPatch {
   before: FormatSuggestionItem[];
 }
 
+export interface BlockFormatSuggestionUndoPatch {
+  index: number;
+  deleteCount: number;
+  before: BlockFormatSuggestionItem[];
+}
+
 export interface ReviewUndoPatch {
   segmentsPatch: SegmentUndoPatch | null;
   formatSuggestionsPatch: FormatSuggestionUndoPatch | null;
+  blockFormatSuggestionsPatch: BlockFormatSuggestionUndoPatch | null;
   activeSuggestionBefore: TooltipState | null;
   activeFormatIdBefore: string | null;
 }

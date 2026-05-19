@@ -1,24 +1,26 @@
 import {
   buildFormatOverlayClearDelta,
   buildFormatOverlayDelta,
+  isBlockFormatSuggestion,
   restoreFormatSuggestionToBase,
 } from "../attribution";
 import {
+  applyBlockFormatDomOverlay,
   canActOnFormatSuggestion,
+  clearBlockFormatDomOverlay,
+  findRuntimeFormatSuggestion,
   refreshEditorFromRuntime,
   ReviewRuntimeContext,
 } from "./runtimeHelpers";
-import { FormatSuggestionItem, ReviewEntry, TooltipState } from "@/src/types";
+import {
+  BlockFormatSuggestionItem,
+  FormatSuggestionItem,
+  ReviewEntry,
+  ReviewFormatSuggestion,
+  TooltipState,
+} from "@/src/types";
 import { snapshotAndApply } from "./reviewHistory";
-import Delta from "quill-delta";
 
-// ---------------------------------------------------------------------------
-// activateFormatSuggestion
-// ---------------------------------------------------------------------------
-// Clears any previously active overlay, then applies the new one and updates
-// the tooltip to point at the activated format suggestion.
-// Toggling the same groupId twice closes the tooltip instead.
-// ---------------------------------------------------------------------------
 export function activateFormatSuggestion(
   ctx: ReviewRuntimeContext,
   groupId: string,
@@ -33,26 +35,38 @@ export function activateFormatSuggestion(
   const quill = ctx.quill;
   if (!quill) return;
 
-  const fmts = ctx.formatSuggestionsRef.current;
   const prevId = ctx.activeFormatIdRef.current;
 
   if (prevId) {
-    const prev = fmts.find((f) => f.groupId === prevId);
+    const prev = findRuntimeFormatSuggestion(ctx, prevId);
+
     if (prev) {
-      quill.updateContents(buildFormatOverlayClearDelta(prev), "api");
+      if (isBlockFormatSuggestion(prev)) {
+        clearBlockFormatDomOverlay(ctx);
+      } else {
+        quill.updateContents(buildFormatOverlayClearDelta(prev), "api");
+      }
     }
   }
 
-  // Toggle off if the same item is clicked again.
   if (prevId === groupId) {
     closeTooltip(ctx, setActiveFormatId, setActiveSuggestion);
     return;
   }
 
-  const item = fmts.find((f) => f.groupId === groupId);
+  const item = findRuntimeFormatSuggestion(ctx, groupId);
   if (!item) return;
 
-  quill.updateContents(buildFormatOverlayDelta(item), "api");
+  if (!canActOnFormatSuggestion(ctx, item)) {
+    return;
+  }
+
+  if (isBlockFormatSuggestion(item)) {
+    applyBlockFormatDomOverlay(ctx, item);
+  } else {
+    quill.updateContents(buildFormatOverlayDelta(item), "api");
+  }
+
   setActiveFormatId(groupId);
   setActiveSuggestion({
     groupId: item.groupId,
@@ -69,12 +83,6 @@ export function activateFormatSuggestion(
   });
 }
 
-// ---------------------------------------------------------------------------
-// closeReviewTooltip
-// ---------------------------------------------------------------------------
-// Clears an active format overlay (if the tooltip is showing a format
-// suggestion) then nulls out the tooltip state.
-// ---------------------------------------------------------------------------
 export function closeReviewTooltip(
   ctx: ReviewRuntimeContext,
   setActiveFormatId: (v: string | null) => void,
@@ -84,34 +92,78 @@ export function closeReviewTooltip(
   const activeId = ctx.activeFormatIdRef.current;
 
   if (quill && ctx.activeSuggestionRef.current?.type === "format" && activeId) {
-    const activeItem = ctx.formatSuggestionsRef.current.find(
-      (f) => f.groupId === activeId,
-    );
+    const activeItem = findRuntimeFormatSuggestion(ctx, activeId);
+
     if (activeItem) {
-      quill.updateContents(buildFormatOverlayClearDelta(activeItem), "api");
+      if (isBlockFormatSuggestion(activeItem)) {
+        clearBlockFormatDomOverlay(ctx);
+      } else {
+        quill.updateContents(buildFormatOverlayClearDelta(activeItem), "api");
+      }
     }
+
     setActiveFormatId(null);
   }
 
   setActiveSuggestion(null);
 }
 
-// ---------------------------------------------------------------------------
-// acceptFormatSuggestion
-// ---------------------------------------------------------------------------
-// Accepts a format suggestion: clears its overlay, removes it from the list,
-// records accepted references, and snapshots for undo.
-// ---------------------------------------------------------------------------
 export function acceptFormatSuggestion(
   ctx: ReviewRuntimeContext,
   item: FormatSuggestionItem,
   deps: {
     snapshotAndApply: typeof snapshotAndApply;
-    setFormatSuggestions: (updater: (prev: FormatSuggestionItem[]) => FormatSuggestionItem[]) => void;
+    setFormatSuggestions: (
+      updater: (prev: FormatSuggestionItem[]) => FormatSuggestionItem[],
+    ) => void;
     setActiveFormatId: (v: string | null) => void;
     acceptedReferences: { current: any[] };
     reviewHistory: { current: ReviewEntry[] };
-  }
+  },
+) {
+  acceptAnyFormatSuggestion(ctx, item, {
+    snapshotAndApply: deps.snapshotAndApply,
+    setSuggestions: deps.setFormatSuggestions,
+    setActiveFormatId: deps.setActiveFormatId,
+    acceptedReferences: deps.acceptedReferences,
+    reviewHistory: deps.reviewHistory,
+  });
+}
+
+export function acceptBlockFormatSuggestion(
+  ctx: ReviewRuntimeContext,
+  item: BlockFormatSuggestionItem,
+  deps: {
+    snapshotAndApply: typeof snapshotAndApply;
+    setBlockFormatSuggestions: (
+      updater: (
+        prev: BlockFormatSuggestionItem[],
+      ) => BlockFormatSuggestionItem[],
+    ) => void;
+    setActiveFormatId: (v: string | null) => void;
+    acceptedReferences: { current: any[] };
+    reviewHistory: { current: ReviewEntry[] };
+  },
+) {
+  acceptAnyFormatSuggestion(ctx, item, {
+    snapshotAndApply: deps.snapshotAndApply,
+    setSuggestions: deps.setBlockFormatSuggestions,
+    setActiveFormatId: deps.setActiveFormatId,
+    acceptedReferences: deps.acceptedReferences,
+    reviewHistory: deps.reviewHistory,
+  });
+}
+
+function acceptAnyFormatSuggestion<T extends ReviewFormatSuggestion>(
+  ctx: ReviewRuntimeContext,
+  item: T,
+  deps: {
+    snapshotAndApply: typeof snapshotAndApply;
+    setSuggestions: (updater: (prev: T[]) => T[]) => void;
+    setActiveFormatId: (v: string | null) => void;
+    acceptedReferences: { current: any[] };
+    reviewHistory: { current: ReviewEntry[] };
+  },
 ) {
   if (!canActOnFormatSuggestion(ctx, item)) return;
 
@@ -119,7 +171,12 @@ export function acceptFormatSuggestion(
     ctx,
     () => {
       const quill = ctx.quill!;
-      quill.updateContents(buildFormatOverlayClearDelta(item), "api");
+
+      if (isBlockFormatSuggestion(item)) {
+        clearBlockFormatDomOverlay(ctx);
+      } else {
+        quill.updateContents(buildFormatOverlayClearDelta(item), "api");
+      }
 
       deps.acceptedReferences.current.push(
         item.references.map((ref) => ({
@@ -131,7 +188,7 @@ export function acceptFormatSuggestion(
         })),
       );
 
-      deps.setFormatSuggestions((prev) =>
+      deps.setSuggestions((prev) =>
         prev.filter((f) => f.groupId !== item.groupId),
       );
 
@@ -144,18 +201,58 @@ export function acceptFormatSuggestion(
   );
 }
 
-// ---------------------------------------------------------------------------
-// rejectFormatSuggestion
-// ---------------------------------------------------------------------------
-// Rejects a format suggestion: clears its overlay, restores base formatting
-// in the runtime segments, refreshes the editor, and snapshots for undo.
-// ---------------------------------------------------------------------------
 export function rejectFormatSuggestion(
   ctx: ReviewRuntimeContext,
   item: FormatSuggestionItem,
   deps: {
     snapshotAndApply: typeof snapshotAndApply;
-    setFormatSuggestions: (updater: (prev: FormatSuggestionItem[]) => FormatSuggestionItem[]) => void;
+    setFormatSuggestions: (
+      updater: (prev: FormatSuggestionItem[]) => FormatSuggestionItem[],
+    ) => void;
+    setActiveFormatId: (v: string | null) => void;
+    rejectedReferences: { current: any[] };
+    reviewHistory: { current: ReviewEntry[] };
+  },
+) {
+  rejectAnyFormatSuggestion(ctx, item, {
+    snapshotAndApply: deps.snapshotAndApply,
+    setSuggestions: deps.setFormatSuggestions,
+    setActiveFormatId: deps.setActiveFormatId,
+    rejectedReferences: deps.rejectedReferences,
+    reviewHistory: deps.reviewHistory,
+  });
+}
+
+export function rejectBlockFormatSuggestion(
+  ctx: ReviewRuntimeContext,
+  item: BlockFormatSuggestionItem,
+  deps: {
+    snapshotAndApply: typeof snapshotAndApply;
+    setBlockFormatSuggestions: (
+      updater: (
+        prev: BlockFormatSuggestionItem[],
+      ) => BlockFormatSuggestionItem[],
+    ) => void;
+    setActiveFormatId: (v: string | null) => void;
+    rejectedReferences: { current: any[] };
+    reviewHistory: { current: ReviewEntry[] };
+  },
+) {
+  rejectAnyFormatSuggestion(ctx, item, {
+    snapshotAndApply: deps.snapshotAndApply,
+    setSuggestions: deps.setBlockFormatSuggestions,
+    setActiveFormatId: deps.setActiveFormatId,
+    rejectedReferences: deps.rejectedReferences,
+    reviewHistory: deps.reviewHistory,
+  });
+}
+
+function rejectAnyFormatSuggestion<T extends ReviewFormatSuggestion>(
+  ctx: ReviewRuntimeContext,
+  item: T,
+  deps: {
+    snapshotAndApply: typeof snapshotAndApply;
+    setSuggestions: (updater: (prev: T[]) => T[]) => void;
     setActiveFormatId: (v: string | null) => void;
     rejectedReferences: { current: any[] };
     reviewHistory: { current: ReviewEntry[] };
@@ -167,7 +264,13 @@ export function rejectFormatSuggestion(
     ctx,
     () => {
       const quill = ctx.quill!;
-      quill.updateContents(buildFormatOverlayClearDelta(item), "api");
+
+      if (isBlockFormatSuggestion(item)) {
+        clearBlockFormatDomOverlay(ctx);
+      } else {
+        quill.updateContents(buildFormatOverlayClearDelta(item), "api");
+      }
+
       deps.rejectedReferences.current.push(
         item.references.map((ref) => ({
           opId: ref.opId,
@@ -185,9 +288,10 @@ export function rejectFormatSuggestion(
 
       refreshEditorFromRuntime(ctx);
 
-      deps.setFormatSuggestions((prev) =>
+      deps.setSuggestions((prev) =>
         prev.filter((f) => f.groupId !== item.groupId),
       );
+
       deps.setActiveFormatId(null);
     },
     "REJECT",

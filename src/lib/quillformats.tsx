@@ -99,11 +99,7 @@ function readCommonSuggestionAttrs(node: HTMLElement) {
     groupId: node.getAttribute("data-group-id") ?? "",
     actorEmail: node.getAttribute("data-actor-email") ?? "",
     createdAt: node.getAttribute("data-created-at") ?? "",
-    references: getJsonObject<Reference[]>(
-      node,
-      "data-references",
-      [],
-    ),
+    references: getJsonObject<Reference[]>(node, "data-references", []),
     baseAttributes: getJsonObject<Record<string, any>>(
       node,
       "data-base-attributes",
@@ -120,19 +116,18 @@ function readCommonSuggestionAttrs(node: HTMLElement) {
 export function registerFormats(QuillModule: typeof Quill) {
   if (formatsRegistered) return;
   formatsRegistered = true;
-
+  
   const Inline = QuillModule.import("blots/inline") as any;
-
+  const Parchment = QuillModule.import("parchment") as any;
+  
   class SuggestionInsert extends Inline {
     static blotName = "suggestion-insert";
     static tagName = "span";
 
     static create(data: SuggestionPayload) {
       const node = super.create() as HTMLElement;
-
       setCommonSuggestionAttrs(node, data, "insert");
       node.classList.add("suggestion-insert");
-
       return node;
     }
 
@@ -147,10 +142,8 @@ export function registerFormats(QuillModule: typeof Quill) {
 
     static create(data: SuggestionPayload) {
       const node = super.create() as HTMLElement;
-
       setCommonSuggestionAttrs(node, data, "delete");
       node.classList.add("suggestion-delete");
-
       return node;
     }
 
@@ -165,10 +158,8 @@ export function registerFormats(QuillModule: typeof Quill) {
 
     static create(data: SuggestionPayload) {
       const node = super.create() as HTMLElement;
-
       setCommonSuggestionAttrs(node, data, "delete");
       node.classList.add("suggestion-delete-singleline");
-
       return node;
     }
 
@@ -183,10 +174,8 @@ export function registerFormats(QuillModule: typeof Quill) {
 
     static create(data: SuggestionPayload) {
       const node = super.create() as HTMLElement;
-
       setCommonSuggestionAttrs(node, data, "delete");
       node.classList.add("suggestion-delete-multiline");
-
       return node;
     }
 
@@ -259,10 +248,19 @@ export function registerFormats(QuillModule: typeof Quill) {
     }
   }
 
+  const SuggestionBlockFormat = new Parchment.Attributor(
+    "suggestion-block-format",
+    "data-suggestion-block-format",
+    {
+      scope: Parchment.Scope.BLOCK,
+    },
+  );
+
   QuillModule.register(SuggestionInsert, true);
   QuillModule.register(SuggestionDelete, true);
   QuillModule.register(SuggestionDeleteSingleLine, true);
   QuillModule.register(SuggestionDeleteMultiLine, true);
   QuillModule.register(SuggestionFormat, true);
   QuillModule.register(AuditFormatActive, true);
+  QuillModule.register(SuggestionBlockFormat, true);
 }
