@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Zap, ShieldCheck, Globe2 } from "lucide-react";
 
 export default function Home() {
   return (
@@ -31,9 +32,20 @@ export default function Home() {
         </div>
 
         <div className="mt-20 flex flex-wrap justify-center gap-8 text-sm font-medium text-zinc-400">
-          <span className="flex items-center gap-2">⚡ Live Sync</span>
-          <span className="flex items-center gap-2">🛡️ Granular Roles</span>
-          <span className="flex items-center gap-2">🌐 Public/Private</span>
+          <span className="flex items-center gap-2">
+            <Zap size={16} className="text-[#2F855A]" />
+            Live Sync
+          </span>
+
+          <span className="flex items-center gap-2">
+            <ShieldCheck size={16} className="text-[#2F855A]" />
+            Granular Roles
+          </span>
+
+          <span className="flex items-center gap-2">
+            <Globe2 size={16} className="text-[#2F855A]" />
+            Public/Private
+          </span>
         </div>
       </main>
 
