@@ -22,7 +22,7 @@ export default function VisibilityModal({
   onVisibilityChanged,
 }: VisibilityModalProps) {
   const [currentVisibility, setCurrentVisibility] =
-    useState<NoteVisibility>("PRIVATE");
+    useState<NoteVisibility>(visibility);
 
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -31,6 +31,8 @@ export default function VisibilityModal({
 
   useEffect(() => {
     if (!open) return;
+
+    let cancelled = false;
 
     async function fetchLatestVisibility() {
       setLoading(true);
@@ -41,18 +43,36 @@ export default function VisibilityModal({
           { method: "GET" },
         );
 
+        if (cancelled) return;
+
         setCurrentVisibility(note.visibility);
-        onVisibilityChanged?.(note.visibility);
+
+        /**
+         * Important:
+         * Do NOT call onVisibilityChanged here.
+         *
+         * This fetch is only to refresh the modal UI.
+         * Calling onVisibilityChanged here updates the parent note state,
+         * which can cause the effect to run repeatedly.
+         */
       } catch (err: any) {
+        if (cancelled) return;
+
         alert(err.message || "Failed to fetch visibility");
         setCurrentVisibility(visibility);
       } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     }
 
     fetchLatestVisibility();
-  }, [open, noteId, visibility, onVisibilityChanged]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, noteId]);
 
   async function handleChangeVisibility(value: NoteVisibility) {
     if (!canEdit || value === currentVisibility) return;
