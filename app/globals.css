@@ -12,7 +12,23 @@
   --text-muted: #64748b;
   --border: #e2e8f0;
   --radius: 10px;
-  --shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 /0.1);
+  --shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1),
+    0 2px 4px -2px rgb(0 0 0 / 0.1);
+
+  --suggestion-insert-bg: #dbeafe;
+  --suggestion-insert-hover: #bfdbfe;
+  --suggestion-insert-active: #60a5fa;
+
+  --suggestion-delete-bg: #fee2e2;
+  --suggestion-delete-hover: #fecaca;
+  --suggestion-delete-active: #f87171;
+  --suggestion-delete-text: #b91c1c;
+  --suggestion-delete-line: #dc2626;
+
+  --suggestion-format-bg: #facc15;
+  --suggestion-block-bg: #ffedd5;
+  --suggestion-block-hover: #fed7aa;
+  --suggestion-block-bar: #f97316;
 }
 
 @theme inline {
@@ -43,12 +59,10 @@ body {
   outline: none;
 }
 
-/* Make paragraphs feel natural */
 .ProseMirror p {
   margin: 0.5em 0;
 }
 
-/* Optional: nicer caret spacing */
 .ProseMirror > * {
   line-height: 1.6;
 }
@@ -73,7 +87,7 @@ body {
 }
 
 .container-component {
-  max-width: 300;
+  max-width: 300px;
   margin: 40px auto;
   padding: 2rem;
   background: var(--bg-card);
@@ -93,157 +107,6 @@ body {
 }
 
 /* Buttons */
-.btn-primary {
-  background-color: var(--primary);
-  color: white;
-  padding: 10px 20px;
-  border-radius: 6px;
-  border: none;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.btn-primary:hover {
-  background-color: var(--primary-hover);
-}
-
-.btn-secondary {
-  background-color: transparent;
-  color: var(--text-main);
-  border: 1px solid var(--border);
-  padding: 8px 16px;
-  border-radius: 6px;
-  cursor: pointer;
-}
-
-.btn-secondary:hover {
-  background-color: var(--secondary-hover);
-}
-
-.btn-delete {
-  background-color: var(--delete);
-  color: white;
-  border: none;
-  padding: 8px 16px;
-  border-radius: 6px;
-  cursor: pointer;
-}
-
-.btn-delete:hover {
-  background-color: var(--delete-hover);
-}
-
-.suggestion-insert {
-  background-color: #dbeafe;   /* soft blue */
-  border-radius: 2px;
-  padding: 0 1px;
-  cursor: pointer;
-  transition: background-color 0.15s;
-}
-.suggestion-insert.hover {
-  background-color: #bfdbfe;
-}
-.suggestion-insert.active {
-  background-color: #60a5fa;
-}
-
-.suggestion-delete {
-  text-decoration: line-through;
-  text-decoration-color: #dc2626;
-  background-color: #fee2e2;
-  border-radius: 2px;
-  padding: 0 1px;
-  cursor: pointer;
-  color: #b91c1c;
-  transition: background-color 0.15s;
-}
-
-.suggestion-delete.hover {
-  background-color: #fecaca;
-}
-
-.suggestion-delete.active {
-  background-color: #f87171;
-}
-
-.suggestion-delete-singleline {
-  display: inline-block;
-  padding: 0 3px;
-  margin: 0 1px;
-  border-radius: 3px;
-  background-color: #fee2e2;
-  color: #b91c1c;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background-color 0.15s;
-  text-decoration: none !important;
-}
-
-.suggestion-delete-singleline.hover {
-  background-color: #fecaca;
-}
-
-.suggestion-delete-singleline.active {
-  background-color: #f87171;
-}
-
-.suggestion-delete-multiline {
-  text-decoration: line-through;
-  text-decoration-color: #dc2626;
-  background-color: #fee2e2;
-  border-radius: 2px;
-  padding: 0 1px;
-  cursor: pointer;
-  color: #b91c1c;
-  transition: background-color 0.15s;
-}
-
-.suggestion-delete-multiline.hover {
-  background-color: #fecaca;
-}
-
-.suggestion-delete-multiline.active {
-  background-color: #f87171;
-}
-
-/* Format marker — invisible by default, only shown when activated from sidebar */
-.suggestion-format {
-  background-color: transparent !important;
-  border-radius: 0;
-  padding: 0;
-  cursor: default;
-  transition: background-color 0.15s;
-}
-
-.suggestion-format.hover {
-  background-color: transparent !important;
-}
-
-.suggestion-format.active,
-.audit-format-active {
-  background-color: #facc15 !important;
-  border-radius: 0 !important;
-  padding: 0 1px;
-  cursor: pointer;
-  box-shadow: none !important;
-}
-
-/* .ql-toolbar {
-  display: none !important;
-} */
-.ql-container.ql-snow {
-  border: none !important;
-  font-size: inherit;
-  font-family: inherit;
-  line-height: inherit;
-}
-
-.button-group {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
 .btn-primary,
 .btn-secondary,
 .btn-outline,
@@ -267,8 +130,26 @@ body {
 }
 
 .btn-primary:hover {
+  background-color: var(--primary-hover);
   filter: brightness(1.1);
   transform: translateY(-1px);
+}
+
+.btn-primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+  filter: none;
+}
+
+.btn-secondary {
+  background-color: transparent;
+  color: var(--text-main);
+  border: 1px solid var(--border);
+}
+
+.btn-secondary:hover {
+  background-color: var(--secondary-hover);
 }
 
 .btn-outline {
@@ -293,10 +174,485 @@ body {
   color: var(--text-main);
 }
 
+.btn-delete {
+  background-color: var(--delete);
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.btn-delete:hover {
+  background-color: var(--delete-hover);
+}
+
+.button-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Quill base */
+.ql-container.ql-snow {
+  border: none !important;
+  font-size: inherit;
+  font-family: inherit;
+  line-height: inherit;
+}
+
+/* Insert suggestion */
+.suggestion-insert {
+  background-color: var(--suggestion-insert-bg);
+  border-radius: 2px;
+  padding: 0 1px;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.suggestion-insert.hover {
+  background-color: var(--suggestion-insert-hover);
+}
+
+.suggestion-insert.active {
+  background-color: var(--suggestion-insert-active);
+}
+
+/* Delete suggestion */
+.suggestion-delete {
+  text-decoration: line-through;
+  text-decoration-color: var(--suggestion-delete-line);
+  background-color: var(--suggestion-delete-bg);
+  border-radius: 2px;
+  padding: 0 1px;
+  cursor: pointer;
+  color: var(--suggestion-delete-text);
+  transition: background-color 0.15s;
+}
+
+.suggestion-delete.hover {
+  background-color: var(--suggestion-delete-hover);
+}
+
+.suggestion-delete.active {
+  background-color: var(--suggestion-delete-active);
+}
+
+/* Single-line delete marker */
+.suggestion-delete-singleline {
+  display: inline-block;
+  padding: 0 3px;
+  margin: 0 1px;
+  border-radius: 3px;
+  background-color: var(--suggestion-delete-bg);
+  color: var(--suggestion-delete-text);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.15s;
+  text-decoration: none !important;
+}
+
+.suggestion-delete-singleline.hover {
+  background-color: var(--suggestion-delete-hover);
+}
+
+.suggestion-delete-singleline.active {
+  background-color: var(--suggestion-delete-active);
+}
+
+/* Multi-line delete */
+.suggestion-delete-multiline {
+  text-decoration: line-through;
+  text-decoration-color: var(--suggestion-delete-line);
+  background-color: var(--suggestion-delete-bg);
+  border-radius: 2px;
+  padding: 0 1px;
+  cursor: pointer;
+  color: var(--suggestion-delete-text);
+  transition: background-color 0.15s;
+}
+
+.suggestion-delete-multiline.hover {
+  background-color: var(--suggestion-delete-hover);
+}
+
+.suggestion-delete-multiline.active {
+  background-color: var(--suggestion-delete-active);
+}
+
+/* Inline format marker.
+   Invisible by default. Visible only when activated from sidebar. */
+.suggestion-format {
+  background-color: transparent !important;
+  border-radius: 0;
+  padding: 0;
+  cursor: default;
+  transition: background-color 0.15s;
+}
+
+.suggestion-format.hover {
+  background-color: transparent !important;
+}
+
+/* Shared active inline format overlay for review + audit */
+.suggestion-format.active,
+.format-inline-active {
+  background-color: var(--suggestion-format-bg) !important;
+  border-radius: 0 !important;
+  padding: 0 1px;
+  cursor: pointer;
+  box-shadow: none !important;
+}
+
+/* Shared suspended inline styling while a format overlay is active */
+.format-inline-suspended {
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  color: inherit !important;
+}
+
+/* Keep active inline format visible over suspended insert/delete text */
+.format-inline-suspended.format-inline-active,
+.format-inline-suspended .format-inline-active {
+  background-color: var(--suggestion-format-bg) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  color: inherit !important;
+}
+
+/* Shared active block format overlay for review + audit */
+.ql-editor .format-block-active {
+  background-color: var(--suggestion-block-bg) !important;
+  box-shadow: inset 4px 0 0 var(--suggestion-block-bar);
+  border-radius: 0 !important;
+  transition: background-color 0.15s ease;
+}
+
+.ql-editor .format-block-active:hover {
+  background-color: var(--suggestion-block-hover) !important;
+}
+
+/* Quill block attributor styling, if you still apply suggestion-block-format through a Delta */
+.ql-editor [data-suggestion-block-format] {
+  background-color: var(--suggestion-block-bg) !important;
+  box-shadow: inset 4px 0 0 var(--suggestion-block-bar);
+  border-radius: 0 !important;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.ql-editor [data-suggestion-block-format]:hover {
+  background-color: var(--suggestion-block-hover) !important;
+}
+
+/* Image suggestions */
+.ql-editor .suggestion-insert img,
+.ql-editor img.suggestion-insert,
+.ql-editor [data-suggestion-type="insert"] img,
+.ql-editor img[data-suggestion-type="insert"] {
+  outline: 3px solid #60a5fa;
+  outline-offset: 4px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.ql-editor .suggestion-insert.active img,
+.ql-editor img.suggestion-insert.active,
+.ql-editor [data-suggestion-type="insert"].active img,
+.ql-editor img[data-suggestion-type="insert"].active {
+  outline: 4px solid #2563eb;
+  outline-offset: 5px;
+}
+
+.ql-editor .suggestion-delete img,
+.ql-editor .suggestion-delete-multiline img,
+.ql-editor img.suggestion-delete,
+.ql-editor img.suggestion-delete-multiline,
+.ql-editor [data-suggestion-type="delete"] img,
+.ql-editor img[data-suggestion-type="delete"] {
+  outline: 3px solid #dc2626;
+  outline-offset: 4px;
+  border-radius: 4px;
+  opacity: 0.65;
+  cursor: pointer;
+}
+
+.ql-editor .suggestion-delete.active img,
+.ql-editor .suggestion-delete-multiline.active img,
+.ql-editor img.suggestion-delete.active,
+.ql-editor img.suggestion-delete-multiline.active,
+.ql-editor [data-suggestion-type="delete"].active img,
+.ql-editor img[data-suggestion-type="delete"].active {
+  outline: 4px solid #b91c1c;
+  outline-offset: 5px;
+  opacity: 0.75;
+}
+
+.ql-editor .suggestion-format.active img,
+.ql-editor .format-inline-active img,
+.ql-editor img.suggestion-format.active,
+.ql-editor img.format-inline-active,
+.ql-editor [data-suggestion-type="format"].active img,
+.ql-editor img[data-suggestion-type="format"].active {
+  outline: 3px solid var(--suggestion-block-bar);
+  outline-offset: 4px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.ql-editor .suggestion-insert:has(img),
+.ql-editor .suggestion-delete:has(img),
+.ql-editor .suggestion-delete-multiline:has(img),
+.ql-editor .suggestion-format:has(img),
+.ql-editor .format-inline-active:has(img) {
+  background: transparent !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+  text-decoration: none !important;
+}
+
+/* Shared sidebar: review + audit */
+.suggestion-sidebar {
+  width: 280px;
+  flex-shrink: 0;
+  background-color: white;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.07);
+}
+
+.suggestion-sidebar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.suggestion-sidebar-title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.suggestion-sidebar-eyebrow {
+  font-size: 0.7rem;
+  color: #d97706;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.suggestion-sidebar-note {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.suggestion-sidebar-warning {
+  border: 1px solid #fcd34d;
+  background: #fef3c7;
+  color: #92400e;
+  border-radius: 12px;
+  padding: 0.75rem;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.suggestion-sidebar-section-title {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.suggestion-sidebar-empty {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  text-align: center;
+  line-height: 1.5;
+}
+
+.suggestion-sidebar-footer {
+  margin-top: auto;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border);
+}
+
+.suggestion-sidebar-close {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: white;
+  cursor: pointer;
+  font-size: 1rem;
+}
+
+/* Shared format suggestion cards */
+.format-suggestion-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.format-suggestion-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.65rem 0.75rem;
+  background-color: #fafafa;
+  transition: all 0.15s ease;
+}
+
+.format-suggestion-card.active {
+  border-color: var(--suggestion-block-bar);
+  background-color: #fff7ed;
+}
+
+.format-suggestion-card.disabled {
+  background-color: #f8fafc;
+  opacity: 0.65;
+}
+
+.format-suggestion-card-button {
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.format-suggestion-card.disabled .format-suggestion-card-button {
+  cursor: not-allowed;
+}
+
+.format-suggestion-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 0.25rem;
+  gap: 0.35rem;
+}
+
+.format-suggestion-card-title {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.format-suggestion-card.active .format-suggestion-card-title {
+  color: #9a3412;
+}
+
+.format-suggestion-kind {
+  font-size: 0.68rem;
+  border-radius: 999px;
+  padding: 1px 6px;
+  flex-shrink: 0;
+}
+
+.format-suggestion-kind.inline {
+  color: #7c3aed;
+  background: #ede9fe;
+}
+
+.format-suggestion-kind.block {
+  color: #ea580c;
+  background: #ffedd5;
+}
+
+.format-suggestion-card-meta {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.format-suggestion-card-preview {
+  font-size: 0.73rem;
+  color: #555;
+  margin-top: 0.25rem;
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 220px;
+}
+
+.format-suggestion-time {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin-top: 0.25rem;
+}
+
+.format-suggestion-disabled-message {
+  margin-top: 0.35rem;
+  font-size: 0.7rem;
+  color: #92400e;
+  background: #fef3c7;
+  border: 1px solid #fcd34d;
+  border-radius: 5px;
+  padding: 4px 6px;
+}
+
+/* Save version form */
+.save-version-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.save-version-label {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.save-version-input {
+  font-size: 0.8rem;
+  padding: 6px 10px;
+}
+
+.save-version-input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.save-version-disabled-message {
+  margin: 0;
+  font-size: 0.72rem;
+  color: #92400e;
+  line-height: 1.35;
+  background: #fef3c7;
+  border: 1px solid #fcd34d;
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.save-version-button {
+  font-size: 0.8rem;
+}
+
+.save-version-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Generic modal styles */
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.4);
+  background: rgba(0, 0, 0, 0.4);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -372,112 +728,4 @@ body {
   color: red;
   background: none;
   border: none;
-}
-
-/* Temporarily hide insert/delete styling while audit format is active */
-.audit-inline-suspended {
-  background: transparent !important;
-  border-color: transparent !important;
-  box-shadow: none !important;
-  color: inherit !important;
-}
-
-/* Keep format highlight visible even when it is on suspended insert/delete text */
-.audit-inline-suspended.audit-format-active,
-.audit-inline-suspended .audit-format-active {
-  background-color: #facc15 !important;
-  border-radius: 0 !important;
-  box-shadow: none !important;
-  color: inherit !important;
-}
-
-/* Image suggestions: same suggestion types, different visual treatment */
-.ql-editor .suggestion-insert img,
-.ql-editor img.suggestion-insert,
-.ql-editor [data-suggestion-type="insert"] img,
-.ql-editor img[data-suggestion-type="insert"] {
-  outline: 3px solid #60a5fa;
-  outline-offset: 4px;
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.ql-editor .suggestion-insert.active img,
-.ql-editor img.suggestion-insert.active,
-.ql-editor [data-suggestion-type="insert"].active img,
-.ql-editor img[data-suggestion-type="insert"].active {
-  outline: 4px solid #2563eb;
-  outline-offset: 5px;
-}
-
-.ql-editor .suggestion-delete img,
-.ql-editor .suggestion-delete-multiline img,
-.ql-editor img.suggestion-delete,
-.ql-editor img.suggestion-delete-multiline,
-.ql-editor [data-suggestion-type="delete"] img,
-.ql-editor img[data-suggestion-type="delete"] {
-  outline: 3px solid #dc2626;
-  outline-offset: 4px;
-  border-radius: 4px;
-  opacity: 0.65;
-  cursor: pointer;
-}
-
-.ql-editor .suggestion-delete.active img,
-.ql-editor .suggestion-delete-multiline.active img,
-.ql-editor img.suggestion-delete.active,
-.ql-editor img.suggestion-delete-multiline.active,
-.ql-editor [data-suggestion-type="delete"].active img,
-.ql-editor img[data-suggestion-type="delete"].active {
-  outline: 4px solid #b91c1c;
-  outline-offset: 5px;
-  opacity: 0.75;
-}
-
-.ql-editor .suggestion-format.active img,
-.ql-editor .audit-format-active img,
-.ql-editor img.suggestion-format.active,
-.ql-editor img.audit-format-active,
-.ql-editor [data-suggestion-type="format"].active img,
-.ql-editor img[data-suggestion-type="format"].active {
-  outline: 3px solid #f97316;
-  outline-offset: 4px;
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.ql-editor .suggestion-insert:has(img),
-.ql-editor .suggestion-delete:has(img),
-.ql-editor .suggestion-delete-multiline:has(img),
-.ql-editor .suggestion-format:has(img),
-.ql-editor .audit-format-active:has(img) {
-  background: transparent !important;
-  padding: 0 !important;
-  border-radius: 0 !important;
-  text-decoration: none !important;
-}
-
-/* Block format marker — applied to the whole Quill line/block */
-.ql-editor [data-suggestion-block-format] {
-  background-color: #ffedd5 !important;
-  box-shadow: inset 4px 0 0 #f97316;
-  border-radius: 0 !important;
-  cursor: pointer;
-  transition: background-color 0.15s ease;
-}
-
-/* Stronger active-looking block marker while the overlay exists */
-.ql-editor [data-suggestion-block-format]:hover {
-  background-color: #fed7aa !important;
-}
-
-.ql-editor .suggestion-block-format-active {
-  background-color: #ffedd5 !important;
-  box-shadow: inset 4px 0 0 #f97316;
-  border-radius: 0 !important;
-  transition: background-color 0.15s ease;
-}
-
-.ql-editor .suggestion-block-format-active:hover {
-  background-color: #fed7aa !important;
 }

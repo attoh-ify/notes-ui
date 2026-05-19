@@ -210,8 +210,8 @@ export function clearBlockFormatDomOverlay(ctx: ReviewRuntimeContext): void {
   quill.root
     .querySelectorAll(".suggestion-block-format-active")
     .forEach((el) => {
-      el.classList.remove("suggestion-block-format-active");
-      el.removeAttribute("data-active-block-format-group-id");
+      el.classList.remove("format-block-active");
+      el.removeAttribute("data-active-format-block-group-id");
     });
 }
 
@@ -234,8 +234,8 @@ export function applyBlockFormatDomOverlay(
 
     if (!domNode) continue;
 
-    domNode.classList.add("suggestion-block-format-active");
-    domNode.setAttribute("data-active-block-format-group-id", item.groupId);
+    domNode.classList.add("format-block-active");
+    domNode.setAttribute("data-active-format-block-group-id", item.groupId);
   }
 }
 

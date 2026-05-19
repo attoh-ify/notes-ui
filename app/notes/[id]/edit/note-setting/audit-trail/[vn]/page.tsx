@@ -15,9 +15,11 @@ import "quill/dist/quill.snow.css";
 import Delta from "quill-delta";
 
 import {
+  BlockFormatSuggestionItem,
   FormatSuggestionItem,
   Note,
   NoteVersion,
+  ReviewFormatSuggestion,
   ReviewProjection,
   TooltipState,
 } from "@/src/types";
@@ -25,6 +27,7 @@ import {
 import { registerFormats } from "@/src/lib/quillformats";
 import {
   getSuggestionSelector,
+  isBlockFormatSuggestion,
   rangesFromReferences,
 } from "@/src/lib/attribution";
 
@@ -40,9 +43,19 @@ function AuditNoteContent() {
 
   const [note, setNote] = useState<Note | null>(null);
   const [noteVersion, setNoteVersion] = useState<NoteVersion | null>(null);
-  const [formatSuggestions, setFormatSuggestions] = useState<FormatSuggestionItem[]>([]);
+
+  const [formatSuggestions, setFormatSuggestions] = useState<
+    FormatSuggestionItem[]
+  >([]);
+
+  const [blockFormatSuggestions, setBlockFormatSuggestions] = useState<
+    BlockFormatSuggestionItem[]
+  >([]);
+
   const [activeFormatId, setActiveFormatId] = useState<string | null>(null);
-  const [activeSuggestion, setActiveSuggestion] = useState<TooltipState | null>(null);
+  const [activeSuggestion, setActiveSuggestion] =
+    useState<TooltipState | null>(null);
+
   const [hasInlineSuggestions, setHasInlineSuggestions] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [quillReady, setQuillReady] = useState(false);
@@ -50,7 +63,10 @@ function AuditNoteContent() {
 
   const editorRef = useRef<HTMLDivElement>(null);
   const quillRef = useRef<Quill | null>(null);
+
   const formatSuggestionsRef = useRef<FormatSuggestionItem[]>([]);
+  const blockFormatSuggestionsRef = useRef<BlockFormatSuggestionItem[]>([]);
+
   const activeFormatIdRef = useRef<string | null>(null);
   const activeSuggestionRef = useRef<TooltipState | null>(null);
   const suspendedInlineGroupIdsRef = useRef<string[]>([]);
@@ -58,6 +74,10 @@ function AuditNoteContent() {
   useEffect(() => {
     formatSuggestionsRef.current = formatSuggestions;
   }, [formatSuggestions]);
+
+  useEffect(() => {
+    blockFormatSuggestionsRef.current = blockFormatSuggestions;
+  }, [blockFormatSuggestions]);
 
   useEffect(() => {
     activeFormatIdRef.current = activeFormatId;
@@ -149,17 +169,20 @@ function AuditNoteContent() {
 
         if (cancelled) return;
 
-        quill.setContents(new Delta(), "api");
+        const baseDelta = new Delta(projection.baseDelta?.ops ?? []);
+        const visualDelta = new Delta(projection.visualDelta?.ops ?? []);
 
-        if (projection.baseDelta?.ops?.length) {
-          quill.setContents(new Delta(projection.baseDelta.ops), "api");
-        }
+        quill.setContents(baseDelta, "api");
+        quill.updateContents(visualDelta, "api");
 
-        if (projection.visualDelta?.ops?.length) {
-          quill.updateContents(new Delta(projection.visualDelta.ops), "api");
-        }
+        const inlineFormatItems = projection.formatSuggestions ?? [];
+        const blockFormatItems = projection.blockFormatSuggestions ?? [];
 
-        setFormatSuggestions(projection.formatSuggestions ?? []);
+        formatSuggestionsRef.current = inlineFormatItems;
+        blockFormatSuggestionsRef.current = blockFormatItems;
+
+        setFormatSuggestions(inlineFormatItems);
+        setBlockFormatSuggestions(blockFormatItems);
 
         const inlineExists =
           !!quill.root.querySelector('[data-suggestion-type="insert"]') ||
@@ -182,6 +205,25 @@ function AuditNoteContent() {
     };
   }, [noteId, noteVersion?.id, isLoading, quillReady]);
 
+  function getAllFormatSuggestions(): ReviewFormatSuggestion[] {
+    return [
+      ...formatSuggestionsRef.current,
+      ...blockFormatSuggestionsRef.current,
+    ];
+  }
+
+  function findFormatSuggestionByGroupId(
+    groupId: string,
+  ): ReviewFormatSuggestion | null {
+    return (
+      formatSuggestionsRef.current.find((fmt) => fmt.groupId === groupId) ??
+      blockFormatSuggestionsRef.current.find(
+        (fmt) => fmt.groupId === groupId,
+      ) ??
+      null
+    );
+  }
+
   function clearAllAuditState() {
     const quill = quillRef.current;
     if (!quill) return;
@@ -189,9 +231,16 @@ function AuditNoteContent() {
     clearAuditFormatOverlay();
 
     quill.root
-      .querySelectorAll(".active, .hover, .audit-inline-suspended")
+      .querySelectorAll(
+        ".active, .hover, .format-inline-suspended, .format-block-active",
+      )
       .forEach((el) => {
-        el.classList.remove("active", "hover", "audit-inline-suspended");
+        el.classList.remove(
+          "active",
+          "hover",
+          "format-inline-suspended",
+          "format-block-active",
+        );
       });
 
     suspendedInlineGroupIdsRef.current = [];
@@ -204,20 +253,27 @@ function AuditNoteContent() {
     const length = quill.getLength();
 
     if (length > 0) {
-      quill.formatText(0, length, "audit-format-active", false, "api");
+      quill.formatText(0, length, "format-inline-active", false, "api");
     }
+
+    clearAuditBlockFormatOverlay();
   }
 
-  function clearAuditFormatDomOverlay() {
+  function clearAuditBlockFormatOverlay() {
     const quill = quillRef.current;
     if (!quill) return;
 
     quill.root
-      .querySelectorAll(".audit-format-active")
-      .forEach((el) => el.classList.remove("audit-format-active"));
+      .querySelectorAll(".format-block-active")
+      .forEach((el) => {
+        el.classList.remove("format-block-active");
+        el.removeAttribute("data-active-format-block-group-id");
+      });
   }
 
-  function getInlineGroupIdsInFormatRange(item: FormatSuggestionItem): string[] {
+  function getInlineGroupIdsInFormatRange(
+    item: ReviewFormatSuggestion,
+  ): string[] {
     const quill = quillRef.current;
     if (!quill) return [];
 
@@ -236,7 +292,13 @@ function AuditNoteContent() {
             : (domNode as HTMLElement);
 
         const host = element?.closest(
-          '[data-suggestion-type="insert"][data-group-id], [data-suggestion-type="delete"][data-group-id], [data-suggestion-type="delete-newline"][data-group-id]',
+          [
+            '[data-suggestion-type="insert"][data-group-id]',
+            '[data-suggestion-type="delete"][data-group-id]',
+            '[data-suggestion-type="delete-singleline"][data-group-id]',
+            '[data-suggestion-type="delete-multiline"][data-group-id]',
+            '[data-suggestion-type="delete-newline"][data-group-id]',
+          ].join(", "),
         ) as HTMLElement | null;
 
         const groupId = host?.getAttribute("data-group-id");
@@ -247,25 +309,32 @@ function AuditNoteContent() {
     return [...ids];
   }
 
-  function setInlineGroupsSuspended(groupIds: string[], suspended: boolean) {
+  function setInlineGroupsSuspended(
+    groupIds: string[],
+    suspended: boolean,
+  ) {
     const quill = quillRef.current;
     if (!quill) return;
 
     for (const groupId of groupIds) {
       quill.root
         .querySelectorAll(
-          `[data-group-id="${groupId}"][data-suggestion-type="insert"],
-          [data-group-id="${groupId}"][data-suggestion-type="delete"],
-          [data-group-id="${groupId}"][data-suggestion-type="delete-newline"]`,
+          [
+            `[data-group-id="${groupId}"][data-suggestion-type="insert"]`,
+            `[data-group-id="${groupId}"][data-suggestion-type="delete"]`,
+            `[data-group-id="${groupId}"][data-suggestion-type="delete-singleline"]`,
+            `[data-group-id="${groupId}"][data-suggestion-type="delete-multiline"]`,
+            `[data-group-id="${groupId}"][data-suggestion-type="delete-newline"]`,
+          ].join(", "),
         )
         .forEach((el) => {
-          if (suspended) el.classList.add("audit-inline-suspended");
-          else el.classList.remove("audit-inline-suspended");
+          if (suspended) el.classList.add("format-inline-suspended");
+          else el.classList.remove("format-inline-suspended");
         });
     }
   }
 
-  function suspendInlineGroupsForFormat(item: FormatSuggestionItem) {
+  function suspendInlineGroupsForFormat(item: ReviewFormatSuggestion) {
     const groupIds = getInlineGroupIdsInFormatRange(item);
     suspendedInlineGroupIdsRef.current = groupIds;
     setInlineGroupsSuspended(groupIds, true);
@@ -276,7 +345,7 @@ function AuditNoteContent() {
     suspendedInlineGroupIdsRef.current = [];
   }
 
-  function applyAuditFormatOverlay(item: FormatSuggestionItem) {
+  function applyAuditInlineFormatOverlay(item: FormatSuggestionItem) {
     const quill = quillRef.current;
     if (!quill) return;
 
@@ -284,10 +353,11 @@ function AuditNoteContent() {
 
     for (const range of ranges) {
       if (range.length <= 0) continue;
+
       quill.formatText(
         range.start,
         range.length,
-        "audit-format-active",
+         "format-inline-active",
         true,
         "api",
       );
@@ -296,46 +366,35 @@ function AuditNoteContent() {
     suspendInlineGroupsForFormat(item);
   }
 
-  function applyAuditFormatDomOverlay(item: FormatSuggestionItem) {
+  function applyAuditBlockFormatOverlay(item: BlockFormatSuggestionItem) {
     const quill = quillRef.current;
     if (!quill) return;
 
-    const ranges = rangesFromReferences(item.references ?? []);
+    clearAuditBlockFormatOverlay();
+
     const seen = new Set<HTMLElement>();
     const inlineIds = new Set<string>();
 
-    for (const range of ranges) {
-      const end = range.start + range.length;
+    for (const ref of item.references ?? []) {
+      const lineResult = quill.getLine(ref.reviewStart) as any;
 
-      for (let i = range.start; i < end; i++) {
-        const [leaf] = quill.getLeaf(i) as any[];
-        const domNode = leaf?.domNode as HTMLElement | Text | undefined;
-        if (!domNode) continue;
+      if (!lineResult) continue;
 
-        const element =
-          domNode.nodeType === Node.TEXT_NODE
-            ? domNode.parentElement
-            : (domNode as HTMLElement);
+      const [line] = lineResult;
+      const lineNode = line?.domNode as HTMLElement | undefined;
 
-        if (!element) continue;
+      if (lineNode && !seen.has(lineNode)) {
+        lineNode.classList.add("format-block-active");
+        lineNode.setAttribute(
+          "data-active-format-block-group-id",
+          item.groupId,
+        );
+        seen.add(lineNode);
+      }
 
-        const inlineHost = element.closest(
-          `[data-group-id][data-suggestion-type="insert"],
-          [data-group-id][data-suggestion-type="delete"],
-          [data-group-id][data-suggestion-type="delete-newline"]`,
-        ) as HTMLElement | null;
-
-        const target = inlineHost ?? element;
-
-        if (inlineHost) {
-          const groupId = inlineHost.getAttribute("data-group-id");
-          if (groupId) inlineIds.add(groupId);
-        }
-
-        if (!seen.has(target)) {
-          target.classList.add("audit-format-active");
-          seen.add(target);
-        }
+      const groupIds = getInlineGroupIdsInFormatRange(item);
+      for (const groupId of groupIds) {
+        inlineIds.add(groupId);
       }
     }
 
@@ -343,34 +402,13 @@ function AuditNoteContent() {
     setInlineGroupsSuspended([...inlineIds], true);
   }
 
-  function buildAuditFormatDelta(item: FormatSuggestionItem, active: boolean): Delta {
-    const delta = new Delta();
-    const ranges = rangesFromReferences(item.references ?? []);
-    let cursor = 0;
-
-    for (const range of ranges) {
-      if (range.start > cursor) {
-        delta.retain(range.start - cursor);
-      }
-
-      delta.retain(range.length, {
-        "suggestion-format": active
-          ? {
-              groupId: item.groupId,
-              actorEmail: item.actorEmail,
-              createdAt: item.createdAt,
-              attributes: {
-                [item.attributeKey]: item.attributeValue,
-              },
-              references: item.references ?? [],
-            }
-          : null,
-      });
-
-      cursor = range.start + range.length;
+  function applyAuditFormatOverlay(item: ReviewFormatSuggestion) {
+    if (isBlockFormatSuggestion(item)) {
+      applyAuditBlockFormatOverlay(item);
+      return;
     }
 
-    return delta;
+    applyAuditInlineFormatOverlay(item);
   }
 
   function clearActiveFormatOverlay() {
@@ -390,7 +428,7 @@ function AuditNoteContent() {
   const activateFormatSuggestion = useCallback((groupId: string) => {
     const previousId = activeFormatIdRef.current;
 
-    clearAuditFormatDomOverlay();
+    clearAuditFormatOverlay();
     restoreSuspendedInlineGroups();
 
     if (previousId === groupId) {
@@ -402,10 +440,7 @@ function AuditNoteContent() {
       return;
     }
 
-    const item = formatSuggestionsRef.current.find(
-      (fmt) => fmt.groupId === groupId,
-    );
-
+    const item = findFormatSuggestionByGroupId(groupId);
     if (!item) return;
 
     applyAuditFormatOverlay(item);
@@ -773,7 +808,7 @@ function AuditNoteContent() {
         <AuditSidebarModal
           open={true}
           hasInlineSuggestions={hasInlineSuggestions}
-          formatSuggestions={formatSuggestions}
+          formatSuggestions={getAllFormatSuggestions()}
           activeFormatId={activeFormatId}
           onActivateFormat={activateFormatSuggestion}
           onClose={() => router.push(`/notes/${noteId}`)}
