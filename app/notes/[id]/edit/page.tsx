@@ -101,6 +101,7 @@ function EditContent() {
   const reviewSegmentsRef = useRef<ReviewSegment[]>([]);
   const runtimeSegCtrRef = useRef(0);
   const isReviewingRef = useRef(false);
+  const isExitingReviewRef = useRef(false);
 
   const formatSuggestionsRef = useRef<FormatSuggestionItem[]>([]);
   const blockFormatSuggestionsRef = useRef<BlockFormatSuggestionItem[]>([]);
@@ -1186,7 +1187,7 @@ function EditContent() {
       reviewHistory.current = [];
       acceptedReferences.current = [];
       rejectedReferences.current = [];
-      
+
       setFormatSuggestions([]);
       setBlockFormatSuggestions([]);
       setActiveFormatId(null);
@@ -1195,19 +1196,15 @@ function EditContent() {
       setShowReviewSidebarModal(false);
       setShowExitReviewModal(false);
       setReviewLoaded(false);
+      setIsReviewing(false);
 
       if (quillRef.current) {
         quillRef.current.root.removeEventListener("click", handleClick);
+        clearActiveFormatOverlay(getReviewCtx());
+
         quillRef.current.setContents(cleanDelta, "api");
         quillRef.current.enable(true);
       }
-
-      setTimeout(() => {
-        if (quillRef.current) {
-          quillRef.current.setContents(cleanDelta, "api");
-          quillRef.current.enable(true);
-        }
-      }, 0);
     } catch (err: any) {
       setErrorMessageMessage(err.message || "Failed to restore note after review");
     }
@@ -1230,76 +1227,31 @@ function EditContent() {
       return;
     }
 
-    setIsReviewing(false);
+    if (isExitingReviewRef.current) {
+      return;
+    }
+
     restoreEditorAfterReviewEnd();
   }
 
   async function handleExitReview() {
-    const quill = quillRef.current;
-
     try {
-      if (quill) {
-        quill.root.removeEventListener("click", handleClick);
-      }
+      isExitingReviewRef.current = true;
 
-      const currentActive = activeFormatIdRef.current;
-
-      if (quill && currentActive) {
-        const item = formatSuggestionsRef.current.find(
-          (f) => f.groupId === currentActive,
-        );
-
-        if (item) {
-          quill.updateContents(buildFormatOverlayClearDelta(item), "api");
-        }
+      if (quillRef.current) {
+        quillRef.current.root.removeEventListener("click", handleClick);
+        clearActiveFormatOverlay(getReviewCtx());
       }
 
       await apiFetch(`notes/${noteId}/review/exit`, {
         method: "GET",
       });
 
-      const joinData = await apiFetch<JoinResponse>(`notes/${noteId}/join`, {
-        method: "GET",
-      });
-
-      const cleanDelta = new Delta(joinData.delta.ops || []);
-
-      quill?.setContents(cleanDelta, "api");
-
-      if (docStateRef.current) {
-        docStateRef.current.lastSyncedRevision = joinData.revision;
-        docStateRef.current.setDocument(cleanDelta);
-      }
-      
-      if (joinData.collaborators) {
-        setCollaborators(joinData.collaborators);
-      }
-
-      reviewSegmentsRef.current = [];
-      runtimeSegCtrRef.current = 0;
-
-      formatSuggestionsRef.current = [];
-      blockFormatSuggestionsRef.current = [];
-      activeFormatIdRef.current = null;
-      activeSuggestionRef.current = null;
-      
-      reviewHistory.current = [];
-      acceptedReferences.current = [];
-      rejectedReferences.current = [];
-      
-      setFormatSuggestions([]);
-      setBlockFormatSuggestions([]);
-      setActiveFormatId(null);
-      setActiveSuggestion(null);
-      setHasPendingSuggestions(false);
-      setShowReviewSidebarModal(false);
-      setShowExitReviewModal(false);
-      setReviewLoaded(false);
-      setIsReviewing(false);
-
-      quill?.enable(true);
+      await restoreEditorAfterReviewEnd();
     } catch (err: any) {
       setErrorMessageMessage(err.message || "Failed to exit review");
+    } finally {
+      isExitingReviewRef.current = false;
     }
   }
 
