@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Badge, Button, EmptyState, ErrorBanner, Input, Modal, Select } from "@/components/ui";
 import { apiFetch } from "@/src/lib/api";
 import { NoteAccess, NoteAccessRole } from "@/src/types";
+import { Users } from "lucide-react";
+import { useEffect, useState } from "react";
 
 interface Props {
   open: boolean;
@@ -12,38 +14,33 @@ interface Props {
   accessRole: NoteAccessRole;
 }
 
-const roleStyles: Record<NoteAccessRole, React.CSSProperties> = {
-  OWNER: { background: "#7C3AED", color: "white" },
-  SUPER: { background: "#2563EB", color: "white" },
-  EDITOR: { background: "#059669", color: "white" },
-  VIEWER: { background: "#6B7280", color: "white" },
-  RESTRICTED: { background: "#f50b0bff", color: "white" },
+const roleTone: Record<NoteAccessRole, "emerald" | "blue" | "purple" | "red" | "slate"> = {
+  OWNER: "purple",
+  SUPER: "blue",
+  EDITOR: "emerald",
+  VIEWER: "slate",
+  RESTRICTED: "red",
 };
 
-export default function CollaboratorsModal({
-  open,
-  onClose,
-  noteId,
-  email,
-  accessRole,
-}: Props) {
+export default function CollaboratorsModal({ open, onClose, noteId, email, accessRole }: Props) {
   const [noteAccesses, setNoteAccesses] = useState<NoteAccess[]>([]);
   const [newEmail, setNewEmail] = useState("");
   const [newRole, setNewRole] = useState<NoteAccessRole>("VIEWER");
   const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const canManage = accessRole === "OWNER" || accessRole === "SUPER";
 
   useEffect(() => {
     if (!open) return;
 
     async function fetchAccesses() {
       try {
-        const data = await apiFetch<NoteAccess[]>(
-          `notes/${noteId}/access`,
-          { method: "GET" }
-        );
+        setErrorMessage(null);
+        const data = await apiFetch<NoteAccess[]>(`notes/${noteId}/access`, { method: "GET" });
         setNoteAccesses(data);
-      } catch {
-        console.log("Failed to fetch note accesses");
+      } catch (err: any) {
+        setErrorMessage(err.message || "Failed to fetch collaborators.");
       }
     }
 
@@ -54,187 +51,104 @@ export default function CollaboratorsModal({
     if (!newEmail.trim()) return;
 
     setLoading(true);
+    setErrorMessage(null);
     try {
       const data = await apiFetch<NoteAccess>(`notes/${noteId}/access`, {
         method: "POST",
-        body: JSON.stringify({ email: newEmail, role: newRole }),
+        body: JSON.stringify({ email: newEmail.trim(), role: newRole }),
       });
 
       setNoteAccesses((prev) => [...prev, data]);
       setNewEmail("");
       setNewRole("VIEWER");
+    } catch (err: any) {
+      setErrorMessage(err.message || "Failed to invite collaborator.");
     } finally {
       setLoading(false);
     }
   }
 
   async function updateRole(access: NoteAccess, role: NoteAccessRole) {
-    const updated = await apiFetch<NoteAccess>(
-      `notes/${noteId}/access/${access.id}`,
-      {
+    setErrorMessage(null);
+    try {
+      const updated = await apiFetch<NoteAccess>(`notes/${noteId}/access/${access.id}`, {
         method: "PUT",
         body: JSON.stringify({ email: access.email, role }),
-      }
-    );
+      });
 
-    setNoteAccesses((prev) =>
-      prev.map((a) => (a.id === access.id ? updated : a))
-    );
+      setNoteAccesses((prev) => prev.map((a) => (a.id === access.id ? updated : a)));
+    } catch (err: any) {
+      setErrorMessage(err.message || "Failed to update role.");
+    }
   }
 
   async function removeAccess(id: string) {
-    await apiFetch(`notes/${noteId}/access/${id}`, { method: "DELETE" });
-    setNoteAccesses((prev) => prev.filter((a) => a.id !== id));
+    setErrorMessage(null);
+    try {
+      await apiFetch(`notes/${noteId}/access/${id}`, { method: "DELETE" });
+      setNoteAccesses((prev) => prev.filter((a) => a.id !== id));
+    } catch (err: any) {
+      setErrorMessage(err.message || "Failed to remove collaborator.");
+    }
   }
 
   if (!open) return null;
 
   return (
-    <div className="modal-backdrop">
-      <div className="modal-card" style={{ width: 520 }}>
+    <Modal title="Collaborators" eyebrow="Access control" onClose={onClose} widthClass="max-w-2xl">
+      <div className="space-y-4">
+        <ErrorBanner message={errorMessage} />
 
-        {/* Header */}
-        <div className="modal-header">
-          <h2 style={{ margin: 0 }}>Collaborators</h2>
-          <button onClick={onClose} className="icon-btn">✕</button>
-        </div>
+        {noteAccesses.length === 0 ? (
+          <EmptyState icon={<Users />} title="No collaborators yet" message="People with access to this note will appear here." />
+        ) : (
+          <div className="space-y-3">
+            {noteAccesses.map((access) => {
+              const isYou = access.email === email;
+              const editable = !isYou && canManage;
 
-        {/* List */}
-        <div className="modal-body" style={{ paddingTop: 10 }}>
-          {noteAccesses.map((access) => (
-            <div
-              key={access.id}
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                padding: "10px 12px",
-                border: "1px solid #eee",
-                borderRadius: 10,
-                marginBottom: 10,
-                background: "#fafafa",
-              }}
-            >
-              {/* Left */}
-              <div style={{ display: "flex", flexDirection: "column" }}>
-                <span style={{ fontWeight: 600, color: "#111827" }}>
-                  {access.email}
-                  {access.email === email && (
-                    <span style={{ marginLeft: 6, fontSize: 12, color: "#9CA3AF" }}>
-                      (You)
-                    </span>
+              return (
+                <div key={access.id} className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-black text-slate-950">
+                      {access.email} {isYou && <span className="font-semibold text-slate-400">(You)</span>}
+                    </p>
+                    <div className="mt-2"><Badge tone={roleTone[access.role]}>{access.role}</Badge></div>
+                  </div>
+
+                  {editable && (
+                    <div className="flex flex-wrap gap-2">
+                      <Select value={access.role} onChange={(e) => updateRole(access, e.target.value as NoteAccessRole)}>
+                        <option value="SUPER">Super</option>
+                        <option value="EDITOR">Editor</option>
+                        <option value="VIEWER">Viewer</option>
+                      </Select>
+                      <Button variant="ghost" className="text-red-600 hover:bg-red-50 hover:text-red-700" onClick={() => removeAccess(access.id)}>
+                        Remove
+                      </Button>
+                    </div>
                   )}
-                </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
 
-                <span
-                  style={{
-                    marginTop: 4,
-                    padding: "2px 8px",
-                    borderRadius: 999,
-                    fontSize: 12,
-                    width: "fit-content",
-                    ...roleStyles[access.role],
-                  }}
-                >
-                  {access.role}
-                </span>
-              </div>
-
-              {/* Right actions */}
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                {access.email !== email &&
-                (accessRole === "OWNER" || accessRole === "SUPER") ? (
-                  <>
-                    <select
-                      value={access.role}
-                      onChange={(e) =>
-                        updateRole(access, e.target.value as NoteAccessRole)
-                      }
-                      style={{
-                        padding: "4px 6px",
-                        borderRadius: 6,
-                        border: "1px solid #ddd",
-                      }}
-                    >
-                      <option value="SUPER">Super</option>
-                      <option value="EDITOR">Editor</option>
-                      <option value="VIEWER">Viewer</option>
-                    </select>
-
-                    <button
-                      onClick={() => removeAccess(access.id)}
-                      style={{
-                        color: "#DC2626",
-                        background: "transparent",
-                        border: "none",
-                        cursor: "pointer",
-                        fontSize: 13,
-                      }}
-                    >
-                      Remove
-                    </button>
-                  </>
-                ) : null}
-              </div>
+        {canManage && (
+          <div className="rounded-2xl border border-slate-200 bg-white p-4">
+            <p className="mb-3 text-sm font-black text-slate-950">Invite someone</p>
+            <div className="grid gap-2 sm:grid-cols-[1fr_140px_auto]">
+              <Input placeholder="Invite email..." value={newEmail} onChange={(e) => setNewEmail(e.target.value)} />
+              <Select value={newRole} onChange={(e) => setNewRole(e.target.value as NoteAccessRole)}>
+                <option value="VIEWER">Viewer</option>
+                <option value="EDITOR">Editor</option>
+                <option value="SUPER">Super</option>
+              </Select>
+              <Button onClick={handleAdd} disabled={loading || !newEmail.trim()}>{loading ? "Inviting..." : "Invite"}</Button>
             </div>
-          ))}
-        </div>
-
-        {/* Invite */}
-        {(accessRole === "OWNER" || accessRole === "SUPER") && (
-          <div
-            style={{
-              display: "flex",
-              gap: 8,
-              paddingTop: 12,
-              borderTop: "1px solid #eee",
-            }}
-          >
-            <input
-              placeholder="Invite email..."
-              value={newEmail}
-              onChange={(e) => setNewEmail(e.target.value)}
-              style={{
-                flex: 1,
-                padding: 10,
-                borderRadius: 8,
-                border: "1px solid #ddd",
-              }}
-            />
-
-            <select
-              value={newRole}
-              onChange={(e) =>
-                setNewRole(e.target.value as NoteAccessRole)
-              }
-              style={{
-                padding: 10,
-                borderRadius: 8,
-                border: "1px solid #ddd",
-              }}
-            >
-              <option value="VIEWER">Viewer</option>
-              <option value="EDITOR">Editor</option>
-              <option value="SUPER">Super</option>
-            </select>
-
-            <button
-              onClick={handleAdd}
-              disabled={loading}
-              style={{
-                padding: "10px 14px",
-                borderRadius: 8,
-                background: "#111827",
-                color: "white",
-                border: "none",
-                cursor: "pointer",
-              }}
-            >
-              Invite
-            </button>
           </div>
         )}
       </div>
-    </div>
+    </Modal>
   );
 }

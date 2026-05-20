@@ -1,11 +1,21 @@
 "use client";
 
 import CreateNoteModal from "@/components/CreateNoteModal";
+import { AppTopbar, Badge, Button, EmptyState, ErrorBanner, LoadingState, PageHeader, PageShell } from "@/components/ui";
 import { useAuth } from "@/src/context/AuthContext";
 import { apiFetch } from "@/src/lib/api";
-import { Note } from "@/src/types";
+import { Note, NoteAccessRole } from "@/src/types";
+import { FileText, LogOut, Plus, Search } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useState, Suspense } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
+
+const roleTone: Record<NoteAccessRole, "emerald" | "blue" | "purple" | "red" | "slate"> = {
+  OWNER: "purple",
+  SUPER: "blue",
+  EDITOR: "emerald",
+  VIEWER: "slate",
+  RESTRICTED: "red",
+};
 
 function NotesContent() {
   const router = useRouter();
@@ -13,14 +23,14 @@ function NotesContent() {
   const [notes, setNotes] = useState<Note[]>([]);
   const [isLoading, setIsloading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
   const [showCreateNoteModal, setShowCreateNoteModal] = useState(false);
 
   useEffect(() => {
     async function fetchNotes() {
       try {
-        const data = await apiFetch<Note[]>("notes", {
-          method: "GET",
-        });
+        setErrorMessage(null);
+        const data = await apiFetch<Note[]>("notes", { method: "GET" });
         setNotes(data);
       } catch (err: any) {
         setErrorMessage(err.message || "Failed to fetch notes");
@@ -28,227 +38,123 @@ function NotesContent() {
         setIsloading(false);
       }
     }
-    fetchNotes();
+    if (user) fetchNotes();
   }, [user]);
+
+  const filteredNotes = useMemo(() => {
+    const cleanQuery = query.trim().toLowerCase();
+    if (!cleanQuery) return notes;
+    return notes.filter((note) => note.title.toLowerCase().includes(cleanQuery));
+  }, [notes, query]);
 
   async function handleLogout() {
     try {
-      await apiFetch(`users/logout`, {
-        method: "POST",
-      });
-
-      document.cookie =
-        "access_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 UTC; SameSite=None; Secure";
-
+      await apiFetch(`users/logout`, { method: "POST" });
+      document.cookie = "access_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 UTC; SameSite=None; Secure";
       router.push("/login");
     } catch (err: any) {
       setErrorMessage(err.message || "Failed to logout");
     }
   }
 
-  if (loadingUser)
-    return <div className="container-wide">Checking session...</div>;
+  if (loadingUser) return <LoadingState title="Checking session" message="Confirming your account access." />;
 
   if (!user) {
-    router.push("login");
+    router.push("/login");
     return null;
   }
 
-  if (isLoading) return <div className="container-wide">Loading notes...</div>;
-  if (errorMessage)
-    return (
-      <div className="container-wide" style={{ color: "red" }}>
-        {errorMessage}
-      </div>
-    );
+  if (isLoading) return <LoadingState title="Loading notes" message="Fetching your workspace." />;
 
   return (
-    <Suspense fallback={<nav>Global Loading...</nav>}>
-      <main className="container-wide">
-        <header
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            marginBottom: "2rem",
-          }}
-        >
-          <div>
-            <div className="text-xl font-bold tracking-tighter text-[#2F855A]">
-              NOTES
-            </div>
-            <p
-              style={{
-                color: "var(--text-muted)",
-                fontSize: "1.5rem",
-                fontWeight: "600",
-              }}
-            >
-              {user.email}
-            </p>
+    <>
+      <AppTopbar>
+        <Button variant="secondary" onClick={handleLogout} className="hidden sm:inline-flex">
+          <LogOut size={16} /> Logout
+        </Button>
+      </AppTopbar>
+
+      <PageShell>
+        <PageHeader
+          eyebrow="Dashboard"
+          title="Your notes"
+          description={`Signed in as ${user.email}. Create, review, and manage collaborative notes from one workspace.`}
+          actions={
+            <>
+              <Button variant="secondary" onClick={handleLogout} className="sm:hidden">
+                <LogOut size={16} /> Logout
+              </Button>
+              <Button onClick={() => setShowCreateNoteModal(true)}>
+                <Plus size={16} /> New note
+              </Button>
+            </>
+          }
+        />
+
+        <div className="mb-5 grid gap-4 lg:grid-cols-[1fr_auto] lg:items-center">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search notes by title..."
+              className="h-12 w-full rounded-2xl border border-slate-200 bg-white pl-10 pr-3 text-sm outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
+            />
           </div>
-
-          <div style={{ display: "flex", gap: "10px" }}>
-            <button className="btn-secondary" onClick={handleLogout}>
-              logout
-            </button>
-          </div>
-        </header>
-
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
-            gap: "16px",
-            marginTop: "24px",
-          }}
-        >
-          {notes.map((note) => (
-            <button
-              key={note.id}
-              onClick={() =>
-                router.push(
-                  note.accessRole === "VIEWER"
-                    ? `/notes/${note.id}`
-                    : `/notes/${note.id}/edit`,
-                )
-              }
-              style={{
-                background: "#fff",
-                border: "1px solid #E5E7EB",
-                borderRadius: 16,
-                padding: "18px",
-                cursor: "pointer",
-                transition: "all 0.2s ease",
-                textAlign: "left",
-                minHeight: 160,
-                display: "flex",
-                flexDirection: "column",
-                justifyContent: "space-between",
-                boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.transform = "translateY(-4px)";
-                e.currentTarget.style.boxShadow =
-                  "0 12px 24px rgba(0,0,0,0.08)";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.transform = "translateY(0)";
-                e.currentTarget.style.boxShadow =
-                  "0 1px 2px rgba(0,0,0,0.04)";
-              }}
-            >
-              <div>
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "flex-start",
-                    marginBottom: 12,
-                  }}
-                >
-                  <div
-                    style={{
-                      width: 42,
-                      height: 42,
-                      borderRadius: 12,
-                      background: "#EEF2FF",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      fontSize: 18,
-                    }}
-                  >
-                    📄
-                  </div>
-
-                  <span
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 700,
-                      padding: "4px 8px",
-                      borderRadius: 999,
-                      background:
-                        note.accessRole === "OWNER"
-                          ? "#EDE9FE"
-                          : note.accessRole === "SUPER"
-                          ? "#DBEAFE"
-                          : note.accessRole === "EDITOR"
-                          ? "#D1FAE5"
-                          : "#F3F4F6",
-                      color:
-                        note.accessRole === "OWNER"
-                          ? "#6D28D9"
-                          : note.accessRole === "SUPER"
-                          ? "#1D4ED8"
-                          : note.accessRole === "EDITOR"
-                          ? "#047857"
-                          : "#4B5563",
-                    }}
-                  >
-                    {note.accessRole}
-                  </span>
-                </div>
-
-                <h3
-                  style={{
-                    margin: 0,
-                    fontSize: "1.05rem",
-                    fontWeight: 700,
-                    color: "#111827",
-                  }}
-                >
-                  {note.title}
-                </h3>
-              </div>
-
-              <div
-                style={{
-                  marginTop: 20,
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  fontSize: 13,
-                  color: "#6B7280",
-                }}
-              >
-                <span>
-                  {new Date(note.createdAt).toLocaleDateString()}
-                </span>
-
-                <span style={{ color: "#111827", fontWeight: 600 }}>
-                  Open →
-                </span>
-              </div>
-            </button>
-          ))}
+          <p className="text-sm font-semibold text-slate-500">{filteredNotes.length} of {notes.length} notes</p>
         </div>
 
-        <div style={{ display: "flex", justifyContent: "flex-end" }}>
-          <button
-            className="btn-primary"
-            onClick={() => setShowCreateNoteModal(true)}
-          >
-            + New Note
-          </button>
+        <ErrorBanner message={errorMessage} />
+
+        <div className="mt-5">
+          {notes.length === 0 ? (
+            <EmptyState
+              icon={<FileText />}
+              title="No notes yet"
+              message="Create your first note, import a document, and start collaborating with your team."
+              action={<Button onClick={() => setShowCreateNoteModal(true)}><Plus size={16} /> Create note</Button>}
+            />
+          ) : filteredNotes.length === 0 ? (
+            <EmptyState icon="🔎" title="No matching notes" message="Try another title or clear your search to see every note." />
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              {filteredNotes.map((note) => (
+                <button
+                  key={note.id}
+                  onClick={() => router.push(note.accessRole === "VIEWER" ? `/notes/${note.id}` : `/notes/${note.id}/edit`)}
+                  className="group flex min-h-48 w-full flex-col justify-between rounded-[1.5rem] border border-slate-200 bg-white p-5 text-left shadow-sm shadow-slate-900/5 transition hover:-translate-y-1 hover:border-emerald-200 hover:shadow-xl hover:shadow-emerald-900/10 focus:outline-none focus:ring-4 focus:ring-emerald-100"
+                >
+                  <div>
+                    <div className="mb-5 flex items-start justify-between gap-3">
+                      <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100">
+                        <FileText size={22} />
+                      </div>
+                      <Badge tone={roleTone[note.accessRole]}>{note.accessRole}</Badge>
+                    </div>
+                    <h3 className="line-clamp-2 text-lg font-black leading-6 text-slate-950">{note.title || "Untitled note"}</h3>
+                    <p className="mt-2 text-sm text-slate-500">{note.visibility.toLowerCase()}</p>
+                  </div>
+                  <div className="mt-6 flex items-center justify-between border-t border-slate-100 pt-4 text-sm">
+                    <span className="font-semibold text-slate-500">{new Date(note.createdAt).toLocaleDateString()}</span>
+                    <span className="font-black text-emerald-700 transition group-hover:translate-x-1">Open →</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {showCreateNoteModal && (
-          <CreateNoteModal
-            open={showCreateNoteModal}
-            email={user.email}
-            userId={user.userId}
-            onClose={() => setShowCreateNoteModal(false)}
-          />
+          <CreateNoteModal open={showCreateNoteModal} email={user.email} userId={user.userId} onClose={() => setShowCreateNoteModal(false)} />
         )}
-      </main>
-    </Suspense>
+      </PageShell>
+    </>
   );
 }
 
 export default function NotesPage() {
   return (
-    <Suspense fallback={<p>Loading Notes Dashboard...</p>}>
+    <Suspense fallback={<LoadingState title="Loading dashboard" />}>
       <NotesContent />
     </Suspense>
   );

@@ -7,6 +7,11 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import DeleteNoteModal from "@/components/DeleteNoteModal";
 import { Note } from "@/src/types";
 import RevisionHistorySection from "@/components/settings/RevisionHistorySection";
+import { Badge, Button, EmptyState, ErrorBanner, LoadingState } from "@/components/ui";
+
+function getErrorMessage(err: unknown, fallback: string) {
+  return err instanceof Error ? err.message : fallback;
+}
 
 function NoteSettingsContent() {
   const { id: noteId } = useParams();
@@ -29,14 +34,14 @@ function NoteSettingsContent() {
         if (noteData.accessRole === "OWNER") {
           isOwner.current = true;
         }
-      } catch (err: any) {
-        setErrorMessage(err.message || "Failed to fetch note metadata");
+      } catch (err: unknown) {
+        setErrorMessage(getErrorMessage(err, "Failed to fetch note metadata"));
       } finally {
         setIsloading(false);
       }
     }
     fetchNotes();
-  }, [user]);
+  }, [noteId]);
 
   async function handleDeleteNote() {
     try {
@@ -45,120 +50,87 @@ function NoteSettingsContent() {
       });
       setShowDeleteNoteModal(false);
       router.push("/notes");
-    } catch (err: any) {
-      throw err.message || "Failed to delete note";
+    } catch (err: unknown) {
+      throw getErrorMessage(err, "Failed to delete note");
     }
   }
 
-  if (loadingUser)
-    return <div className="container-wide">Checking session...</div>;
+  if (loadingUser) {
+    return <LoadingState title="Checking session" message="Confirming your account before opening settings." />;
+  }
 
   if (!user) {
-    router.push("login");
+    router.push("/login");
     return null;
   }
 
-  if (isLoading) return <div className="container-wide">Loading note...</div>;
-  if (errorMessage)
+  if (isLoading) {
+    return <LoadingState title="Loading settings" message="Fetching note metadata and version history." />;
+  }
+
+  if (errorMessage) {
     return (
-      <div className="container-wide" style={{ color: "red" }}>
-        {errorMessage}
-      </div>
+      <main className="app-page-shell">
+        <ErrorBanner message={errorMessage} />
+      </main>
     );
-  if (!note) return <div className="container-wide">Note not found.</div>;
+  }
+
+  if (!note) {
+    return (
+      <main className="app-page-shell">
+        <EmptyState title="Note not found" message="This note may have been deleted or you may no longer have access to it." />
+      </main>
+    );
+  }
 
   return (
-    <Suspense fallback={<div>Note Settings...</div>}>
-      <main
-        className="container-center"
-        style={{ padding: "40px 20px", maxWidth: "800px", margin: "0 auto" }}
-      >
-        <header
-          style={{
-            marginBottom: "32px",
-            borderBottom: "1px solid #E2E8F0",
-            paddingBottom: "16px",
-          }}
-        >
-          <h1
-            style={{
-              margin: 0,
-              fontWeight: "700",
-              fontSize: "1.8rem",
-              color: "#1A202C",
-            }}
-          >
-            "{note.title}" Settings
-          </h1>
-          <p style={{ margin: "8px 0 0", fontSize: "1rem", color: "#718096" }}>
-            Manage versions, collaborations, and privacy.
-          </p>
+    <Suspense fallback={<LoadingState title="Loading settings" message="Preparing note settings." />}>
+      <main className="app-page-shell">
+        <header className="app-page-header">
+          <div className="min-w-0">
+            <p className="app-page-eyebrow">Note settings</p>
+            <h1 className="app-page-title">{note.title}</h1>
+            <p className="app-page-description">Manage saved versions, privacy, collaboration, and owner-only actions for this note.</p>
+            <div className="app-badge-row">
+              <Badge tone="emerald">{note.accessRole}</Badge>
+              <Badge tone={note.visibility === "PRIVATE" ? "amber" : "blue"}>{note.visibility}</Badge>
+            </div>
+          </div>
+
+          <div className="app-page-actions">
+            <Button variant="secondary" onClick={() => router.push(`/notes/${noteId}`)}>View note</Button>
+            <Button onClick={() => router.push(`/notes/${noteId}/edit`)}>Back to editor</Button>
+          </div>
         </header>
 
-        <RevisionHistorySection noteId={noteId as string} title={note.title} />
-
-        {isOwner.current && (
-          <section
-            style={{
-              marginTop: "60px",
-              paddingTop: "30px",
-              borderTop: "2px solid #FED7D7",
-            }}
-          >
-            <h3
-              style={{
-                fontSize: "1.2rem",
-                fontWeight: "600",
-                marginBottom: "16px",
-                color: "#C53030",
-              }}
-            >
-              Danger Zone
-            </h3>
-            <div
-              style={{
-                border: "1px solid #FEB2B2",
-                borderRadius: 12,
-                padding: "20px",
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                backgroundColor: "#FFF5F5",
-              }}
-            >
+        <div className="settings-grid">
+          <section className="settings-section">
+            <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <p style={{ margin: 0, fontWeight: "600", color: "#2D3748" }}>
-                  Delete this note
-                </p>
-                <p
-                  style={{
-                    margin: "4px 0 0",
-                    fontSize: "0.85rem",
-                    color: "#718096",
-                  }}
-                >
-                  Once deleted, it cannot be recovered. All history will be
-                  lost.
-                </p>
+                <h2 className="settings-section-title">Revision history</h2>
+                <p className="settings-section-description">Open previous versions and inspect what changed without editing the current note.</p>
               </div>
-              <button
-                onClick={() => setShowDeleteNoteModal(true)}
-                className="btn-delete"
-                style={{
-                  padding: "10px 24px",
-                  backgroundColor: "#E53E3E",
-                  color: "white",
-                  borderRadius: 8,
-                  border: "none",
-                  fontWeight: "600",
-                  cursor: "pointer",
-                }}
-              >
-                Delete Permanently
-              </button>
             </div>
+            <RevisionHistorySection noteId={noteId as string} title={note.title} />
           </section>
-        )}
+
+          {isOwner.current && (
+            <section className="settings-section border-red-200 bg-red-50/40">
+              <p className="app-page-eyebrow text-red-700">Danger zone</p>
+              <h2 className="settings-section-title text-red-700">Delete this note</h2>
+              <p className="settings-section-description">Once deleted, this note and its saved history cannot be recovered.</p>
+
+              <div className="danger-panel">
+                <div>
+                  <p className="m-0 font-black text-slate-900">Permanent deletion</p>
+                  <p className="mt-1 max-w-xl text-sm leading-6 text-slate-600">Only use this when you are sure this note is no longer needed.</p>
+                </div>
+                <Button variant="danger" onClick={() => setShowDeleteNoteModal(true)}>Delete permanently</Button>
+              </div>
+            </section>
+          )}
+        </div>
 
         {showDeleteNoteModal && (
           <DeleteNoteModal
@@ -175,7 +147,7 @@ function NoteSettingsContent() {
 
 export default function NoteSettingsPage() {
   return (
-    <Suspense fallback={<p>Loading notes settings page...</p>}>
+    <Suspense fallback={<LoadingState title="Loading settings" message="Opening note settings." />}>
       <NoteSettingsContent />
     </Suspense>
   );

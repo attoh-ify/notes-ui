@@ -39,7 +39,6 @@ import {
   findInsertGroupRangeInRuntime,
   getSuggestionSelector,
   mergeAdjacentSegments,
-  normalizeLineBreaksAfterRejectedInsert,
   removeInsertSuggestionFromSegments,
   getRuntimeTextInRange,
   resolveFormatSuggestionsAfterMutation,
@@ -65,6 +64,7 @@ import {
 import { snapshotAndApply, undo } from "@/src/lib/review/reviewHistory";
 import CollaboratorsModal from "@/components/CollaboratorsSection";
 import VisibilityModal from "@/components/VisibilityModal";
+import { Badge, Button, EmptyState, ErrorBanner, LoadingState } from "@/components/ui";
 
 function EditContent() {
   const { id: noteId } = useParams();
@@ -858,12 +858,12 @@ function EditContent() {
           range,
         );
 
-        reviewSegmentsRef.current = normalizeLineBreaksAfterRejectedInsert(
-          reviewSegmentsRef.current,
-          range,
-          removedText,
-          () => nextRuntimeSegmentId(ctx),
-        );
+        // reviewSegmentsRef.current = normalizeLineBreaksAfterRejectedInsert(
+        //   reviewSegmentsRef.current,
+        //   range,
+        //   removedText,
+        //   () => nextRuntimeSegmentId(ctx),
+        // );
 
         refreshEditorFromRuntime(ctx);
 
@@ -1283,406 +1283,131 @@ function EditContent() {
     router.push(`/notes/${noteId}/edit/note-setting`);
   }
 
-  if (loadingUser)
-    return <div className="container-wide">Checking session...</div>;
+  if (loadingUser) {
+    return <LoadingState title="Checking session" message="Confirming your account before opening the editor." />;
+  }
 
   if (!user) {
     router.push("/login");
     return null;
   }
 
-  if (isLoading)
-    return <div className="container-wide">Loading note...</div>;
+  if (isLoading) {
+    return <LoadingState title="Loading editor" message="Preparing the note and syncing collaboration state." />;
+  }
 
-  if (errorMessage)
+  if (errorMessage) {
     return (
-      <div className="container-wide" style={{ color: "red" }}>
-        {errorMessage}
-      </div>
+      <main className="app-page-shell">
+        <ErrorBanner message={errorMessage} />
+      </main>
     );
+  }
 
-  if (!note) return <div className="container-wide">Note not found.</div>;
+  if (!note) {
+    return (
+      <main className="app-page-shell">
+        <EmptyState title="Note not found" message="This note may have been deleted or you may no longer have access to it." />
+      </main>
+    );
+  }
 
   return (
-    <main
-      className="container-wide"
-      style={{
-        maxWidth: "1150px",
-        paddingBottom: 60,
-      }}
-    >
-      <header
-        style={{
-          marginBottom: "1.5rem",
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "flex-start",
-            gap: "1rem",
-            flexWrap: "wrap",
-            marginBottom: "1rem",
-          }}
-        >
-          <div>
-            <span
-              style={{
-                fontSize: "0.72rem",
-                color: "var(--primary)",
-                fontWeight: 700,
-                textTransform: "uppercase",
-                letterSpacing: "0.08em",
-              }}
-            >
-              Editing Note
+    <main className="app-page-shell">
+      <header className="app-page-header">
+        <div className="min-w-0">
+          <p className="app-page-eyebrow">{isReviewing ? "Reviewing note" : "Editing note"}</p>
+          <h1 className="app-page-title">{note.title}</h1>
+
+          <div className="app-badge-row">
+            <Badge tone="emerald">{note.accessRole}</Badge>
+            <Badge tone={note.visibility === "PRIVATE" ? "amber" : "blue"}>Visibility: {note.visibility}</Badge>
+            <span className="app-pill">
+              <span className="app-pill-label">Active:</span>
+              {Object.entries(collaborators).length > 0
+                ? `${Object.entries(collaborators).length} collaborator${Object.entries(collaborators).length === 1 ? "" : "s"}`
+                : "Working alone"}
             </span>
+          </div>
 
-            <h1
-              style={{
-                fontSize: "2rem",
-                margin: "8px 0 10px",
-                color: "#111827",
-                lineHeight: 1.1,
-              }}
-            >
-              {note.title}
-            </h1>
-
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "8px",
-                flexWrap: "wrap",
-              }}
-            >
-              <span
-                style={{
-                  fontSize: "0.85rem",
-                  color: "#6B7280",
-                  fontWeight: 500,
-                }}
-              >
-                Active:
-              </span>
-
-              {Object.entries(collaborators).length > 0 ? (
-                Object.entries(collaborators).map(([email, color]) => (
-                  <div
-                    key={email}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 6,
-                      padding: "6px 10px",
-                      borderRadius: 999,
-                      background: "#F3F4F6",
-                      border: "1px solid #E5E7EB",
-                      fontSize: "0.82rem",
-                      fontWeight: 600,
-                      color: "#374151",
-                    }}
-                  >
-                    <div
-                      style={{
-                        width: 8,
-                        height: 8,
-                        borderRadius: "50%",
-                        background: color,
-                      }}
-                    />
-
-                    <span>
-                      {email === user?.email ? "You" : email}
-                    </span>
-                  </div>
-                ))
-              ) : (
-                <span
-                  style={{
-                    color: "#9CA3AF",
-                    fontSize: "0.85rem",
-                  }}
-                >
-                  Working alone
+          {Object.entries(collaborators).length > 0 && (
+            <div className="app-badge-row">
+              {Object.entries(collaborators).map(([email, color]) => (
+                <span key={email} className="app-pill">
+                  <span
+                    aria-hidden="true"
+                    style={{ width: 8, height: 8, borderRadius: "50%", background: color, flexShrink: 0 }}
+                  />
+                  <span className="truncate">{email === user?.email ? "You" : email}</span>
                 </span>
-              )}
+              ))}
             </div>
-          </div>
+          )}
+        </div>
 
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "10px",
-              flexWrap: "wrap",
-              justifyContent: "flex-end",
-            }}
-          >
-            {!isReviewing && (
-              <button
-                onClick={() => router.push(`/notes/${noteId}`)}
-                style={{
-                  padding: "10px 16px",
-                  borderRadius: 10,
-                  border: "1px solid #E5E7EB",
-                  background: "white",
-                  cursor: "pointer",
-                  fontWeight: 600,
-                }}
-              >
-                View
-              </button>
-            )}
+        <div className="app-page-actions">
+          {!isReviewing && (
+            <Button variant="secondary" onClick={() => router.push(`/notes/${noteId}`)}>View</Button>
+          )}
 
-            {(!isReviewing && (note.accessRole === "OWNER" || note.accessRole === "SUPER")) && (
-              <button
-                onClick={() => setShowCollaboratorsModal(true)}
-                style={{
-                  padding: "10px 16px",
-                  borderRadius: 10,
-                  border: "1px solid #E5E7EB",
-                  background: "white",
-                  cursor: "pointer",
-                  fontWeight: 600,
-                }}
-              >
-                Collaborators
-              </button>
-            )}
+          {!isReviewing && (note.accessRole === "OWNER" || note.accessRole === "SUPER") && (
+            <Button variant="secondary" onClick={() => setShowCollaboratorsModal(true)}>Collaborators</Button>
+          )}
 
-            {!isReviewing && (note.accessRole === "OWNER" || note.accessRole === "SUPER") && (
-              <button
-                onClick={() => setShowVisibilityModal(true)}
-                style={{
-                  padding: "10px 16px",
-                  borderRadius: 10,
-                  border: "1px solid #E5E7EB",
-                  background: "white",
-                  cursor: "pointer",
-                  fontWeight: 600,
-                }}
-              >
-                Visibility: {note.visibility}
-              </button>
-            )}
+          {!isReviewing && (note.accessRole === "OWNER" || note.accessRole === "SUPER") && (
+            <Button variant="secondary" onClick={() => setShowVisibilityModal(true)}>Visibility: {note.visibility}</Button>
+          )}
 
-            {note.accessRole === "OWNER" && !isReviewing && (
-              <button
-                onClick={handleReviewNote}
-                style={{
-                  padding: "10px 16px",
-                  borderRadius: 10,
-                  border: "1px solid #FCD34D",
-                  background: "#FEF3C7",
-                  color: "#92400E",
-                  cursor: "pointer",
-                  fontWeight: 700,
-                }}
-              >
-                Review
-              </button>
-            )}
+          {note.accessRole === "OWNER" && !isReviewing && (
+            <Button variant="secondary" className="border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100" onClick={handleReviewNote}>Review</Button>
+          )}
 
-            {!isReviewing && (
-              <button
-                onClick={saveNote}
-                style={{
-                  padding: "10px 18px",
-                  borderRadius: 10,
-                  border: "none",
-                  background: "#111827",
-                  color: "white",
-                  cursor: "pointer",
-                  fontWeight: 700,
-                  boxShadow: "0 2px 10px rgba(0,0,0,0.08)",
-                }}
-              >
-                Save Changes
-              </button>
-            )}
+          {!isReviewing && <Button onClick={saveNote}>Save Changes</Button>}
 
-            {isReviewing && note.accessRole === "OWNER" && (
-              <button
-                onClick={handleUndo}
-                disabled={reviewHistory.current.length === 0}
-                style={{
-                  padding: "10px 18px",
-                  borderRadius: 10,
-                  border: "none",
-                  background: "#111827",
-                  color: "white",
-                  cursor: "pointer",
-                  fontWeight: 700,
-                  opacity:
-                    reviewHistory.current.length === 0
-                      ? 0.4
-                      : 1,
-                }}
-              >
-                ↩ Undo
-              </button>
-            )}
+          {isReviewing && note.accessRole === "OWNER" && (
+            <Button onClick={handleUndo} disabled={reviewHistory.current.length === 0}>↩ Undo</Button>
+          )}
 
-            <button
-              title="Settings"
-              onClick={openSettings}
-              style={{
-                width: 42,
-                height: 42,
-                borderRadius: 12,
-                border: "1px solid #E5E7EB",
-                background: "white",
-                cursor: "pointer",
-                fontSize: "1rem",
-              }}
-            >
-              ⚙️
-            </button>
-          </div>
+          <Button variant="secondary" title="Settings" onClick={openSettings} className="px-3">⚙️</Button>
         </div>
       </header>
 
       {isReviewing && (
-        <div
-          style={{
-            backgroundColor: "#FEF3C7",
-            border: "1px solid #FCD34D",
-            color: "#92400E",
-            padding: "0.9rem 1rem",
-            borderRadius: "12px",
-            marginBottom: "1rem",
-            display: "flex",
-            alignItems: "center",
-            gap: "10px",
-            fontSize: "0.9rem",
-            fontWeight: "500",
-          }}
-        >
-          <span style={{ fontSize: "1.2rem" }}>📝</span>
-
+        <div className="app-alert">
+          <span className="text-lg">📝</span>
           <span>
             {note.accessRole === "OWNER" ? (
-              <>
-                <strong>Review Mode:</strong> You are reviewing
-                proposed changes.
-              </>
+              <><strong>Review Mode:</strong> You are reviewing proposed changes.</>
             ) : (
-              <>
-                <strong>Review in Progress:</strong> The owner is
-                currently reviewing this note.
-              </>
+              <><strong>Review in Progress:</strong> The owner is currently reviewing this note.</>
             )}
           </span>
         </div>
       )}
 
       {isReviewing && note.accessRole !== "OWNER" ? (
-        <div
-          style={{
-            minHeight: "500px",
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            backgroundColor: "#F9FAFB",
-            border: "1px solid #E5E7EB",
-            borderRadius: "16px",
-            textAlign: "center",
-            padding: "2rem",
-          }}
-        >
-          <div style={{ fontSize: "2.7rem", marginBottom: "1rem" }}>
-            🔒
-          </div>
-
-          <h3
-            style={{
-              color: "#111827",
-              margin: "0 0 0.5rem 0",
-            }}
-          >
-            Editor Locked
-          </h3>
-
-          <p
-            style={{
-              color: "#6B7280",
-              maxWidth: "400px",
-              margin: 0,
-              lineHeight: 1.6,
-            }}
-          >
-            The owner is reviewing proposed changes. Editing
-            will become available once the review is complete.
-          </p>
-        </div>
+        <EmptyState
+          icon="🔒"
+          title="Editor locked"
+          message="The owner is reviewing proposed changes. Editing will become available once the review is complete."
+        />
       ) : (
         <>
-          {isReviewing &&
-            reviewLoaded &&
-            note.accessRole === "OWNER" &&
-            !hasPendingSuggestions && (
-              <div
-                style={{
-                  backgroundColor: "#ECFDF5",
-                  border: "1px solid #10B981",
-                  color: "#065F46",
-                  padding: "0.9rem 1rem",
-                  borderRadius: "12px",
-                  marginBottom: "1rem",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "8px",
-                  fontSize: "0.875rem",
-                  fontWeight: 500,
-                }}
-              >
-                <span style={{ fontSize: "1.1rem" }}>✅</span>
+          {isReviewing && reviewLoaded && note.accessRole === "OWNER" && !hasPendingSuggestions && (
+            <div className="app-alert success">
+              <span className="text-lg">✅</span>
+              <span><strong>No pending changes:</strong> Everything looks good.</span>
+            </div>
+          )}
 
-                <span>
-                  <strong>No pending changes:</strong> Everything
-                  looks good.
-                </span>
-              </div>
-            )}
-
-          <div
-            style={{
-              display: "flex",
-              gap: "1rem",
-              alignItems: "flex-start",
-            }}
-          >
-            <div
-              style={{
-                flex: 1,
-                minWidth: 0,
-                position: "relative",
-                minHeight: "500px",
-                borderRadius: "18px",
-                overflow: "hidden",
-                border: isReviewing
-                  ? "2px solid #FCD34D"
-                  : "1px solid #E5E7EB",
-                backgroundColor: "white",
-                boxShadow: "0 4px 18px rgba(0,0,0,0.04)",
-              }}
-            >
+          <div className="editor-workspace">
+            <section className={["editor-surface", isReviewing ? "reviewing" : ""].filter(Boolean).join(" ")}>
               <div
                 ref={editorRef}
-                style={{
-                  fontFamily: "monospace",
-                  fontSize: "1rem",
-                  lineHeight: "1.7",
-                  padding: "2rem",
-                  border: "none",
-                  cursor: isReviewing ? "default" : "text",
-                }}
+                className="editor-surface-content"
+                style={{ cursor: isReviewing ? "default" : "text" }}
               />
-            </div>
+            </section>
 
             {showReviewSidebarModal && reviewLoaded && note.accessRole === "OWNER" && (
               <FormatSidebarModal
@@ -1717,26 +1442,15 @@ function EditContent() {
         </>
       )}
 
-      <footer
-        style={{
-          marginTop: "1rem",
-          fontSize: "0.75rem",
-          color: "#9CA3AF",
-        }}
-      >
-        Created at:{" "}
-        {new Date(note.createdAt).toLocaleString()}
+      <footer className="app-footer-meta">
+        <span>Created at: {new Date(note.createdAt).toLocaleString()}</span>
       </footer>
 
       {activeSuggestion && (
         <ReviewTooltip
           tooltip={activeSuggestion}
-          onAccept={(groupId, type) =>
-            acceptChange(groupId, type)
-          }
-          onReject={(groupId, type) =>
-            rejectChange(groupId, type)
-          }
+          onAccept={(groupId, type) => acceptChange(groupId, type)}
+          onReject={(groupId, type) => rejectChange(groupId, type)}
           onClose={() =>
             closeReviewTooltip(
               getReviewCtx(),
@@ -1777,7 +1491,7 @@ function EditContent() {
 
 export default function EditPage() {
   return (
-    <Suspense fallback={<p>Initializing Editor...</p>}>
+    <Suspense fallback={<LoadingState title="Initializing editor" message="Preparing collaboration tools." />}>
       <EditContent />
     </Suspense>
   );

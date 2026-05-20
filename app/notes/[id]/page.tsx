@@ -7,6 +7,11 @@ import { useAuth } from "@/src/context/AuthContext";
 import type Quill from "quill";
 import "quill/dist/quill.snow.css";
 import { Note, NoteVersion } from "@/src/types";
+import { Badge, Button, EmptyState, ErrorBanner, LoadingState } from "@/components/ui";
+
+function getErrorMessage(err: unknown, fallback: string) {
+  return err instanceof Error ? err.message : fallback;
+}
 
 function ViewNoteContent() {
   const { id: noteId } = useParams();
@@ -50,8 +55,8 @@ function ViewNoteContent() {
         );
 
         setNoteVersion(noteVersionData);
-      } catch (err: any) {
-        setErrorMessage(err.message || "Failed to load note");
+      } catch (err: unknown) {
+        setErrorMessage(getErrorMessage(err, "Failed to load note"));
       } finally {
         setIsLoading(false);
       }
@@ -91,7 +96,7 @@ function ViewNoteContent() {
   }, [noteVersion]);
 
   if (loadingUser) {
-    return <div className="container-wide">Checking session...</div>;
+    return <LoadingState title="Checking session" message="Confirming your account before opening this note." />;
   }
 
   if (!user) {
@@ -100,338 +105,74 @@ function ViewNoteContent() {
   }
 
   if (isLoading) {
-    return <div className="container-wide">Loading note...</div>;
+    return <LoadingState title="Loading note" message="Fetching the latest saved version." />;
   }
 
   if (errorMessage) {
     return (
-      <div className="container-wide" style={{ color: "red" }}>
-        {errorMessage}
-      </div>
+      <main className="app-page-shell">
+        <ErrorBanner message={errorMessage} />
+      </main>
     );
   }
 
   if (isRestricted) {
     return (
-      <main
-        className="container-wide"
-        style={{
-          maxWidth: "720px",
-          minHeight: "70vh",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: "4rem 1rem",
-        }}
-      >
-        <section
-          style={{
-            width: "100%",
-            textAlign: "center",
-            background: "white",
-            border: "1px solid #E5E7EB",
-            borderRadius: "18px",
-            padding: "3rem 2rem",
-            boxShadow: "0 4px 18px rgba(0,0,0,0.04)",
-          }}
-        >
-          <div style={{ fontSize: "3rem", marginBottom: "1rem" }}>🔒</div>
-
-          <span
-            style={{
-              fontSize: "0.72rem",
-              color: "var(--primary)",
-              fontWeight: 700,
-              textTransform: "uppercase",
-              letterSpacing: "0.08em",
-            }}
-          >
-            Access Restricted
-          </span>
-
-          <h2
-            style={{
-              margin: "8px 0 10px",
-              color: "#111827",
-              fontSize: "2rem",
-              lineHeight: 1.1,
-            }}
-          >
-            Private Note
-          </h2>
-
-          <p
-            style={{
-              color: "#6B7280",
-              margin: "0 auto",
-              maxWidth: "420px",
-              lineHeight: 1.6,
-            }}
-          >
-            You don’t have permission to view this note.
-          </p>
-
-          <button
-            onClick={() => router.push("/notes")}
-            style={{
-              marginTop: "1.5rem",
-              padding: "10px 16px",
-              borderRadius: 10,
-              border: "1px solid #E5E7EB",
-              background: "white",
-              cursor: "pointer",
-              fontWeight: 600,
-            }}
-          >
-            Go back to notes
-          </button>
-        </section>
+      <main className="app-page-shell">
+        <EmptyState
+          icon="🔒"
+          title="Private note"
+          message="You don’t have permission to view this note. Go back to your notes list or ask the owner for access."
+          action={<Button variant="secondary" onClick={() => router.push("/notes")}>Go back to notes</Button>}
+        />
       </main>
     );
   }
 
   if (!note) {
-    return <div className="container-wide">Note not found.</div>;
+    return (
+      <main className="app-page-shell">
+        <EmptyState title="Note not found" message="This note may have been deleted or you may no longer have access to it." />
+      </main>
+    );
   }
 
   const canEdit = note.accessRole !== "VIEWER";
 
   return (
-    <main
-      className="container-wide"
-      style={{
-        maxWidth: "1150px",
-        paddingBottom: 60,
-      }}
-    >
-      <header
-        style={{
-          marginBottom: "1.5rem",
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "flex-start",
-            gap: "1rem",
-            flexWrap: "wrap",
-            marginBottom: "1rem",
-          }}
-        >
-          <div>
-            <span
-              style={{
-                fontSize: "0.72rem",
-                color: "var(--primary)",
-                fontWeight: 700,
-                textTransform: "uppercase",
-                letterSpacing: "0.08em",
-              }}
-            >
-              Preview Note
-            </span>
+    <main className="app-page-shell">
+      <header className="app-page-header">
+        <div className="min-w-0">
+          <p className="app-page-eyebrow">Read-only preview</p>
+          <h1 className="app-page-title">{note.title}</h1>
 
-            <h1
-              style={{
-                fontSize: "2rem",
-                margin: "8px 0 10px",
-                color: "#111827",
-                lineHeight: 1.1,
-              }}
-            >
-              {note.title}
-            </h1>
-
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "8px",
-                flexWrap: "wrap",
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  padding: "6px 10px",
-                  borderRadius: 999,
-                  background: "#F3F4F6",
-                  border: "1px solid #E5E7EB",
-                  fontSize: "0.82rem",
-                  fontWeight: 600,
-                  color: "#374151",
-                }}
-              >
-                <span style={{ color: "#6B7280" }}>Role:</span>
-                <span>{note.accessRole}</span>
-              </div>
-
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  padding: "6px 10px",
-                  borderRadius: 999,
-                  background: "#F3F4F6",
-                  border: "1px solid #E5E7EB",
-                  fontSize: "0.82rem",
-                  fontWeight: 600,
-                  color: "#374151",
-                }}
-              >
-                <span style={{ color: "#6B7280" }}>Visibility:</span>
-                <span>{note.visibility}</span>
-              </div>
-
-              {noteVersion && (
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                    padding: "6px 10px",
-                    borderRadius: 999,
-                    background: "#F3F4F6",
-                    border: "1px solid #E5E7EB",
-                    fontSize: "0.82rem",
-                    fontWeight: 600,
-                    color: "#374151",
-                  }}
-                >
-                  <span style={{ color: "#6B7280" }}>Version:</span>
-                  <span>{note.currentNoteVersionNumber}</span>
-                </div>
-              )}
-            </div>
+          <div className="app-badge-row">
+            <Badge tone="emerald">Role: {note.accessRole}</Badge>
+            <Badge tone={note.visibility === "PRIVATE" ? "amber" : "blue"}>
+              Visibility: {note.visibility}
+            </Badge>
+            {noteVersion && <Badge tone="slate">Version {note.currentNoteVersionNumber}</Badge>}
           </div>
+        </div>
 
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "10px",
-              flexWrap: "wrap",
-              justifyContent: "flex-end",
-            }}
-          >
-            <button
-              onClick={() => router.push("/notes")}
-              style={{
-                padding: "10px 16px",
-                borderRadius: 10,
-                border: "1px solid #E5E7EB",
-                background: "white",
-                cursor: "pointer",
-                fontWeight: 600,
-              }}
-            >
-              Back
-            </button>
-
-            {canEdit && (
-              <button
-                onClick={() => router.push(`/notes/${noteId}/edit`)}
-                style={{
-                  padding: "10px 18px",
-                  borderRadius: 10,
-                  border: "none",
-                  background: "#111827",
-                  color: "white",
-                  cursor: "pointer",
-                  fontWeight: 700,
-                  boxShadow: "0 2px 10px rgba(0,0,0,0.08)",
-                }}
-              >
-                Edit Note
-              </button>
-            )}
-          </div>
+        <div className="app-page-actions">
+          <Button variant="secondary" onClick={() => router.push("/notes")}>Back</Button>
+          {canEdit && <Button onClick={() => router.push(`/notes/${noteId}/edit`)}>Edit Note</Button>}
         </div>
       </header>
 
-      <section
-        style={{
-          position: "relative",
-          minHeight: "500px",
-          borderRadius: "18px",
-          overflow: "hidden",
-          border: "1px solid #E5E7EB",
-          backgroundColor: "white",
-          boxShadow: "0 4px 18px rgba(0,0,0,0.04)",
-        }}
-      >
-        <div
-          style={{
-            padding: "0.85rem 1rem",
-            borderBottom: "1px solid #E5E7EB",
-            background: "#F9FAFB",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: "1rem",
-            flexWrap: "wrap",
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "8px",
-              color: "#6B7280",
-              fontSize: "0.85rem",
-              fontWeight: 600,
-            }}
-          >
-            <span>📄</span>
-            <span>Read-only preview</span>
-          </div>
-
-          <span
-            style={{
-              fontSize: "0.78rem",
-              color: "#9CA3AF",
-              fontWeight: 500,
-            }}
-          >
-            Last saved version
-          </span>
+      <section className="app-panel overflow-hidden">
+        <div className="app-panel-header">
+          <span>📄 Read-only document</span>
+          <span>Last saved version</span>
         </div>
 
-        <div
-          ref={editorRef}
-          style={{
-            minHeight: "500px",
-            fontFamily: "monospace",
-            fontSize: "1rem",
-            lineHeight: "1.7",
-            padding: "2rem",
-            border: "none",
-            backgroundColor: "white",
-            overflowY: "auto",
-          }}
-        />
+        <div ref={editorRef} className="editor-surface-content bg-white" />
       </section>
 
-      <footer
-        style={{
-          marginTop: "1rem",
-          fontSize: "0.75rem",
-          color: "#9CA3AF",
-          display: "flex",
-          justifyContent: "space-between",
-          gap: "1rem",
-          flexWrap: "wrap",
-        }}
-      >
+      <footer className="app-footer-meta">
         <span>Created at: {new Date(note.createdAt).toLocaleString()}</span>
-
-        {note.updatedAt && (
-          <span>Updated at: {new Date(note.updatedAt).toLocaleString()}</span>
-        )}
+        {note.updatedAt && <span>Updated at: {new Date(note.updatedAt).toLocaleString()}</span>}
       </footer>
     </main>
   );
@@ -439,7 +180,7 @@ function ViewNoteContent() {
 
 export default function ViewNotePage() {
   return (
-    <Suspense fallback={<p>Loading Note...</p>}>
+    <Suspense fallback={<LoadingState title="Loading note" message="Preparing note preview." />}>
       <ViewNoteContent />
     </Suspense>
   );

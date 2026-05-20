@@ -45,11 +45,36 @@
   }
 }
 
+* {
+  box-sizing: border-box;
+}
+
+html,
 body {
-  background-color: var(--bg-main);
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+body {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top left, rgba(16, 185, 129, 0.09), transparent 32rem),
+    var(--bg-main);
   color: var(--text-main);
-  font-family: "Inter", system-ui, sans-serif;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   margin: 0;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
 }
 
 /* Tiptap core editor */
@@ -69,16 +94,27 @@ body {
 
 /* Page containers */
 .container-center {
-  max-width: 450px;
+  width: min(100% - 2rem, 450px);
   margin: 80px auto;
   padding: 2rem;
   background: var(--bg-card);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.08);
 }
 
 .container-wide {
-  max-width: 900px;
+  width: min(100% - 2rem, 1180px);
+  margin: 0 auto;
+  padding: clamp(1rem, 3vw, 2rem) 0 4rem;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.container-component {
+  width: min(100% - 2rem, 300px);
   margin: 40px auto;
   padding: 2rem;
   background: var(--bg-card);
@@ -86,13 +122,253 @@ body {
   box-shadow: var(--shadow);
 }
 
-.container-component {
-  max-width: 300px;
-  margin: 40px auto;
-  padding: 2rem;
-  background: var(--bg-card);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
+.app-page-shell {
+  width: min(100% - 2rem, 1180px);
+  margin: 0 auto;
+  padding: clamp(1rem, 3vw, 2rem) 0 4rem;
+}
+
+.app-page-header {
+  margin-bottom: 1.25rem;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: clamp(1rem, 2vw, 1.4rem);
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.05);
+}
+
+.app-page-eyebrow {
+  margin: 0 0 0.4rem;
+  font-size: 0.72rem;
+  color: var(--primary);
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+}
+
+.app-page-title {
+  margin: 0;
+  color: #0f172a;
+  font-size: clamp(1.55rem, 3vw, 2.25rem);
+  line-height: 1.08;
+  font-weight: 900;
+  letter-spacing: -0.03em;
+  overflow-wrap: anywhere;
+}
+
+.app-page-description {
+  margin: 0.55rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+
+.app-page-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
+.app-badge-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 0.85rem;
+}
+
+.app-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  max-width: 100%;
+  padding: 0.38rem 0.65rem;
+  border-radius: 999px;
+  background: #f8fafc;
+  border: 1px solid var(--border);
+  color: #334155;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.app-pill-label {
+  color: var(--text-muted);
+  font-weight: 700;
+}
+
+.app-panel {
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  background: white;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.055);
+}
+
+.app-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid var(--border);
+  background: #f8fafc;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.app-alert {
+  margin-bottom: 1rem;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.9rem 1rem;
+  border-radius: 16px;
+  border: 1px solid #fcd34d;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 0.9rem;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.app-alert.success {
+  border-color: #a7f3d0;
+  background: #ecfdf5;
+  color: #065f46;
+}
+
+.editor-workspace {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.editor-surface {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  min-height: 520px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  background: white;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.055);
+}
+
+.editor-surface.reviewing {
+  border: 2px solid #fcd34d;
+}
+
+.editor-surface-content {
+  min-height: 520px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 1rem;
+  line-height: 1.7;
+  padding: clamp(1rem, 3vw, 2rem);
+  border: none;
+  overflow-x: auto;
+}
+
+.app-footer-meta {
+  margin-top: 1rem;
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  color: #94a3b8;
+  font-size: 0.75rem;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+}
+
+.settings-section {
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  background: white;
+  padding: clamp(1rem, 2vw, 1.35rem);
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.05);
+}
+
+.settings-section-title {
+  margin: 0 0 0.35rem;
+  color: #0f172a;
+  font-size: 1rem;
+  font-weight: 900;
+}
+
+.settings-section-description {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+
+.danger-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-top: 1rem;
+  border: 1px solid #fecaca;
+  border-radius: 18px;
+  background: #fff5f5;
+  padding: 1rem;
+}
+
+@media (max-width: 900px) {
+  .editor-workspace {
+    flex-direction: column;
+  }
+
+  .editor-surface,
+  .suggestion-sidebar {
+    width: 100% !important;
+    max-height: none !important;
+  }
+}
+
+@media (max-width: 640px) {
+  .app-page-shell,
+  .container-wide {
+    width: min(100% - 1rem, 1180px);
+    padding-top: 0.75rem;
+  }
+
+  .app-page-header {
+    align-items: stretch;
+  }
+
+  .app-page-actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .app-page-actions > button,
+  .app-page-actions > a {
+    flex: 1 1 auto;
+  }
+
+  .editor-surface-content {
+    padding: 1rem;
+    font-size: 0.95rem;
+  }
+
+  .danger-panel {
+    align-items: stretch;
+  }
 }
 
 /* Inputs */
@@ -100,7 +376,7 @@ body {
   width: 100%;
   padding: 12px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 12px;
   font-size: 14px;
   transition: border-color 0.2s;
   outline: none;
@@ -203,81 +479,98 @@ body {
 
 /* Insert suggestion */
 .suggestion-insert {
-  background-color: var(--suggestion-insert-bg);
-  border-radius: 2px;
+  --suggestion-line: #2563eb;
+  background: rgba(59, 130, 246, 0.09);
+  box-shadow: inset 0 -0.16em 0 rgba(37, 99, 235, 0.45);
+  border-radius: 0.2em;
   padding: 0 1px;
   cursor: pointer;
-  transition: background-color 0.15s;
+  transition: background-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .suggestion-insert.hover {
-  background-color: var(--suggestion-insert-hover);
+  background: rgba(59, 130, 246, 0.14);
+  box-shadow: inset 0 -0.18em 0 rgba(37, 99, 235, 0.62);
 }
 
 .suggestion-insert.active {
-  background-color: var(--suggestion-insert-active);
+  background: rgba(59, 130, 246, 0.2);
+  box-shadow: inset 0 -0.24em 0 rgba(37, 99, 235, 0.76);
 }
 
 /* Delete suggestion */
 .suggestion-delete {
-  text-decoration: line-through;
-  text-decoration-color: var(--suggestion-delete-line);
-  background-color: var(--suggestion-delete-bg);
-  border-radius: 2px;
+  background: rgba(239, 68, 68, 0.08);
+  box-shadow: inset 0 -0.16em 0 rgba(220, 38, 38, 0.42);
+  border-radius: 0.2em;
   padding: 0 1px;
   cursor: pointer;
   color: var(--suggestion-delete-text);
-  transition: background-color 0.15s;
+  text-decoration-line: line-through;
+  text-decoration-color: rgba(185, 28, 28, 0.75);
+  text-decoration-thickness: 1.5px;
+  transition: background-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .suggestion-delete.hover {
-  background-color: var(--suggestion-delete-hover);
+  background: rgba(239, 68, 68, 0.13);
+  box-shadow: inset 0 -0.18em 0 rgba(220, 38, 38, 0.58);
 }
 
 .suggestion-delete.active {
-  background-color: var(--suggestion-delete-active);
+  background: rgba(239, 68, 68, 0.18);
+  box-shadow: inset 0 -0.24em 0 rgba(220, 38, 38, 0.72);
 }
 
 /* Single-line delete marker */
 .suggestion-delete-singleline {
   display: inline-block;
-  padding: 0 3px;
+  padding: 0 4px;
   margin: 0 1px;
-  border-radius: 3px;
-  background-color: var(--suggestion-delete-bg);
+  border-radius: 0.35em;
+  background: rgba(239, 68, 68, 0.08);
+  box-shadow: inset 0 -0.16em 0 rgba(220, 38, 38, 0.42);
   color: var(--suggestion-delete-text);
-  font-weight: 600;
+  font-weight: 700;
   cursor: pointer;
-  transition: background-color 0.15s;
-  text-decoration: none !important;
+  transition: background-color 0.15s ease, box-shadow 0.15s ease;
+  text-decoration: line-through;
+  text-decoration-color: rgba(185, 28, 28, 0.75);
+  text-decoration-thickness: 1.5px;
 }
 
 .suggestion-delete-singleline.hover {
-  background-color: var(--suggestion-delete-hover);
+  background: rgba(239, 68, 68, 0.13);
+  box-shadow: inset 0 -0.18em 0 rgba(220, 38, 38, 0.58);
 }
 
 .suggestion-delete-singleline.active {
-  background-color: var(--suggestion-delete-active);
+  background: rgba(239, 68, 68, 0.18);
+  box-shadow: inset 0 -0.24em 0 rgba(220, 38, 38, 0.72);
 }
 
 /* Multi-line delete */
 .suggestion-delete-multiline {
-  text-decoration: line-through;
-  text-decoration-color: var(--suggestion-delete-line);
-  background-color: var(--suggestion-delete-bg);
-  border-radius: 2px;
+  background: rgba(239, 68, 68, 0.08);
+  box-shadow: inset 0 -0.16em 0 rgba(220, 38, 38, 0.42);
+  border-radius: 0.2em;
   padding: 0 1px;
   cursor: pointer;
   color: var(--suggestion-delete-text);
-  transition: background-color 0.15s;
+  text-decoration-line: line-through;
+  text-decoration-color: rgba(185, 28, 28, 0.75);
+  text-decoration-thickness: 1.5px;
+  transition: background-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .suggestion-delete-multiline.hover {
-  background-color: var(--suggestion-delete-hover);
+  background: rgba(239, 68, 68, 0.13);
+  box-shadow: inset 0 -0.18em 0 rgba(220, 38, 38, 0.58);
 }
 
 .suggestion-delete-multiline.active {
-  background-color: var(--suggestion-delete-active);
+  background: rgba(239, 68, 68, 0.18);
+  box-shadow: inset 0 -0.24em 0 rgba(220, 38, 38, 0.72);
 }
 
 /* Inline format marker.
@@ -287,21 +580,30 @@ body {
   border-radius: 0;
   padding: 0;
   cursor: default;
-  transition: background-color 0.15s;
+  transition: background-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .suggestion-format.hover {
   background-color: transparent !important;
 }
 
-/* Shared active inline format overlay for review + audit */
+/* Shared active inline format overlay for review + audit.
+   Uses inset shadow instead of text-decoration so real underline formatting stays visible. */
 .suggestion-format.active,
 .format-inline-active {
-  background-color: var(--suggestion-format-bg) !important;
-  border-radius: 0 !important;
+  background: rgba(249, 115, 22, 0.12) !important;
+  border-radius: 0.2em !important;
   padding: 0 1px;
   cursor: pointer;
-  box-shadow: none !important;
+  box-shadow: inset 0 -0.18em 0 rgba(249, 115, 22, 0.58) !important;
+}
+
+.suggestion-format.active.hover,
+.format-inline-active.hover,
+.suggestion-format.active:hover,
+.format-inline-active:hover {
+  background: rgba(249, 115, 22, 0.18) !important;
+  box-shadow: inset 0 -0.24em 0 rgba(249, 115, 22, 0.72) !important;
 }
 
 /* Shared suspended inline styling while a format overlay is active */
@@ -315,9 +617,9 @@ body {
 /* Keep active inline format visible over suspended insert/delete text */
 .format-inline-suspended.format-inline-active,
 .format-inline-suspended .format-inline-active {
-  background-color: var(--suggestion-format-bg) !important;
-  border-radius: 0 !important;
-  box-shadow: none !important;
+  background: rgba(249, 115, 22, 0.12) !important;
+  border-radius: 0.2em !important;
+  box-shadow: inset 0 -0.18em 0 rgba(249, 115, 22, 0.58) !important;
   color: inherit !important;
 }
 
@@ -414,18 +716,18 @@ body {
 
 /* Shared sidebar: review + audit */
 .suggestion-sidebar {
-  width: 280px;
+  width: 320px;
   flex-shrink: 0;
   background-color: white;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 24px;
   padding: 1rem;
   display: flex;
   flex-direction: column;
   gap: 1rem;
-  max-height: 80vh;
+  max-height: calc(100vh - 8rem);
   overflow-y: auto;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.07);
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.07);
 }
 
 .suggestion-sidebar-header {
@@ -509,15 +811,16 @@ body {
 
 .format-suggestion-card {
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 0.65rem 0.75rem;
-  background-color: #fafafa;
+  border-radius: 14px;
+  padding: 0.75rem 0.8rem;
+  background-color: #ffffff;
   transition: all 0.15s ease;
 }
 
 .format-suggestion-card.active {
   border-color: var(--suggestion-block-bar);
   background-color: #fff7ed;
+  box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.12);
 }
 
 .format-suggestion-card.disabled {
@@ -728,4 +1031,152 @@ body {
   color: red;
   background: none;
   border: none;
+}
+
+/* Polished app-wide helpers */
+.app-card {
+  border: 1px solid var(--border);
+  background: white;
+  border-radius: 20px;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
+}
+
+.btn-primary,
+.btn-secondary,
+.btn-outline,
+.btn-icon,
+.btn-delete {
+  min-height: 40px;
+  border-radius: 12px;
+}
+
+.input-field:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.13);
+}
+
+.modal-backdrop {
+  z-index: 1000;
+  padding: 1rem;
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(6px);
+}
+
+.modal-card {
+  width: min(100%, 560px);
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  box-shadow: 0 24px 80px rgba(15, 23, 42, 0.25);
+}
+
+.modal-header {
+  border-bottom-color: var(--border);
+}
+
+.icon-btn {
+  display: inline-flex;
+  min-height: 36px;
+  min-width: 36px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: white;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.icon-btn:hover {
+  background: #f8fafc;
+  color: var(--text-main);
+}
+
+.ql-toolbar.ql-snow {
+  border-color: var(--border) !important;
+  border-radius: 16px 16px 0 0;
+  background: #f8fafc;
+}
+
+.ql-editor {
+  min-height: 52vh;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 768px) {
+  .container-center,
+  .container-wide,
+  .container-component {
+    width: min(100% - 1rem, 100%);
+    margin: 0.5rem auto;
+    padding: 1rem;
+    border-radius: 18px;
+  }
+
+  .suggestion-sidebar {
+    width: 100%;
+    max-height: 55vh;
+  }
+
+  .modal-card {
+    max-height: calc(100vh - 2rem);
+  }
+
+  .button-group,
+  .actions,
+  .invite {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .btn-primary,
+  .btn-secondary,
+  .btn-outline,
+  .btn-delete {
+    justify-content: center;
+  }
+}
+
+.review-tooltip-panel {
+  position: fixed;
+  right: 1.5rem;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 9999;
+  width: min(340px, calc(100vw - 2rem));
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  background: white;
+  padding: 1rem;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.22);
+}
+
+@media (max-width: 700px) {
+  .review-tooltip-panel {
+    left: 0.75rem;
+    right: 0.75rem;
+    bottom: 0.75rem;
+    top: auto;
+    width: auto;
+    transform: none;
+  }
+}
+
+.revision-history-table table {
+  min-width: 760px;
+}
+
+.revision-history-table th,
+.revision-history-table td {
+  vertical-align: middle;
+}
+
+@media (max-width: 900px) {
+  .editor-workspace .suggestion-sidebar {
+    width: 100% !important;
+    max-height: none !important;
+  }
 }

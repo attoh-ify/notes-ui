@@ -1,4 +1,5 @@
 import { Reference, TooltipState, TYPE_CONFIG } from "@/src/types";
+import { Button } from "@/components/ui";
 
 interface ReviewTooltipProps {
   tooltip: TooltipState;
@@ -22,149 +23,62 @@ export function ReviewTooltip({
   const config = TYPE_CONFIG[tooltip.type];
 
   return (
-    <div
-      style={{
-        position: "fixed",
-        right: 24,
-        top: "50%",
-        transform: "translateY(-50%)",
-        background: "#fff",
-        border: "1px solid #e0e0e0",
-        borderRadius: "10px",
-        padding: "20px",
-        boxShadow: "0 8px 32px rgba(0,0,0,0.14)",
-        zIndex: 9999,
-        fontSize: "0.85rem",
-        width: "320px",
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          marginBottom: "14px",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+    <aside className="review-tooltip-panel" aria-label="Suggestion details">
+      <div className="flex items-start justify-between gap-3 border-b border-slate-200 pb-3">
+        <div className="flex min-w-0 items-center gap-2">
           <span
-            style={{
-              display: "inline-block",
-              width: 10,
-              height: 10,
-              borderRadius: "50%",
-              background: config.color,
-              flexShrink: 0,
-            }}
+            aria-hidden="true"
+            className="h-2.5 w-2.5 shrink-0 rounded-full"
+            style={{ background: config.color }}
           />
-
-          <strong style={{ fontSize: "0.9rem", color: "#111" }}>
-            {config.label}
-          </strong>
+          <div className="min-w-0">
+            <p className="m-0 text-sm font-black text-slate-950">{config.label}</p>
+            <p className="m-0 text-xs font-semibold uppercase tracking-wide text-slate-400">Suggestion details</p>
+          </div>
         </div>
 
         <button
           onClick={onClose}
-          style={{
-            background: "none",
-            border: "none",
-            cursor: "pointer",
-            color: "#999",
-            fontSize: "1rem",
-            lineHeight: 1,
-            padding: "0 2px",
-          }}
+          className="rounded-xl p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-900"
+          aria-label="Close suggestion details"
         >
           ×
         </button>
       </div>
 
-      <div
-        style={{
-          background: "#f8f8f8",
-          borderRadius: "6px",
-          padding: "10px 12px",
-          marginBottom: readOnly ? 0 : "12px",
-        }}
-      >
-        <div
-          style={{
-            fontSize: "0.7rem",
-            color: "#999",
-            marginBottom: "2px",
-            textTransform: "uppercase",
-            letterSpacing: "0.04em",
-          }}
-        >
-          Made by
-        </div>
-
-        <div style={{ fontWeight: 600, color: "#222", wordBreak: "break-all" }}>
-          {tooltip.actorEmail || "Unknown"}
-        </div>
-
-        <div style={{ fontSize: "0.75rem", color: "#888", marginTop: "4px" }}>
-          {tooltip.createdAt
-            ? new Date(tooltip.createdAt).toLocaleString()
-            : "Unknown time"}
-        </div>
-
-        <div style={{ fontSize: "0.75rem", color: "#888", marginTop: "4px" }}>
-          Group ID: {tooltip.groupId || "Unknown group"}
-        </div>
+      <div className="my-4 rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm">
+        <p className="mb-1 text-[0.68rem] font-black uppercase tracking-[0.14em] text-slate-400">Made by</p>
+        <p className="break-all font-bold text-slate-900">{tooltip.actorEmail || "Unknown"}</p>
+        <p className="mt-2 text-xs text-slate-500">
+          {tooltip.createdAt ? new Date(tooltip.createdAt).toLocaleString() : "Unknown time"}
+        </p>
+        <p className="mt-1 break-all text-xs text-slate-500">Group ID: {tooltip.groupId || "Unknown group"}</p>
 
         {readOnly && (
-          <div
-            style={{
-              fontSize: "0.75rem",
-              color: "#888",
-              marginTop: "4px",
-            }}
-          >
-            Operation refs: {tooltip.references.length}
-          </div>
+          <p className="mt-1 text-xs text-slate-500">Operation refs: {tooltip.references.length}</p>
         )}
       </div>
 
       {!readOnly && (
-        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-          <button
-            onClick={() =>
-              onAccept(tooltip.groupId, tooltip.type, tooltip.references)
-            }
-            style={{
-              background: config.color,
-              color: "#fff",
-              border: "none",
-              borderRadius: "6px",
-              padding: "9px 0",
-              cursor: "pointer",
-              fontWeight: 600,
-              fontSize: "0.82rem",
-              width: "100%",
-            }}
+        <div className="grid gap-2">
+          <Button
+            type="button"
+            onClick={() => onAccept(tooltip.groupId, tooltip.type, tooltip.references)}
+            style={{ background: config.color, borderColor: config.color }}
           >
             ✓ Accept change
-          </button>
+          </Button>
 
-          <button
+          <Button
+            type="button"
+            variant="secondary"
+            className="border-red-200 text-red-700 hover:bg-red-50"
             onClick={() => onReject(tooltip.groupId, tooltip.type)}
-            style={{
-              background: "#fff",
-              color: "#C62828",
-              border: "1.5px solid #C62828",
-              borderRadius: "6px",
-              padding: "9px 0",
-              cursor: "pointer",
-              fontWeight: 600,
-              fontSize: "0.82rem",
-              width: "100%",
-            }}
           >
             ✕ Reject change
-          </button>
+          </Button>
         </div>
       )}
-    </div>
+    </aside>
   );
 }

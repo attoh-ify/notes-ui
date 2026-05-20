@@ -33,6 +33,7 @@ import {
 
 import AuditSidebarModal from "@/components/AuditSidebarModal";
 import { ReviewTooltip } from "@/components/ReviewTooltip";
+import { Badge, Button, EmptyState, ErrorBanner, LoadingState } from "@/components/ui";
 
 function AuditNoteContent() {
   const { id: noteId, vn: versionNumberParam } = useParams();
@@ -628,7 +629,7 @@ function AuditNoteContent() {
   }, [activeSuggestion]);
 
   if (loadingUser) {
-    return <div className="container-wide">Checking session...</div>;
+    return <LoadingState title="Checking session" message="Confirming your account before opening the audit trail." />;
   }
 
   if (!user) {
@@ -637,172 +638,53 @@ function AuditNoteContent() {
   }
 
   if (isLoading) {
-    return <div className="container-wide">Loading note...</div>;
+    return <LoadingState title="Loading audit trail" message="Preparing this read-only version review." />;
   }
 
   if (errorMessage) {
     return (
-      <div className="container-wide" style={{ color: "red" }}>
-        {errorMessage}
-      </div>
+      <main className="app-page-shell">
+        <ErrorBanner message={errorMessage} />
+      </main>
     );
   }
 
   if (!note) {
-    return <div className="container-wide">Note not found.</div>;
+    return (
+      <main className="app-page-shell">
+        <EmptyState title="Note not found" message="This note may have been deleted or you may no longer have access to it." />
+      </main>
+    );
   }
 
   return (
-    <main
-      className="container-wide"
-      style={{
-        maxWidth: "1150px",
-        paddingBottom: 60,
-      }}
-    >
-      <header style={{ marginBottom: "1.5rem" }}>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "flex-start",
-            gap: "1rem",
-            flexWrap: "wrap",
-            marginBottom: "1rem",
-          }}
-        >
-          <div>
-            <span
-              style={{
-                fontSize: "0.72rem",
-                color: "#D97706",
-                fontWeight: 800,
-                textTransform: "uppercase",
-                letterSpacing: "0.08em",
-              }}
-            >
-              Audit Trail
-            </span>
-
-            <h1
-              style={{
-                fontSize: "2rem",
-                margin: "8px 0 10px",
-                color: "#111827",
-                lineHeight: 1.1,
-              }}
-            >
-              {note.title}
-            </h1>
-
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "8px",
-                flexWrap: "wrap",
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  padding: "6px 10px",
-                  borderRadius: 999,
-                  background: "#F3F4F6",
-                  border: "1px solid #E5E7EB",
-                  fontSize: "0.82rem",
-                  fontWeight: 600,
-                  color: "#374151",
-                }}
-              >
-                <span style={{ color: "#6B7280" }}>Version:</span>
-                <span>{versionNumber}</span>
-              </div>
-            </div>
+    <main className="app-page-shell">
+      <header className="app-page-header">
+        <div className="min-w-0">
+          <p className="app-page-eyebrow text-amber-700">Audit trail</p>
+          <h1 className="app-page-title">{note.title}</h1>
+          <p className="app-page-description">Read-only view of the changes saved in this version.</p>
+          <div className="app-badge-row">
+            <Badge tone="amber">Version {versionNumber}</Badge>
+            {noteVersion && <Badge tone="slate">Saved {new Date(noteVersion.createdAt).toLocaleString()}</Badge>}
           </div>
+        </div>
 
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "10px",
-              flexWrap: "wrap",
-              justifyContent: "flex-end",
-            }}
-          >
-            <button
-              onClick={() => router.push(`/notes/${noteId}`)}
-              style={{
-                padding: "10px 16px",
-                borderRadius: 10,
-                border: "1px solid #E5E7EB",
-                background: "white",
-                cursor: "pointer",
-                fontWeight: 600,
-              }}
-            >
-              View Note
-            </button>
-          </div>
+        <div className="app-page-actions">
+          <Button variant="secondary" onClick={() => router.push(`/notes/${noteId}`)}>View Note</Button>
         </div>
       </header>
 
-      <div
-        style={{
-          backgroundColor: "#FEF3C7",
-          border: "1px solid #FCD34D",
-          color: "#92400E",
-          padding: "0.9rem 1rem",
-          borderRadius: "12px",
-          marginBottom: "1rem",
-          display: "flex",
-          alignItems: "center",
-          gap: "10px",
-          fontSize: "0.9rem",
-          fontWeight: 500,
-        }}
-      >
-        <span style={{ fontSize: "1.2rem" }}>🧾</span>
-
+      <div className="app-alert">
+        <span className="text-lg">🧾</span>
         <span>
-          <strong>Audit Mode:</strong> This is a read-only view of what changed
-          in this version compared with the previous version.
+          <strong>Audit Mode:</strong> This page is read-only. Select highlighted text or formatting cards to inspect what changed.
         </span>
       </div>
 
-      <div
-        style={{
-          display: "flex",
-          gap: "1rem",
-          alignItems: "flex-start",
-        }}
-      >
-        <section
-          style={{
-            flex: 1,
-            minWidth: 0,
-            position: "relative",
-            minHeight: "500px",
-            borderRadius: "18px",
-            overflow: "hidden",
-            border: "2px solid #FCD34D",
-            backgroundColor: "white",
-            boxShadow: "0 4px 18px rgba(0,0,0,0.04)",
-          }}
-        >
-          <div
-            ref={editorRef}
-            style={{
-              fontFamily: "monospace",
-              fontSize: "1rem",
-              lineHeight: "1.7",
-              padding: "2rem",
-              border: "none",
-              cursor: "default",
-            }}
-          />
+      <div className="editor-workspace">
+        <section className="editor-surface reviewing">
+          <div ref={editorRef} className="editor-surface-content" style={{ cursor: "default" }} />
         </section>
 
         <AuditSidebarModal
@@ -815,24 +697,9 @@ function AuditNoteContent() {
         />
       </div>
 
-      <footer
-        style={{
-          marginTop: "1rem",
-          fontSize: "0.75rem",
-          color: "#9CA3AF",
-          display: "flex",
-          justifyContent: "space-between",
-          gap: "1rem",
-          flexWrap: "wrap",
-        }}
-      >
+      <footer className="app-footer-meta">
         <span>Created at: {new Date(note.createdAt).toLocaleString()}</span>
-
-        {noteVersion && (
-          <span>
-            Version created: {new Date(noteVersion.createdAt).toLocaleString()}
-          </span>
-        )}
+        {noteVersion && <span>Version created: {new Date(noteVersion.createdAt).toLocaleString()}</span>}
       </footer>
 
       {activeSuggestion && (
@@ -852,7 +719,7 @@ function AuditNoteContent() {
 
 export default function AuditNotePage() {
   return (
-    <Suspense fallback={<p>Loading audit trail...</p>}>
+    <Suspense fallback={<LoadingState title="Loading audit trail" message="Preparing audit view." />}>
       <AuditNoteContent />
     </Suspense>
   );

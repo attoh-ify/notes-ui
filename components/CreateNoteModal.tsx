@@ -1,8 +1,10 @@
 "use client";
 
+import { Button, ErrorBanner, FormField, Input, Modal } from "@/components/ui";
 import { apiFetch } from "@/src/lib/api";
 import { convertDocumentToDelta } from "@/src/lib/documentToDelta";
 import { Note } from "@/src/types";
+import { FileUp } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
@@ -13,14 +15,8 @@ interface CreateNoteModalProps {
   onClose: () => void;
 }
 
-export default function CreateNoteModal({
-  open,
-  email,
-  userId,
-  onClose,
-}: CreateNoteModalProps) {
+export default function CreateNoteModal({ open, onClose }: CreateNoteModalProps) {
   const router = useRouter();
-
   const [title, setTitle] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -31,46 +27,33 @@ export default function CreateNoteModal({
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const selected = e.target.files?.[0];
     if (!selected) return;
-
     setFile(selected);
-
     const extractedName = selected.name.replace(/\.[^/.]+$/, "");
-
-    if (!title.trim()) {
-      setTitle(extractedName);
-    }
+    if (!title.trim()) setTitle(extractedName);
   }
 
   async function onCreate() {
     if (isLoading) return;
-
     setIsLoading(true);
     setError(null);
 
     try {
       let initialDelta = null;
-      
+
       if (file) {
         try {
           initialDelta = await convertDocumentToDelta(file);
-        } catch (convError) {
+        } catch {
           setError("Failed to convert document. Please check the file format.");
           setIsLoading(false);
           return;
         }
       }
 
-      const payload = {
-        title: title,
-        initialDelta: initialDelta
-      };
-
       const data = await apiFetch<Note>("notes", {
         method: "POST",
-        body: JSON.stringify(payload),
-        headers: {
-          "Content-Type": "application/json"
-        }
+        body: JSON.stringify({ title, initialDelta }),
+        headers: { "Content-Type": "application/json" },
       });
 
       router.push(`/notes/${data.id}/edit`);
@@ -80,175 +63,43 @@ export default function CreateNoteModal({
     } finally {
       setIsLoading(false);
     }
-}
+  }
 
   return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        backgroundColor: "rgba(0,0,0,0.45)",
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "center",
-        zIndex: 1000,
-      }}
+    <Modal
+      title="Create a new note"
+      eyebrow="New note"
+      onClose={isLoading ? () => undefined : onClose}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={isLoading}>Cancel</Button>
+          <Button onClick={onCreate} disabled={isLoading || !title.trim()}>{isLoading ? "Creating..." : "Create note"}</Button>
+        </>
+      }
     >
-      <div
-        style={{
-          backgroundColor: "#fff",
-          width: 460,
-          maxHeight: "85vh",
-          borderRadius: 12,
-          padding: 20,
-          boxShadow: "0 20px 40px rgba(0,0,0,0.2)",
-          display: "flex",
-          flexDirection: "column",
-          gap: 20,
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-          }}
-        >
-          <p style={{ fontSize: 13, color: "#718096" }}>
-            Create new note
-          </p>
+      <div className="space-y-5">
+        <FormField label="Note title">
+          <Input value={title} placeholder="Enter title..." onChange={(e) => setTitle(e.target.value)} disabled={isLoading} />
+        </FormField>
 
-          <button
-            onClick={onClose}
-            disabled={isLoading}
-            style={{
-              background: "transparent",
-              border: "none",
-              fontSize: 18,
-              color: "#4A5568",
-              cursor: isLoading ? "not-allowed" : "pointer",
-              opacity: isLoading ? 0.6 : 1,
-              pointerEvents: isLoading ? "none" : "auto",
-            }}
-          >
-            ✕
-          </button>
-        </div>
+        <div>
+          <p className="text-sm font-bold text-slate-700">Upload document (optional)</p>
+          <label className="mt-2 flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center transition hover:border-emerald-300 hover:bg-emerald-50/60">
+            <FileUp className="mb-2 h-7 w-7 text-emerald-600" />
+            <span className="text-sm font-bold text-slate-700">Choose a PDF, Word, or TXT file</span>
+            <span className="mt-1 text-xs text-slate-500">The title will auto-fill from the filename if empty.</span>
+            <input className="sr-only" type="file" accept=".pdf,.doc,.docx,.txt" onChange={handleFileChange} disabled={isLoading} />
+          </label>
 
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: 14,
-          }}
-        >
-          <div>
-            <label
-              style={{
-                fontSize: 13,
-                fontWeight: 600,
-                color: "#374151",
-              }}
-            >
-              Note title
-            </label>
-
-            <input
-              value={title}
-              placeholder="Enter title..."
-              className="input-field"
-              onChange={(e) => setTitle(e.target.value)}
-              disabled={isLoading}
-              style={{ marginTop: 6 }}
-            />
-          </div>
-
-          <div>
-            <label
-              style={{
-                fontSize: 13,
-                fontWeight: 600,
-                color: "#374151",
-              }}
-            >
-              Upload document (optional)
-            </label>
-
-            <div
-              style={{
-                marginTop: 6,
-                border: "2px dashed #D1D5DB",
-                borderRadius: 12,
-                padding: 18,
-                background: "#F9FAFB",
-              }}
-            >
-              <input
-                type="file"
-                accept=".pdf,.doc,.docx,.txt"
-                onChange={handleFileChange}
-                disabled={isLoading}
-              />
-
-              <p
-                style={{
-                  marginTop: 10,
-                  fontSize: 12,
-                  color: "#6B7280",
-                }}
-              >
-                PDF, Word or TXT files supported
-              </p>
-
-              {file && (
-                <div
-                  style={{
-                    marginTop: 10,
-                    padding: 10,
-                    borderRadius: 8,
-                    background: "#fff",
-                    border: "1px solid #E5E7EB",
-                    fontSize: 13,
-                  }}
-                >
-                  📄 {file.name}
-                </div>
-              )}
+          {file && (
+            <div className="mt-3 rounded-2xl border border-slate-200 bg-white p-3 text-sm font-semibold text-slate-700">
+              📄 {file.name}
             </div>
-          </div>
+          )}
         </div>
 
-        {error && (
-          <p style={{ color: "red", fontSize: 12 }}>
-            {error}
-          </p>
-        )}
-
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "flex-end",
-          }}
-        >
-          <button
-            onClick={onCreate}
-            disabled={isLoading || !title.trim()}
-            className="btn-primary"
-            style={{
-              opacity: isLoading ? 0.7 : 1,
-              cursor:
-                isLoading || !title.trim()
-                  ? "not-allowed"
-                  : "pointer",
-              pointerEvents:
-                isLoading || !title.trim()
-                  ? "none"
-                  : "auto",
-            }}
-          >
-            {isLoading ? "Creating..." : "Create"}
-          </button>
-        </div>
+        <ErrorBanner message={error} />
       </div>
-    </div>
+    </Modal>
   );
 }
