@@ -34,14 +34,18 @@ import ExitReviewModal from "@/components/ExitReviewModal";
 import FormatSidebarModal from "@/components/FormatSidebarModal";
 import {
   deleteInsertGroupSegments,
+  deleteNewlineGroupSegments,
   deltaToSegments,
   findDeleteGroupRangeInRuntime,
   findInsertGroupRangeInRuntime,
+  findNewlineGroupRangeInRuntime,
   getSuggestionSelector,
   mergeAdjacentSegments,
   removeInsertSuggestionFromSegments,
+  removeNewlineSuggestionFromSegments,
   getRuntimeTextInRange,
   resolveFormatSuggestionsAfterMutation,
+  resolveNewlineSuggestionsAfterDependencyChange,
   restoreRejectedDeleteSegments,
   collectSuggestionReferencesByGroup,
   segmentLength,
@@ -383,7 +387,10 @@ function EditContent() {
       const nextGroupId = node?.getAttribute("data-group-id") ?? null;
       const rawType = node?.getAttribute("data-suggestion-type") ?? null;
       const nextType =
-        rawType === "insert" || rawType === "delete" || rawType === "format"
+        rawType === "insert" ||
+        rawType === "newline" ||
+        rawType === "delete" ||
+        rawType === "format"
           ? (rawType as TooltipState["type"])
           : null;
 
@@ -442,8 +449,17 @@ function EditContent() {
       return;
     }
 
-    const type = node.getAttribute("data-suggestion-type") as TooltipState["type"];
+    const rawType = node.getAttribute("data-suggestion-type");
 
+    const type =
+      rawType === "insert" ||
+      rawType === "newline" ||
+      rawType === "delete" ||
+      rawType === "format"
+        ? rawType
+        : null;
+
+    if (!type) return;
     if (type === "format") return;
 
     const groupId = node.getAttribute("data-group-id")!;
@@ -624,7 +640,7 @@ function EditContent() {
 
   function acceptChange(
     groupId: string,
-    type: "insert" | "delete" | "format",
+    type: "insert" | "newline" | "delete" | "format",
   ) {
     const ctx = getReviewCtx();
 
@@ -664,7 +680,9 @@ function EditContent() {
       const range =
         type === "delete"
           ? findDeleteGroupRangeInRuntime(reviewSegmentsRef.current, groupId)
-          : findInsertGroupRangeInRuntime(reviewSegmentsRef.current, groupId);
+          : type === "newline"
+            ? findNewlineGroupRangeInRuntime(reviewSegmentsRef.current, groupId)
+            : findInsertGroupRangeInRuntime(reviewSegmentsRef.current, groupId);
 
       if (!range) return;
 
@@ -709,6 +727,13 @@ function EditContent() {
             ),
           ),
         );
+      } else if (type === "newline") {
+        reviewSegmentsRef.current = removeNewlineSuggestionFromSegments(
+          reviewSegmentsRef.current,
+          groupId,
+        );
+
+        refreshEditorFromRuntime(ctx);
       } else if (type === "delete") {
         let cursor = 0;
         const nextSegments: ReviewSegment[] = [];
@@ -794,7 +819,10 @@ function EditContent() {
     }
   }
 
-  function rejectChange(groupId: string, type: "insert" | "delete" | "format") {
+  function rejectChange(
+    groupId: string,
+    type: "insert" | "newline" | "delete" | "format",
+  ) {
     const ctx = getReviewCtx();
 
     if (type === "format") {
@@ -833,7 +861,9 @@ function EditContent() {
       const range =
         type === "delete"
           ? findDeleteGroupRangeInRuntime(reviewSegmentsRef.current, groupId)
-          : findInsertGroupRangeInRuntime(reviewSegmentsRef.current, groupId);
+          : type === "newline"
+            ? findNewlineGroupRangeInRuntime(reviewSegmentsRef.current, groupId)
+            : findInsertGroupRangeInRuntime(reviewSegmentsRef.current, groupId);
 
       if (!range) return;
 
@@ -846,24 +876,22 @@ function EditContent() {
           ),
         );
 
-        const removedText = getRuntimeTextInRange(
-          reviewSegmentsRef.current,
-          range.index,
-          range.length,
-        );
-
         reviewSegmentsRef.current = deleteInsertGroupSegments(
           reviewSegmentsRef.current,
           groupId,
           range,
         );
 
-        // reviewSegmentsRef.current = normalizeLineBreaksAfterRejectedInsert(
-        //   reviewSegmentsRef.current,
-        //   range,
-        //   removedText,
-        //   () => nextRuntimeSegmentId(ctx),
-        // );
+        const newlineResolution = resolveNewlineSuggestionsAfterDependencyChange(
+          reviewSegmentsRef.current,
+          `insert:${groupId}`,
+        );
+
+        reviewSegmentsRef.current = newlineResolution.segments;
+
+        if (newlineResolution.autoRejectedReferences.length > 0) {
+          recordRejectedReferences(newlineResolution.autoRejectedReferences);
+        }
 
         refreshEditorFromRuntime(ctx);
 
@@ -892,6 +920,21 @@ function EditContent() {
             ),
           ),
         );
+      } else if (type === "newline") {
+        recordRejectedReferences(
+          collectSuggestionReferencesByGroup(
+            reviewSegmentsRef.current,
+            groupId,
+            "newline",
+          ),
+        );
+
+        reviewSegmentsRef.current = deleteNewlineGroupSegments(
+          reviewSegmentsRef.current,
+          groupId,
+        );
+
+        refreshEditorFromRuntime(ctx);
       } else if (type === "delete") {
         recordRejectedReferences(
           collectSuggestionReferencesByGroup(
@@ -1134,10 +1177,10 @@ function EditContent() {
 
       return Boolean(
         attrs["suggestion-insert"] ||
+          attrs["suggestion-newline"] ||
           attrs["suggestion-delete"] ||
           attrs["suggestion-delete-singleline"] ||
           attrs["suggestion-delete-multiline"] ||
-          attrs["suggestion-delete-newline"] ||
           attrs["suggestion-format"] ||
           attrs["suggestion-block-format"],
       );

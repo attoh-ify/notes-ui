@@ -10,6 +10,9 @@ type SuggestionPayload = {
   references?: Reference[];
   baseAttributes?: Record<string, any>;
   suggestionAttributes?: Record<string, any>;
+  // suggestion-newline only
+  dependsOnReviewRunIds?: string[];
+  type?: "DEPENDENT" | "STANDALONE";
 };
 
 type FormatPayload = {
@@ -71,7 +74,7 @@ function dedupeSuggestionReferences(
 function setCommonSuggestionAttrs(
   node: HTMLElement,
   data: SuggestionPayload,
-  type: "insert" | "delete",
+  type: "insert" | "newline" | "delete",
 ) {
   node.setAttribute("data-group-id", data.groupId ?? "");
   node.setAttribute("data-suggestion-type", type);
@@ -92,6 +95,15 @@ function setCommonSuggestionAttrs(
     "data-suggestion-attributes",
     JSON.stringify(data.suggestionAttributes ?? {}),
   );
+
+  if (type === "newline") {
+    node.setAttribute(
+      "data-depends-on-review-run-ids",
+      JSON.stringify(data.dependsOnReviewRunIds ?? []),
+    );
+
+    node.setAttribute("data-newline-type", data.type ?? "STANDALONE");
+  }
 }
 
 function readCommonSuggestionAttrs(node: HTMLElement) {
@@ -110,6 +122,16 @@ function readCommonSuggestionAttrs(node: HTMLElement) {
       "data-suggestion-attributes",
       {},
     ),
+    dependsOnReviewRunIds: getJsonObject<string[]>(
+      node,
+      "data-depends-on-review-run-ids",
+      [],
+    ),
+    type:
+      (node.getAttribute("data-newline-type") as
+        | "DEPENDENT"
+        | "STANDALONE"
+        | null) ?? "STANDALONE",
   };
 }
 
@@ -128,6 +150,27 @@ export function registerFormats(QuillModule: typeof Quill) {
       const node = super.create() as HTMLElement;
       setCommonSuggestionAttrs(node, data, "insert");
       node.classList.add("suggestion-insert");
+      return node;
+    }
+
+    static formats(node: HTMLElement) {
+      return readCommonSuggestionAttrs(node);
+    }
+  }
+
+  class SuggestionNewline extends Inline {
+    static blotName = "suggestion-newline";
+    static tagName = "span";
+
+    static create(data: SuggestionPayload) {
+      const node = super.create() as HTMLElement;
+      setCommonSuggestionAttrs(node, data, "newline");
+      node.classList.add("suggestion-newline");
+
+      if ((data.type ?? "STANDALONE") === "STANDALONE") {
+        node.classList.add("suggestion-newline-standalone");
+      }
+
       return node;
     }
 
@@ -257,6 +300,7 @@ export function registerFormats(QuillModule: typeof Quill) {
   );
 
   QuillModule.register(SuggestionInsert, true);
+  QuillModule.register(SuggestionNewline, true);
   QuillModule.register(SuggestionDelete, true);
   QuillModule.register(SuggestionDeleteSingleLine, true);
   QuillModule.register(SuggestionDeleteMultiLine, true);

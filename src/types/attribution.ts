@@ -14,6 +14,17 @@ export interface InsertSuggestion {
   createdAt: string;
 }
 
+export type NewlineSuggestionType = "DEPENDENT" | "STANDALONE";
+
+export interface NewlineSuggestion {
+  groupId: string;
+  actorEmail: string;
+  createdAt: string;
+  references: Reference[];
+  dependsOnReviewRunIds: string[];
+  type: NewlineSuggestionType;
+}
+
 export type DeleteSuggestionType = "TEXT" | "SINGLE_LINE" | "MULTI_LINE";
 
 export interface DeleteSuggestion {
@@ -79,12 +90,13 @@ export interface ReviewSegment {
   suggestionAttributes: Record<string, any>;
   references: Reference[];
   insertSuggestion?: InsertSuggestion;
+  newlineSuggestion?: NewlineSuggestion;
   deleteSuggestion?: DeleteSuggestion;
 }
 
 export interface TooltipState {
   groupId: string;
-  type: "insert" | "delete" | "format";
+  type: "insert" | "newline" | "delete" | "format";
   actorEmail: string;
   createdAt: string;
   references: Reference[];

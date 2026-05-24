@@ -57,10 +57,10 @@ export function stripSuggestionAttributes(delta: Delta): Delta {
         "suggestion-format": _f,
         "suggestion-block-format": _bf,
         "suggestion-delete": _d,
-        "suggestion-delete-newline": _dn,
         "suggestion-delete-singleline": _dsl,
         "suggestion-delete-multiline": _dml,
         "suggestion-insert": _i,
+        "suggestion-newline": _n,
         ...attrs
       } = op.attributes;
 
@@ -139,7 +139,11 @@ export function buildFormatOverlayClearDelta(
 // ─── Runtime segment utilities ────────────────────────────────────────────────
 
 function hasSuggestionAttr(seg: ReviewSegment): boolean {
-  return !!(seg.insertSuggestion || seg.deleteSuggestion);
+  return !!(
+    seg.insertSuggestion ||
+    seg.newlineSuggestion ||
+    seg.deleteSuggestion
+  );
 }
 
 export function deltaToSegments(
@@ -151,13 +155,18 @@ export function deltaToSegments(
     .map((op: any) => {
       const allAttrs: Record<string, any> = { ...(op.attributes ?? {}) };
 
-      const insertMeta = allAttrs["suggestion-insert"] ?? null;
+      const insertMeta = normalizeSuggestionMeta<any>(
+        allAttrs["suggestion-insert"],
+      );
+
+      const newlineMeta = normalizeSuggestionMeta<any>(
+        allAttrs["suggestion-newline"],
+      );
 
       const deleteMeta =
-        allAttrs["suggestion-delete"] ??
-        allAttrs["suggestion-delete-singleline"] ??
-        allAttrs["suggestion-delete-multiline"] ??
-        allAttrs["suggestion-delete-newline"] ??
+        normalizeSuggestionMeta<any>(allAttrs["suggestion-delete"]) ??
+        normalizeSuggestionMeta<any>(allAttrs["suggestion-delete-singleline"]) ??
+        normalizeSuggestionMeta<any>(allAttrs["suggestion-delete-multiline"]) ??
         null;
 
       let baseAttributes: Record<string, any>;
@@ -166,6 +175,9 @@ export function deltaToSegments(
       if (insertMeta) {
         baseAttributes = { ...(insertMeta.baseAttributes ?? {}) };
         suggestionAttributes = { ...(insertMeta.suggestionAttributes ?? {}) };
+      } else if (newlineMeta) {
+        baseAttributes = { ...(newlineMeta.baseAttributes ?? {}) };
+        suggestionAttributes = { ...(newlineMeta.suggestionAttributes ?? {}) };
       } else if (deleteMeta) {
         baseAttributes = { ...(deleteMeta.baseAttributes ?? {}) };
         suggestionAttributes = { ...(deleteMeta.suggestionAttributes ?? {}) };
@@ -176,6 +188,7 @@ export function deltaToSegments(
 
       const references: Reference[] = cloneSuggestionReferences(
         insertMeta?.references ??
+          newlineMeta?.references ??
           deleteMeta?.references ??
           [],
       );
@@ -196,6 +209,19 @@ export function deltaToSegments(
               groupId: insertMeta.groupId,
               actorEmail: insertMeta.actorEmail,
               createdAt: insertMeta.createdAt,
+            }
+          : undefined,
+
+        newlineSuggestion: newlineMeta
+          ? {
+              groupId: newlineMeta.groupId,
+              actorEmail: newlineMeta.actorEmail,
+              createdAt: newlineMeta.createdAt,
+              references: cloneSuggestionReferences(newlineMeta.references ?? references),
+              dependsOnReviewRunIds: [
+                ...(newlineMeta.dependsOnReviewRunIds ?? []),
+              ],
+              type: newlineMeta.type ?? "STANDALONE",
             }
           : undefined,
 
@@ -235,6 +261,7 @@ export function mergeAdjacentSegments(
       !seg.text.includes("\n") &&
       shallowEqual(getEffectiveAttributes(last), getEffectiveAttributes(seg)) &&
       sameInsertSuggestion(last, seg) &&
+      sameNewlineSuggestion(last, seg) &&
       sameDeleteSuggestion(last, seg) &&
       shallowEqual(last.baseAttributes ?? {}, seg.baseAttributes ?? {});
 
@@ -265,6 +292,7 @@ export function segmentsToBaseDelta(segments: ReviewSegment[]): Delta {
     };
 
     delete attrs["suggestion-insert"];
+    delete attrs["suggestion-newline"];
     delete attrs["suggestion-delete"];
     delete attrs["suggestion-delete-newline"];
     delete attrs["suggestion-delete-singleline"];
@@ -307,6 +335,21 @@ export function segmentsToSuggestionOverlayDelta(
       };
     }
 
+    if (seg.newlineSuggestion) {
+      attrs["suggestion-newline"] = {
+        groupId: seg.newlineSuggestion.groupId,
+        actorEmail: seg.newlineSuggestion.actorEmail,
+        createdAt: seg.newlineSuggestion.createdAt,
+        references,
+        dependsOnReviewRunIds: [
+          ...(seg.newlineSuggestion.dependsOnReviewRunIds ?? []),
+        ],
+        type: seg.newlineSuggestion.type ?? "STANDALONE",
+        baseAttributes: seg.baseAttributes ?? null,
+        suggestionAttributes: seg.suggestionAttributes ?? null,
+      };
+    }
+
     if (seg.deleteSuggestion) {
       const type = seg.deleteSuggestion.type ?? "TEXT";
 
@@ -343,10 +386,6 @@ export function segmentsToSuggestionOverlayDelta(
 
 export function cloneSegments(items: ReviewSegment[]): ReviewSegment[] {
   return items.map(cloneSegment);
-}
-
-function getRuntimePlainText(segments: ReviewSegment[]): string {
-  return segments.map(segmentPreviewText).join("");
 }
 
 export function getRuntimeTextInRange(
@@ -407,6 +446,110 @@ export function findInsertGroupRangeInRuntime(
   }
 
   return start === -1 ? null : { index: start, length: end - start };
+}
+
+export function findNewlineGroupRangeInRuntime(
+  segments: ReviewSegment[],
+  groupId: string,
+): { index: number; length: number } | null {
+  let cursor = 0;
+  let start = -1;
+  let end = -1;
+
+  for (const seg of segments) {
+    const len = segmentLength(seg);
+
+    if (seg.newlineSuggestion?.groupId === groupId) {
+      if (start === -1) start = cursor;
+      end = cursor + len;
+    }
+
+    cursor += len;
+  }
+
+  return start === -1 ? null : { index: start, length: end - start };
+}
+
+export function removeNewlineSuggestionFromSegments(
+  segments: ReviewSegment[],
+  groupId: string,
+): ReviewSegment[] {
+  return mergeAdjacentSegments(
+    segments.map((seg) => {
+      if (seg.newlineSuggestion?.groupId !== groupId) return seg;
+
+      return {
+        id: seg.id,
+        text: seg.text ?? "",
+        embed: seg.embed ? cloneJsonValue(seg.embed) : undefined,
+        baseAttributes: { ...(seg.baseAttributes ?? {}) },
+        suggestionAttributes: { ...(seg.suggestionAttributes ?? {}) },
+        references: cloneSuggestionReferences(seg.references ?? []),
+      };
+    }),
+  );
+}
+
+export function deleteNewlineGroupSegments(
+  segments: ReviewSegment[],
+  groupId: string,
+): ReviewSegment[] {
+  return mergeAdjacentSegments(
+    segments.filter((seg) => seg.newlineSuggestion?.groupId !== groupId),
+  );
+}
+
+export function resolveNewlineSuggestionsAfterDependencyChange(
+  segments: ReviewSegment[],
+  dependencyId: string,
+): {
+  segments: ReviewSegment[];
+  autoRejectedReferences: Reference[];
+} {
+  const autoRejectedReferences: Reference[] = [];
+
+  const next = segments
+    .map((seg) => {
+      if (!seg.newlineSuggestion) return seg;
+
+      const oldDeps = seg.newlineSuggestion.dependsOnReviewRunIds ?? [];
+
+      if (!oldDeps.includes(dependencyId)) return seg;
+
+      const newDeps = oldDeps.filter((id) => id !== dependencyId);
+
+      if (
+        newDeps.length === 0 &&
+        (seg.newlineSuggestion.type ?? "STANDALONE") === "DEPENDENT"
+      ) {
+        autoRejectedReferences.push(
+          ...cloneSuggestionReferences(seg.references ?? []),
+        );
+
+        return null;
+      }
+
+      return {
+        ...cloneSegment(seg),
+        newlineSuggestion: {
+          ...seg.newlineSuggestion,
+          references: cloneSuggestionReferences(
+            seg.newlineSuggestion.references ?? [],
+          ),
+          dependsOnReviewRunIds: newDeps,
+          type:
+            newDeps.length > 0
+              ? "DEPENDENT"
+              : seg.newlineSuggestion.type ?? "STANDALONE",
+        },
+      };
+    })
+    .filter(Boolean) as ReviewSegment[];
+
+  return {
+    segments: mergeAdjacentSegments(next),
+    autoRejectedReferences: dedupeSuggestionReferences(autoRejectedReferences),
+  };
 }
 
 export function findDeleteGroupRangeInRuntime(
@@ -586,49 +729,18 @@ function insertRuntimeTextAt(
   return mergeAdjacentSegments(segments);
 }
 
-export function normalizeLineBreaksAfterRejectedInsert(
-  segments: ReviewSegment[],
-  removedRange: { index: number; length: number },
-  removedText: string,
-  nextId: () => string,
-): ReviewSegment[] {
-  const boundary = removedRange.index;
-  const currentText = getRuntimePlainText(segments);
-  const charBefore = boundary > 0 ? currentText[boundary - 1] : null;
-  const charAfter = boundary < currentText.length ? currentText[boundary] : null;
+function normalizeSuggestionMeta<T = any>(value: any): T | null {
+  if (!value) return null;
 
-  const removedHadNewline = removedText.includes("\n");
-  const beforeHasVisibleText = boundary > 0;
-  const afterHasVisibleText = boundary < currentText.length;
-  const beforeIsText = charBefore !== null && charBefore !== "\n";
-  const afterIsText = charAfter !== null && charAfter !== "\n";
-
-  if (charBefore === "\n" && charAfter === "\n") {
-    return removeRuntimeCharAt(segments, boundary, nextId);
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value) as T;
+    } catch {
+      return null;
+    }
   }
 
-  if (boundary === 0 && charAfter === "\n") {
-    return removeRuntimeCharAt(segments, 0, nextId);
-  }
-
-  if (boundary === currentText.length && charBefore === "\n") {
-    return removeRuntimeCharAt(segments, boundary - 1, nextId);
-  }
-
-  const removedHadText = removedText.replace(/\n/g, "").length > 0;
-
-  if (
-    removedHadNewline &&
-    removedHadText &&
-    beforeHasVisibleText &&
-    afterHasVisibleText &&
-    beforeIsText &&
-    afterIsText
-  ) {
-    return insertRuntimeTextAt(segments, boundary, "\n", nextId, {}, {});
-  }
-
-  return segments;
+  return value as T;
 }
 
 // ─── DOM / selector utilities ─────────────────────────────────────────────────
@@ -639,6 +751,10 @@ export function getSuggestionSelector(
 ): string {
   if (type === "insert") {
     return `[data-suggestion-type="insert"][data-group-id="${groupId}"]`;
+  }
+
+  if (type === "newline") {
+    return `[data-suggestion-type="newline"][data-group-id="${groupId}"]`;
   }
 
   if (type === "format") {
@@ -1028,6 +1144,18 @@ function sameInsertSuggestion(a: ReviewSegment, b: ReviewSegment) {
   );
 }
 
+function sameNewlineSuggestion(a: ReviewSegment, b: ReviewSegment) {
+  if (!!a.newlineSuggestion !== !!b.newlineSuggestion) return false;
+  if (!a.newlineSuggestion && !b.newlineSuggestion) return true;
+
+  return (
+    a.newlineSuggestion?.groupId === b.newlineSuggestion?.groupId &&
+    a.newlineSuggestion?.actorEmail === b.newlineSuggestion?.actorEmail &&
+    a.newlineSuggestion?.createdAt === b.newlineSuggestion?.createdAt &&
+    a.newlineSuggestion?.type === b.newlineSuggestion?.type
+  );
+}
+
 function sameDeleteSuggestion(a: ReviewSegment, b: ReviewSegment) {
   if (!!a.deleteSuggestion !== !!b.deleteSuggestion) return false;
   if (!a.deleteSuggestion && !b.deleteSuggestion) return true;
@@ -1043,7 +1171,7 @@ function sameDeleteSuggestion(a: ReviewSegment, b: ReviewSegment) {
 export function collectSuggestionReferencesByGroup(
   segments: ReviewSegment[],
   groupId: string,
-  type: "insert" | "delete",
+  type: "insert" | "newline" | "delete",
 ): Reference[] {
   const refs: Reference[] = [];
 
@@ -1051,7 +1179,9 @@ export function collectSuggestionReferencesByGroup(
     const matches =
       type === "insert"
         ? seg.insertSuggestion?.groupId === groupId
-        : seg.deleteSuggestion?.groupId === groupId;
+        : type === "newline"
+          ? seg.newlineSuggestion?.groupId === groupId
+          : seg.deleteSuggestion?.groupId === groupId;
 
     if (!matches) continue;
 
@@ -1086,10 +1216,10 @@ function stripRuntimeSuggestionAttrs(
     "suggestion-format": _f,
     "suggestion-block-format": _bf,
     "suggestion-delete": _d,
-    "suggestion-delete-newline": _dn,
     "suggestion-delete-singleline": _dsl,
     "suggestion-delete-multiline": _dml,
     "suggestion-insert": _i,
+    "suggestion-newline": _n,
     ...clean
   } = attrs ?? {};
 
@@ -1104,11 +1234,28 @@ function cloneSegment(seg: ReviewSegment): ReviewSegment {
     baseAttributes: { ...(seg.baseAttributes ?? {}) },
     suggestionAttributes: { ...(seg.suggestionAttributes ?? {}) },
     references: cloneSuggestionReferences(seg.references ?? []),
+
     insertSuggestion: seg.insertSuggestion
-      ? cloneInsertSuggestion(seg.insertSuggestion)
+      ? { ...seg.insertSuggestion }
       : undefined,
+
+    newlineSuggestion: seg.newlineSuggestion
+      ? {
+          groupId: seg.newlineSuggestion.groupId,
+          actorEmail: seg.newlineSuggestion.actorEmail,
+          createdAt: seg.newlineSuggestion.createdAt,
+          references: cloneSuggestionReferences(
+            seg.newlineSuggestion.references ?? [],
+          ),
+          dependsOnReviewRunIds: [
+            ...(seg.newlineSuggestion.dependsOnReviewRunIds ?? []),
+          ],
+          type: seg.newlineSuggestion.type ?? "STANDALONE",
+        }
+      : undefined,
+
     deleteSuggestion: seg.deleteSuggestion
-      ? cloneDeleteSuggestion(seg.deleteSuggestion)
+      ? { ...seg.deleteSuggestion }
       : undefined,
   };
 }

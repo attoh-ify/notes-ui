@@ -498,6 +498,66 @@ textarea {
   box-shadow: inset 0 -0.24em 0 rgba(37, 99, 235, 0.76);
 }
 
+/* Newline suggestion */
+.suggestion-newline {
+  cursor: pointer;
+  border-radius: 0.25em;
+  background: rgba(14, 165, 233, 0.08);
+  box-shadow: inset 0 -0.16em 0 rgba(14, 165, 233, 0.42);
+  transition:
+    background-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.suggestion-newline.hover {
+  background: rgba(14, 165, 233, 0.14);
+  box-shadow: inset 0 -0.18em 0 rgba(14, 165, 233, 0.6);
+}
+
+.suggestion-newline.active {
+  background: rgba(14, 165, 233, 0.2);
+  box-shadow: inset 0 -0.24em 0 rgba(14, 165, 233, 0.76);
+}
+
+/* Only standalone newlines need visible review affordance */
+.suggestion-newline-standalone::after {
+  content: "↵";
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 0.25rem;
+  padding: 0.05rem 0.35rem;
+  border-radius: 999px;
+  background: rgba(14, 165, 233, 0.16);
+  color: #0369a1;
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1.2;
+  vertical-align: middle;
+}
+
+.suggestion-newline-marker {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 0.35rem;
+  padding: 0.05rem 0.35rem;
+  border: 1px solid rgba(14, 165, 233, 0.35);
+  border-radius: 999px;
+  background: rgba(14, 165, 233, 0.14);
+  color: #0369a1;
+  font-size: 0.72rem;
+  font-weight: 900;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.suggestion-newline-marker.hover,
+.suggestion-newline-marker.active {
+  background: rgba(14, 165, 233, 0.24);
+  border-color: rgba(14, 165, 233, 0.65);
+}
+
 /* Delete suggestion */
 .suggestion-delete {
   background: rgba(239, 68, 68, 0.08);

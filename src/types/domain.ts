@@ -61,6 +61,7 @@ export enum MessageType {
 
 export const TYPE_CONFIG = {
   insert: { label: "Insertion", color: "#1976D2" },
+  newline: { label: "Line break", color: "#0284C7" },
   delete: { label: "Deletion", color: "#C62828" },
   format: { label: "Formatting", color: "#F9A825" },
 };
