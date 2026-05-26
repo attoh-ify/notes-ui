@@ -1,6 +1,14 @@
 import { OperationState, TextOperation } from "./textOperation";
 import Delta from "quill-delta";
 
+function createOpId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+
+  return `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
 export class DocState {
   public sentOperation: TextOperation | null = null;
   public pendingDelta: Delta = new Delta();
@@ -22,7 +30,7 @@ export class DocState {
 
     if (this.pendingDelta.ops.length > 0) {
       this.sentOperation = new TextOperation(
-        "",
+        createOpId(),
         this.pendingDelta,
         this.userEmail,
         this.lastSyncedRevision,
@@ -46,7 +54,7 @@ export class DocState {
 
     if (this.sentOperation === null) {
       this.sentOperation = new TextOperation(
-        "",
+        createOpId(),
         delta,
         this.userEmail,
         this.lastSyncedRevision,
@@ -71,7 +79,7 @@ export class DocState {
       );
 
       this.sentOperation = new TextOperation(
-        "",
+        this.sentOperation.opId,
         incomingOp.delta.transform(this.sentOperation.delta, incomingWins),
         this.sentOperation.actorEmail,
         this.sentOperation.revision,

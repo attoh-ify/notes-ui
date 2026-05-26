@@ -13,6 +13,7 @@ type SuggestionPayload = {
   // suggestion-newline only
   dependsOnReviewRunIds?: string[];
   type?: "DEPENDENT" | "STANDALONE";
+  marker?: boolean;
 };
 
 type FormatPayload = {
@@ -103,6 +104,7 @@ function setCommonSuggestionAttrs(
     );
 
     node.setAttribute("data-newline-type", data.type ?? "STANDALONE");
+    node.setAttribute("data-newline-marker", data.marker === true ? "true" : "false");
   }
 }
 
@@ -132,6 +134,7 @@ function readCommonSuggestionAttrs(node: HTMLElement) {
         | "DEPENDENT"
         | "STANDALONE"
         | null) ?? "STANDALONE",
+    marker: node.getAttribute("data-newline-marker") === "true",
   };
 }
 
@@ -167,7 +170,9 @@ export function registerFormats(QuillModule: typeof Quill) {
       setCommonSuggestionAttrs(node, data, "newline");
       node.classList.add("suggestion-newline");
 
-      if ((data.type ?? "STANDALONE") === "STANDALONE") {
+      if (data.marker === true) {
+        node.classList.add("suggestion-newline-marker-inline");
+      } else if ((data.type ?? "STANDALONE") === "STANDALONE") {
         node.classList.add("suggestion-newline-standalone");
       }
 

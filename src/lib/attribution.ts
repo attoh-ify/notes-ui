@@ -222,6 +222,7 @@ export function deltaToSegments(
                 ...(newlineMeta.dependsOnReviewRunIds ?? []),
               ],
               type: newlineMeta.type ?? "STANDALONE",
+              marker: newlineMeta.marker === true,
             }
           : undefined,
 
@@ -286,6 +287,10 @@ export function segmentsToBaseDelta(segments: ReviewSegment[]): Delta {
   const delta = new Delta();
 
   for (const seg of segments) {
+    if (seg.newlineSuggestion?.marker === true) {
+      continue;
+    }
+
     const attrs: Record<string, any> = {
       ...(seg.baseAttributes ?? {}),
       ...(seg.suggestionAttributes ?? {}),
@@ -317,6 +322,10 @@ export function segmentsToSuggestionOverlayDelta(
   let cursor = 0;
 
   for (const seg of segments) {
+    if (seg.newlineSuggestion?.marker === true) {
+      continue;
+    }
+
     const len = segmentLength(seg);
 
     if (len <= 0) continue;
@@ -475,18 +484,26 @@ export function removeNewlineSuggestionFromSegments(
   groupId: string,
 ): ReviewSegment[] {
   return mergeAdjacentSegments(
-    segments.map((seg) => {
-      if (seg.newlineSuggestion?.groupId !== groupId) return seg;
+    segments
+      .map((seg) => {
+        if (seg.newlineSuggestion?.groupId !== groupId) return seg;
 
-      return {
-        id: seg.id,
-        text: seg.text ?? "",
-        embed: seg.embed ? cloneJsonValue(seg.embed) : undefined,
-        baseAttributes: { ...(seg.baseAttributes ?? {}) },
-        suggestionAttributes: { ...(seg.suggestionAttributes ?? {}) },
-        references: cloneSuggestionReferences(seg.references ?? []),
-      };
-    }),
+        // Virtual BE marker " ↵ " disappears on accept.
+        if (seg.newlineSuggestion.marker === true) {
+          return null;
+        }
+
+        // Actual newline stays, but no longer has suggestion metadata.
+        return {
+          id: seg.id,
+          text: seg.text ?? "",
+          embed: seg.embed ? cloneJsonValue(seg.embed) : undefined,
+          baseAttributes: { ...(seg.baseAttributes ?? {}) },
+          suggestionAttributes: { ...(seg.suggestionAttributes ?? {}) },
+          references: cloneSuggestionReferences(seg.references ?? []),
+        };
+      })
+      .filter(Boolean) as ReviewSegment[],
   );
 }
 
@@ -1152,7 +1169,9 @@ function sameNewlineSuggestion(a: ReviewSegment, b: ReviewSegment) {
     a.newlineSuggestion?.groupId === b.newlineSuggestion?.groupId &&
     a.newlineSuggestion?.actorEmail === b.newlineSuggestion?.actorEmail &&
     a.newlineSuggestion?.createdAt === b.newlineSuggestion?.createdAt &&
-    a.newlineSuggestion?.type === b.newlineSuggestion?.type
+    a.newlineSuggestion?.type === b.newlineSuggestion?.type &&
+    (a.newlineSuggestion?.marker ?? false) ===
+      (b.newlineSuggestion?.marker ?? false)
   );
 }
 
@@ -1184,6 +1203,18 @@ export function collectSuggestionReferencesByGroup(
           : seg.deleteSuggestion?.groupId === groupId;
 
     if (!matches) continue;
+
+    /**
+     * Newline marker is virtual UI content from visualDelta.
+     * It exists only so the user can click the standalone newline.
+     * The actual "\n" segment owns the real source references.
+     */
+    if (
+      type === "newline" &&
+      seg.newlineSuggestion?.marker === true
+    ) {
+      continue;
+    }
 
     refs.push(...cloneSuggestionReferences(seg.references ?? []));
   }
@@ -1244,13 +1275,12 @@ function cloneSegment(seg: ReviewSegment): ReviewSegment {
           groupId: seg.newlineSuggestion.groupId,
           actorEmail: seg.newlineSuggestion.actorEmail,
           createdAt: seg.newlineSuggestion.createdAt,
-          references: cloneSuggestionReferences(
-            seg.newlineSuggestion.references ?? [],
-          ),
+          references: cloneSuggestionReferences(seg.newlineSuggestion.references ?? []),
           dependsOnReviewRunIds: [
             ...(seg.newlineSuggestion.dependsOnReviewRunIds ?? []),
           ],
           type: seg.newlineSuggestion.type ?? "STANDALONE",
+          marker: seg.newlineSuggestion.marker === true,
         }
       : undefined,
 

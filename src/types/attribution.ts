@@ -23,6 +23,7 @@ export interface NewlineSuggestion {
   references: Reference[];
   dependsOnReviewRunIds: string[];
   type: NewlineSuggestionType;
+  marker?: boolean;
 }
 
 export type DeleteSuggestionType = "TEXT" | "SINGLE_LINE" | "MULTI_LINE";

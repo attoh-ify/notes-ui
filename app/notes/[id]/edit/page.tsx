@@ -43,7 +43,6 @@ import {
   mergeAdjacentSegments,
   removeInsertSuggestionFromSegments,
   removeNewlineSuggestionFromSegments,
-  getRuntimeTextInRange,
   resolveFormatSuggestionsAfterMutation,
   resolveNewlineSuggestionsAfterDependencyChange,
   restoreRejectedDeleteSegments,
@@ -97,7 +96,6 @@ function EditContent() {
   const initializingEditorRef = useRef(false);
   const docStateRef = useRef<DocState | null>(null);
   const stompClientRef = useRef<CompatClient | null>(null);
-  const isSyncComplete = useRef<boolean>(false);
   const isOwner = useRef<boolean>(false);
   const reviewHistory = useRef<ReviewEntry[]>([]);
   const acceptedReferences = useRef<ReviewDecisionReference[][]>([]);
@@ -115,7 +113,14 @@ function EditContent() {
   const noteRef = useRef<Note | null>(null);
   const userRef = useRef(user);
   const isSendingRef = useRef(false);
-  const pendingSendQueueRef = useRef<TextOperation[]>([]);
+
+  const INITIAL_SEND_RETRY_DELAY_MS = 1500;
+  const MAX_SEND_RETRY_DELAY_MS = 10000;
+  const SEND_RETRY_BACKOFF_MULTIPLIER = 2;
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const retryDelayRef = useRef(INITIAL_SEND_RETRY_DELAY_MS);
+  const processedOperationIdsRef = useRef<Set<string>>(new Set());
+  const pendingRemoteOpsRef = useRef<Map<number, TextOperation>>(new Map());
 
   useEffect(() => { formatSuggestionsRef.current = formatSuggestions; }, [formatSuggestions]);
   useEffect(() => { blockFormatSuggestionsRef.current = blockFormatSuggestions; }, [blockFormatSuggestions]);
@@ -213,13 +218,7 @@ function EditContent() {
           docStateRef.current?.queueOperation(
             delta,
             async (op: TextOperation) => {
-              isSyncComplete.current = false;
-              if (!stompClientRef.current?.connected) return;
-              try {
-                await sendOperationToServer(op);
-              } finally {
-                isSyncComplete.current = true;
-              }
+              await sendOrRetry(op);
             },
           );
         });
@@ -301,6 +300,9 @@ function EditContent() {
             );
 
             docStateRef.current!.lastSyncedRevision = joinData.revision;
+
+            pendingRemoteOpsRef.current.clear();
+            processedOperationIdsRef.current.clear();
 
             const cleanDelta = new Delta(joinData.delta.ops || []);
             docStateRef.current!.setDocument(cleanDelta);
@@ -443,8 +445,9 @@ function EditContent() {
       "[data-suggestion-type][data-group-id]",
     ) as HTMLElement | null;
 
+    deactivateActiveFormatSuggestion();
+
     if (!node) {
-      deactivateActiveFormatSuggestion();
       setActiveSuggestionSync(null);
       return;
     }
@@ -466,8 +469,6 @@ function EditContent() {
     const actorEmail = node.getAttribute("data-actor-email")!;
     const createdAt = node.getAttribute("data-created-at")!;
     const references = JSON.parse(node.getAttribute("data-references") ?? "[]");
-
-    deactivateActiveFormatSuggestion();
 
     setActiveSuggestionSync(
       activeSuggestionRef.current?.groupId === groupId
@@ -497,6 +498,12 @@ function EditContent() {
     formatSuggestionsRef.current = resolved;
     setFormatSuggestions(resolved);
   }
+
+  useEffect(() => {
+    return () => {
+      clearSendRetryTimer();
+    };
+  }, []);
 
   function setBlockFormatSuggestionsSync(
     next:
@@ -1024,56 +1031,154 @@ function EditContent() {
   }
 
   function handleRemoteOperation(payload: TextOperation) {
-    const { delta, actorEmail, revision, state, createdAt } = payload;
+    const { opId, revision, actorEmail } = payload;
     const docState = docStateRef.current!;
 
-    if (actorEmail === user!.email) {
-      docState.acknowledgeOperation(revision, (pending) => {
-        isSyncComplete.current = false;
-        if (pending) sendOperationToServer(pending);
-      });
-    } else {
-      const d = docState.applyRemoteOperation({
-        opId: "",
-        delta: new Delta(delta.ops || []),
-        actorEmail,
-        revision,
-        state,
-        createdAt,
-      });
-      quillRef.current?.updateContents(d, "api");
+    if (!opId) {
+      console.error("Received operation without opId. Ignoring for safety.", payload);
+      return;
     }
+
+    if (hasProcessedOperation(opId)) {
+      console.warn("Duplicate operation relay ignored", {
+        opId,
+        revision,
+        actorEmail,
+      });
+      return;
+    }
+
+    const expectedRevision = docState.lastSyncedRevision + 1;
+
+    if (revision <= docState.lastSyncedRevision) {
+      console.warn("STALE_REMOTE_OP_IGNORED", {
+        opId,
+        actorEmail,
+        receivedRevision: revision,
+        lastSyncedRevision: docState.lastSyncedRevision,
+        expectedRevision,
+      });
+
+      markOperationProcessed(opId);
+      return;
+    }
+
+    if (revision > expectedRevision) {
+      console.error("REVISION_GAP_DETECTED_BUFFERING", {
+        opId,
+        actorEmail,
+        receivedRevision: revision,
+        lastSyncedRevision: docState.lastSyncedRevision,
+        expectedRevision,
+        missingRevisions: {
+          from: expectedRevision,
+          to: revision - 1,
+        },
+      });
+
+      bufferFutureRemoteOperation(payload);
+      return;
+    }
+
+    processRemoteOperationInOrder(payload);
+    drainPendingRemoteOperations();
   }
 
   async function sendOperationToServer(operation: TextOperation) {
     if (isReviewingRef.current) return;
 
-    pendingSendQueueRef.current.push(operation);
-    if (isSendingRef.current) return;
+    if (!stompClientRef.current?.connected) {
+      throw new Error("Cannot send operation while websocket is disconnected");
+    }
+
+    if (isSendingRef.current) {
+      throw new Error("Concurrent operation send detected");
+    }
 
     isSendingRef.current = true;
 
     try {
-      while (pendingSendQueueRef.current.length > 0) {
-        const next = pendingSendQueueRef.current.shift();
-        if (!next) continue;
-
-        await apiFetch(`notes/${noteId}/enqueue`, {
-          method: "POST",
-          body: JSON.stringify(
-            new TextOperation(
-              "",
-              next.delta,
-              userRef.current!.email,
-              next.revision,
-              OperationState.PENDING,
-              new Date().toISOString().slice(0, 19),
-            ),
+      await apiFetch(`notes/${noteId}/enqueue`, {
+        method: "POST",
+        body: JSON.stringify(
+          new TextOperation(
+            operation.opId,
+            operation.delta,
+            userRef.current!.email,
+            operation.revision,
+            OperationState.PENDING,
+            operation.createdAt,
           ),
-        });
-      }
+        ),
+      });
     } finally {
       isSendingRef.current = false;
+    }
+  }
+
+  function processRemoteOperationInOrder(payload: TextOperation) {
+    const { opId, delta, actorEmail, revision, state, createdAt } = payload;
+    const docState = docStateRef.current!;
+
+    if (!opId) return;
+
+    if (hasProcessedOperation(opId)) {
+      console.warn("Duplicate operation ignored during ordered processing", {
+        opId,
+        revision,
+        actorEmail,
+      });
+      return;
+    }
+
+    if (actorEmail === userRef.current?.email) {
+      clearSendRetryTimer();
+      resetSendRetryDelay();
+
+      docState.acknowledgeOperation(revision, (pending) => {
+        if (pending) {
+          void sendOrRetry(pending);
+        }
+      });
+
+      markOperationProcessed(opId);
+      return;
+    }
+
+    const d = docState.applyRemoteOperation({
+      opId,
+      delta: new Delta(delta.ops || []),
+      actorEmail,
+      revision,
+      state,
+      createdAt,
+    });
+
+    quillRef.current?.updateContents(d, "api");
+
+    markOperationProcessed(opId);
+  }
+  
+  function drainPendingRemoteOperations() {
+    const docState = docStateRef.current;
+    if (!docState) return;
+
+    while (true) {
+      const nextRevision = docState.lastSyncedRevision + 1;
+      const nextOp = pendingRemoteOpsRef.current.get(nextRevision);
+
+      if (!nextOp) return;
+
+      pendingRemoteOpsRef.current.delete(nextRevision);
+
+      console.log("DRAINING_BUFFERED_REMOTE_OP", {
+        opId: nextOp.opId,
+        actorEmail: nextOp.actorEmail,
+        revision: nextOp.revision,
+        nextExpectedRevision: nextRevision,
+      });
+
+      processRemoteOperationInOrder(nextOp);
     }
   }
 
@@ -1219,6 +1324,9 @@ function EditContent() {
       docStateRef.current!.lastSyncedRevision = joinData.revision;
       docStateRef.current!.setDocument(cleanDelta);
 
+      pendingRemoteOpsRef.current.clear();
+      processedOperationIdsRef.current.clear();
+
       setCollaborators(joinData.collaborators);
 
       reviewSegmentsRef.current = [];
@@ -1324,6 +1432,105 @@ function EditContent() {
   async function openSettings() {
     await saveNote();
     router.push(`/notes/${noteId}/edit/note-setting`);
+  }
+
+  function clearSendRetryTimer() {
+    if (retryTimerRef.current) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
+  }
+
+  function resetSendRetryDelay() {
+    retryDelayRef.current = INITIAL_SEND_RETRY_DELAY_MS;
+  }
+
+  function increaseSendRetryDelay() {
+    retryDelayRef.current = Math.min(
+      retryDelayRef.current * SEND_RETRY_BACKOFF_MULTIPLIER,
+      MAX_SEND_RETRY_DELAY_MS,
+    );
+  }
+
+  function scheduleSendRetry(delayMs = retryDelayRef.current) {
+    if (retryTimerRef.current) return;
+
+    retryTimerRef.current = setTimeout(async () => {
+      retryTimerRef.current = null;
+
+      const op = docStateRef.current?.sentOperation;
+
+      if (!op) {
+        resetSendRetryDelay();
+        return;
+      }
+
+      try {
+        await sendOperationToServer(op);
+        resetSendRetryDelay();
+      } catch (err) {
+        console.error("Retry send failed", {
+          opId: op.opId,
+          revision: op.revision,
+          err,
+        });
+
+        increaseSendRetryDelay();
+        scheduleSendRetry();
+      }
+    }, delayMs);
+  }
+
+  async function sendOrRetry(operation: TextOperation) {
+    try {
+      await sendOperationToServer(operation);
+      resetSendRetryDelay();
+    } catch (err) {
+      console.error("Send failed; scheduling retry", {
+        opId: operation.opId,
+        revision: operation.revision,
+        err,
+      });
+
+      scheduleSendRetry();
+    }
+  }
+
+  function hasProcessedOperation(opId?: string | null): boolean {
+    if (!opId) return false;
+    return processedOperationIdsRef.current.has(opId);
+  }
+
+  function markOperationProcessed(opId?: string | null) {
+    if (!opId) return;
+    processedOperationIdsRef.current.add(opId);
+  }
+
+  function bufferFutureRemoteOperation(payload: TextOperation) {
+    const existing = pendingRemoteOpsRef.current.get(payload.revision);
+
+    if (existing && existing.opId !== payload.opId) {
+      console.error("Revision collision detected: two different ops for same revision", {
+        revision: payload.revision,
+        existingOpId: existing.opId,
+        incomingOpId: payload.opId,
+        existing,
+        incoming: payload,
+      });
+
+      return;
+    }
+
+    pendingRemoteOpsRef.current.set(payload.revision, payload);
+
+    console.warn("REMOTE_OP_BUFFERED_FOR_GAP", {
+      opId: payload.opId,
+      actorEmail: payload.actorEmail,
+      receivedRevision: payload.revision,
+      lastSyncedRevision: docStateRef.current?.lastSyncedRevision,
+      expectedRevision: (docStateRef.current?.lastSyncedRevision ?? 0) + 1,
+      bufferedRevisions: [...pendingRemoteOpsRef.current.keys()].sort((a, b) => a - b),
+    });
   }
 
   if (loadingUser) {
