@@ -69,6 +69,10 @@ import CollaboratorsModal from "@/components/CollaboratorsSection";
 import VisibilityModal from "@/components/VisibilityModal";
 import { Badge, Button, EmptyState, ErrorBanner, LoadingState } from "@/components/ui";
 
+const INITIAL_SEND_RETRY_DELAY_MS = 1500;
+const MAX_SEND_RETRY_DELAY_MS = 10000;
+const SEND_RETRY_BACKOFF_MULTIPLIER = 2;
+
 function EditContent() {
   const { id: noteId } = useParams();
   const { user, loadingUser } = useAuth();
@@ -114,13 +118,12 @@ function EditContent() {
   const userRef = useRef(user);
   const isSendingRef = useRef(false);
 
-  const INITIAL_SEND_RETRY_DELAY_MS = 1500;
-  const MAX_SEND_RETRY_DELAY_MS = 10000;
-  const SEND_RETRY_BACKOFF_MULTIPLIER = 2;
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retryDelayRef = useRef(INITIAL_SEND_RETRY_DELAY_MS);
   const processedOperationIdsRef = useRef<Set<string>>(new Set());
   const pendingRemoteOpsRef = useRef<Map<number, TextOperation>>(new Map());
+  const collaborationReadyRef = useRef(false);
+  const preReadyRelayBufferRef = useRef<Array<{ type: MessageType; payload: any }>>([]);
 
   useEffect(() => { formatSuggestionsRef.current = formatSuggestions; }, [formatSuggestions]);
   useEffect(() => { blockFormatSuggestionsRef.current = blockFormatSuggestions; }, [blockFormatSuggestions]);
@@ -241,6 +244,9 @@ function EditContent() {
     let client: CompatClient | null = null;
     let cancelled = false;
 
+    collaborationReadyRef.current = false;
+    preReadyRelayBufferRef.current = [];
+
     async function start() {
       const { default: SockJS } = await import("sockjs-client");
 
@@ -259,33 +265,14 @@ function EditContent() {
           try {
             client!.subscribe(`/topic/note/${noteId}`, (message) => {
               const { type, payload } = JSON.parse(message.body);
-
-              if (type === MessageType.OPERATION) {
-                handleRemoteOperation(payload);
-              }
-
-              if (type === MessageType.COLLABORATOR_JOIN) {
-                setCollaborators(payload.collaborators);
-
-                const isAllowed = Object.hasOwn(payload.collaborators, user!.email);
-
-                if (!isAllowed) {
-                  router.push("/notes");
-                }
-              }
-
-              if (type === MessageType.COLLABORATOR_CURSOR) {
-                handleCursorChange(payload);
-              }
-
-              if (type === MessageType.REVIEW_IN_PROGRESS) {
-                handleReviewInProgress(payload);
-              }
+              handleRelayMessage(type, payload);
             });
 
             const noteData = await apiFetch<Note>(`notes/${noteId}`, {
               method: "GET",
             });
+
+            if (cancelled) return;
 
             setNote(noteData);
 
@@ -299,6 +286,8 @@ function EditContent() {
               { method: "GET" },
             );
 
+            if (cancelled) return;
+
             docStateRef.current!.lastSyncedRevision = joinData.revision;
 
             pendingRemoteOpsRef.current.clear();
@@ -309,17 +298,13 @@ function EditContent() {
 
             setCollaborators(joinData.collaborators);
 
-            const isAllowed = Object.hasOwn(joinData.collaborators, user!.email);
-
-            if (!isAllowed) {
-              router.push("/notes");
-              return;
-            }
-
             isOwner.current = noteData.accessRole === "OWNER";
 
             setIsReviewing(joinData.isReviewing === true);
             setIsloading(false);
+
+            collaborationReadyRef.current = true;
+            drainPreReadyRelayBuffer();
           } catch (err: any) {
             setErrorMessageMessage(err.message || "Failed to load note");
             setIsloading(false);
@@ -337,12 +322,63 @@ function EditContent() {
 
     return () => {
       cancelled = true;
+      collaborationReadyRef.current = false;
+      preReadyRelayBufferRef.current = [];
 
       if (client?.active) {
         client.disconnect();
       }
     };
   }, [noteId, user]);
+
+  function processRelayMessage(type: MessageType, payload: any) {
+    if (type === MessageType.OPERATION) {
+      handleRemoteOperation(payload);
+      return;
+    }
+
+    if (type === MessageType.COLLABORATOR_JOIN) {
+      setCollaborators(payload.collaborators);
+
+      const currentEmail = userRef.current?.email;
+      if (!currentEmail) return;
+
+      const isAllowed = Object.hasOwn(payload.collaborators, currentEmail);
+
+      if (!isAllowed) {
+        router.push("/notes");
+      }
+
+      return;
+    }
+
+    if (type === MessageType.COLLABORATOR_CURSOR) {
+      handleCursorChange(payload);
+      return;
+    }
+
+    if (type === MessageType.REVIEW_IN_PROGRESS) {
+      handleReviewInProgress(payload);
+    }
+  }
+
+  function handleRelayMessage(type: MessageType, payload: any) {
+    if (!collaborationReadyRef.current) {
+      preReadyRelayBufferRef.current.push({ type, payload });
+      return;
+    }
+
+    processRelayMessage(type, payload);
+  }
+
+  function drainPreReadyRelayBuffer() {
+    const buffered = preReadyRelayBufferRef.current;
+    preReadyRelayBufferRef.current = [];
+
+    for (const message of buffered) {
+      processRelayMessage(message.type, message.payload);
+    }
+  }
 
   useEffect(() => {
     const quill = quillRef.current;
@@ -1131,7 +1167,11 @@ function EditContent() {
       return;
     }
 
-    if (actorEmail === userRef.current?.email) {
+    const isAckForThisTab =
+      actorEmail === userRef.current?.email &&
+      docState.sentOperation?.opId === opId;
+
+    if (isAckForThisTab) {
       clearSendRetryTimer();
       resetSendRetryDelay();
 

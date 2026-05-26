@@ -9,9 +9,24 @@ function createOpId(): string {
   return `${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
 
+function hasOps(delta: Delta): boolean {
+  return Array.isArray(delta.ops) && delta.ops.length > 0;
+}
+
+function incomingHasPriority(
+  incomingOp: TextOperation,
+  localOp: TextOperation,
+): boolean {
+  if (incomingOp.actorEmail !== localOp.actorEmail) {
+    return incomingOp.actorEmail > localOp.actorEmail;
+  }
+
+  return incomingOp.opId > localOp.opId;
+}
+
 export class DocState {
   public sentOperation: TextOperation | null = null;
-  public pendingDelta: Delta = new Delta();
+  public pendingOperation: TextOperation | null = null;
   public lastSyncedRevision: number = 0;
   public document: Delta = new Delta();
   public userEmail: string;
@@ -24,26 +39,31 @@ export class DocState {
     newRevision: number,
     onSend: (op: TextOperation | null) => void,
   ): void {
-
     this.sentOperation = null;
     this.lastSyncedRevision = newRevision;
 
-    if (this.pendingDelta.ops.length > 0) {
+    if (this.pendingOperation) {
       this.sentOperation = new TextOperation(
-        createOpId(),
-        this.pendingDelta,
+        this.pendingOperation.opId,
+        this.pendingOperation.delta,
         this.userEmail,
         this.lastSyncedRevision,
         OperationState.PENDING,
-        new Date().toISOString().slice(0, 19)
+        this.pendingOperation.createdAt,
       );
-      this.pendingDelta = new Delta();
+
+      this.pendingOperation = null;
       onSend(this.sentOperation);
     }
   }
 
   setDocument(doc: Delta): void {
     this.document = doc;
+  }
+
+  resetPendingState(): void {
+    this.sentOperation = null;
+    this.pendingOperation = null;
   }
 
   async queueOperation(
@@ -59,43 +79,92 @@ export class DocState {
         this.userEmail,
         this.lastSyncedRevision,
         OperationState.PENDING,
-        new Date().toISOString().slice(0, 19)
+        new Date().toISOString().slice(0, 19),
       );
+
       await send(this.sentOperation);
-    } else {
-      this.pendingDelta = this.pendingDelta.compose(delta);
+      return;
     }
+
+    if (!this.pendingOperation) {
+      this.pendingOperation = new TextOperation(
+        createOpId(),
+        delta,
+        this.userEmail,
+        this.lastSyncedRevision,
+        OperationState.PENDING,
+        new Date().toISOString().slice(0, 19),
+      );
+
+      return;
+    }
+
+    const composedDelta = this.pendingOperation.delta.compose(delta);
+
+    this.pendingOperation = new TextOperation(
+      this.pendingOperation.opId,
+      composedDelta,
+      this.pendingOperation.actorEmail,
+      this.pendingOperation.revision,
+      this.pendingOperation.state,
+      this.pendingOperation.createdAt,
+    );
   }
 
   applyRemoteOperation(incomingOp: TextOperation): Delta {
     let serverDelta = incomingOp.delta;
 
     if (this.sentOperation !== null) {
-      const incomingWins = incomingOp.actorEmail > this.sentOperation.actorEmail;
+      const incomingWins = incomingHasPriority(
+        incomingOp,
+        this.sentOperation,
+      );
 
       serverDelta = this.sentOperation.delta.transform(
         serverDelta,
         !incomingWins,
       );
 
+      const transformedSentDelta = incomingOp.delta.transform(
+        this.sentOperation.delta,
+        incomingWins,
+      );
+
       this.sentOperation = new TextOperation(
         this.sentOperation.opId,
-        incomingOp.delta.transform(this.sentOperation.delta, incomingWins),
+        transformedSentDelta,
         this.sentOperation.actorEmail,
         this.sentOperation.revision,
         this.sentOperation.state,
-        this.sentOperation.createdAt
+        this.sentOperation.createdAt,
       );
     }
 
-    if (this.pendingDelta.ops.length > 0) {
-      const incomingWins = incomingOp.actorEmail > this.userEmail;
+    if (this.pendingOperation && hasOps(this.pendingOperation.delta)) {
+      const incomingWins = incomingHasPriority(
+        incomingOp,
+        this.pendingOperation,
+      );
+
       const serverDeltaAfterSent = serverDelta;
 
-      serverDelta = this.pendingDelta.transform(serverDelta, !incomingWins);
-      this.pendingDelta = serverDeltaAfterSent.transform(
-        this.pendingDelta,
+      serverDelta = this.pendingOperation.delta.transform(
+        serverDelta,
+        !incomingWins,
+      );
+
+      const transformedPendingDelta = serverDeltaAfterSent.transform(
+        this.pendingOperation.delta,
         incomingWins,
+      );
+
+      this.pendingOperation = new TextOperation(
+        this.pendingOperation.opId,
+        transformedPendingDelta,
+        this.pendingOperation.actorEmail,
+        this.pendingOperation.revision,
+        this.pendingOperation.state,
+        this.pendingOperation.createdAt,
       );
     }
 
