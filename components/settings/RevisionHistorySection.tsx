@@ -300,7 +300,7 @@ export default function RevisionHistorySection({
 
                   <td style={{ padding: "12px 16px" }}>
                     <button
-                      onClick={() => router.push(`/notes/${noteId}`)}
+                      onClick={() => router.push(`/notes/${noteId}?version=${v.versionNumber}`)}
                       style={{
                         color: "#3182CE",
                         background: "none",

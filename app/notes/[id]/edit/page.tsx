@@ -69,7 +69,7 @@ import CollaboratorsModal from "@/components/CollaboratorsSection";
 import VisibilityModal from "@/components/VisibilityModal";
 import { Badge, Button, EmptyState, ErrorBanner, LoadingState } from "@/components/ui";
 
-const INITIAL_SEND_RETRY_DELAY_MS = 1500;
+const INITIAL_SEND_RETRY_DELAY_MS = 3000;
 const MAX_SEND_RETRY_DELAY_MS = 10000;
 const SEND_RETRY_BACKOFF_MULTIPLIER = 2;
 

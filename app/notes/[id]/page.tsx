@@ -1,7 +1,7 @@
 "use client";
 
 import { apiFetch } from "@/src/lib/api";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState, Suspense, useRef } from "react";
 import { useAuth } from "@/src/context/AuthContext";
 import type Quill from "quill";
@@ -15,11 +15,13 @@ function getErrorMessage(err: unknown, fallback: string) {
 
 function ViewNoteContent() {
   const { id: noteId } = useParams();
+  const searchParams = useSearchParams();
   const { user, loadingUser } = useAuth();
   const router = useRouter();
 
   const [note, setNote] = useState<Note | null>(null);
   const [noteVersion, setNoteVersion] = useState<NoteVersion | null>(null);
+  const requestedVersionNumber = Number(searchParams.get("version") ?? 0);
 
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -49,8 +51,12 @@ function ViewNoteContent() {
 
         setNote(noteData);
 
+        const versionToFetch =
+          requestedVersionNumber > 0
+            ? requestedVersionNumber : 0;
+
         const noteVersionData = await apiFetch<NoteVersion>(
-          `notes/${noteData.id}/versions/${noteData.currentNoteVersionNumber}`,
+          `notes/${noteData.id}/versions/${versionToFetch}`,
           { method: "GET" },
         );
 
@@ -65,7 +71,7 @@ function ViewNoteContent() {
     if (noteId && user) {
       fetchNote();
     }
-  }, [noteId, user]);
+  }, [noteId, user, requestedVersionNumber]);
 
   useEffect(() => {
     if (!isLoading && noteVersion && editorRef.current && !quillRef.current) {
@@ -151,7 +157,7 @@ function ViewNoteContent() {
             <Badge tone={note.visibility === "PRIVATE" ? "amber" : "blue"}>
               Visibility: {note.visibility}
             </Badge>
-            {noteVersion && <Badge tone="slate">Version {note.currentNoteVersionNumber}</Badge>}
+            {noteVersion && <Badge tone="slate">Version {noteVersion.versionNumber}</Badge>}
           </div>
         </div>
 
@@ -164,7 +170,7 @@ function ViewNoteContent() {
       <section className="app-panel overflow-hidden">
         <div className="app-panel-header">
           <span>📄 Read-only document</span>
-          <span>Last saved version</span>
+          <span>Version {noteVersion?.versionNumber ?? "—"}</span>
         </div>
 
         <div ref={editorRef} className="editor-surface-content bg-white" />

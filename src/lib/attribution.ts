@@ -287,7 +287,10 @@ export function segmentsToBaseDelta(segments: ReviewSegment[]): Delta {
   const delta = new Delta();
 
   for (const seg of segments) {
-    if (seg.newlineSuggestion?.marker === true) {
+    const isNewlineMarker = seg.newlineSuggestion?.marker === true;
+
+    if (isNewlineMarker) {
+      delta.insert(seg.text || " ↵ ");
       continue;
     }
 
@@ -322,16 +325,31 @@ export function segmentsToSuggestionOverlayDelta(
   let cursor = 0;
 
   for (const seg of segments) {
-    if (seg.newlineSuggestion?.marker === true) {
-      continue;
-    }
-
     const len = segmentLength(seg);
-
     if (len <= 0) continue;
 
     const references = cloneSuggestionReferences(seg.references ?? []);
     const attrs: Record<string, any> = {};
+
+    if (seg.newlineSuggestion?.marker === true) {
+      attrs["suggestion-newline"] = {
+        groupId: seg.newlineSuggestion.groupId,
+        actorEmail: seg.newlineSuggestion.actorEmail,
+        createdAt: seg.newlineSuggestion.createdAt,
+        references: [],
+        dependsOnReviewRunIds: [
+          ...(seg.newlineSuggestion.dependsOnReviewRunIds ?? []),
+        ],
+        type: seg.newlineSuggestion.type ?? "STANDALONE",
+        marker: true,
+        baseAttributes: seg.baseAttributes ?? null,
+        suggestionAttributes: seg.suggestionAttributes ?? null,
+      };
+
+      delta.retain(len, attrs);
+      cursor += len;
+      continue;
+    }
 
     if (seg.insertSuggestion) {
       attrs["suggestion-insert"] = {
@@ -354,6 +372,7 @@ export function segmentsToSuggestionOverlayDelta(
           ...(seg.newlineSuggestion.dependsOnReviewRunIds ?? []),
         ],
         type: seg.newlineSuggestion.type ?? "STANDALONE",
+        marker: false,
         baseAttributes: seg.baseAttributes ?? null,
         suggestionAttributes: seg.suggestionAttributes ?? null,
       };
