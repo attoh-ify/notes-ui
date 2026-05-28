@@ -1039,13 +1039,20 @@ function EditContent() {
     });
   }
 
-  async function sendCursorChange(position: number) {
+  function sendCursorChange(position: number) {
     if (isReviewingRef.current) return;
 
-    await apiFetch(`notes/${noteId}/cursor`, {
-      method: "POST",
-      body: JSON.stringify({ position }),
-    });
+    const client = stompClientRef.current;
+
+    if (!client?.connected) {
+      return;
+    }
+
+    client.send(
+      `/app/note/${noteId}/cursor`,
+      {},
+      JSON.stringify({ position }),
+    );
   }
 
   function handleCursorChange(payload: CursorPayload) {
@@ -1134,22 +1141,33 @@ function EditContent() {
     isSendingRef.current = true;
 
     try {
-      await apiFetch(`notes/${noteId}/enqueue`, {
-        method: "POST",
-        body: JSON.stringify(
-          new TextOperation(
-            operation.opId,
-            operation.delta,
-            userRef.current!.email,
-            operation.revision,
-            OperationState.PENDING,
-            operation.createdAt,
-          ),
-        ),
-      });
+      sendOperationOverWebsocket(operation);
     } finally {
       isSendingRef.current = false;
     }
+  }
+
+  function sendOperationOverWebsocket(operation: TextOperation) {
+    const client = stompClientRef.current;
+
+    if (!client?.connected) {
+      throw new Error("Cannot send operation while websocket is disconnected");
+    }
+
+    client.send(
+      `/app/note/${noteId}/operation`,
+      {},
+      JSON.stringify(
+        new TextOperation(
+          operation.opId,
+          operation.delta,
+          userRef.current!.email,
+          operation.revision,
+          OperationState.PENDING,
+          operation.createdAt,
+        ),
+      ),
+    );
   }
 
   function processRemoteOperationInOrder(payload: TextOperation) {
