@@ -72,6 +72,7 @@ import { Badge, Button, EmptyState, ErrorBanner, LoadingState } from "@/componen
 const INITIAL_SEND_RETRY_DELAY_MS = 3000;
 const MAX_SEND_RETRY_DELAY_MS = 10000;
 const SEND_RETRY_BACKOFF_MULTIPLIER = 2;
+const HEARTBEAT_INTERVAL_MS = 120_000;
 
 function EditContent() {
   const { id: noteId } = useParams();
@@ -328,6 +329,26 @@ function EditContent() {
       if (client?.active) {
         client.disconnect();
       }
+    };
+  }, [noteId, user]);
+
+  useEffect(() => {
+    if (!noteId || !user) return;
+
+    const intervalId = window.setInterval(() => {
+      const client = stompClientRef.current;
+
+      if (!client?.connected) return;
+
+      client.send(
+        `/app/note/${noteId}/heartbeat`,
+        {},
+        JSON.stringify({}),
+      );
+    }, HEARTBEAT_INTERVAL_MS);
+
+    return () => {
+      window.clearInterval(intervalId);
     };
   }, [noteId, user]);
 
@@ -1285,7 +1306,7 @@ function EditContent() {
     if (!quill) return;
 
     clearCollaboratorCursors();
-    await sendCursorChange(-1);
+    sendCursorChange(-1);
 
     setIsReviewing(true);
     setReviewLoaded(false);
