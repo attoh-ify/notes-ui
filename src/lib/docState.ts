@@ -1,7 +1,7 @@
 import { OperationState, TextOperation } from "./textOperation";
 import Delta from "quill-delta";
 
-function createOpId(): string {
+export function createOpId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return crypto.randomUUID();
   }

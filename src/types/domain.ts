@@ -35,11 +35,15 @@ export interface LoginResponse {
   token: string;
 }
 
+export type CollaborationMode = "SOLO" | "COLLABORATIVE";
+
 export interface JoinResponse {
   collaborators: { [email: string]: string };
   delta: Delta;
   revision: number;
   isReviewing: boolean;
+  mode: CollaborationMode;
+  activeSessionCount: number;
 }
 
 export interface ReviewInProgressResponse {
@@ -52,11 +56,27 @@ export interface CursorPayload {
   position: number;
 }
 
+export interface SoloSyncAckPayload {
+  noteId: string;
+  opId: string;
+  success: boolean;
+  revision?: number;
+  error?: string;
+}
+
+export interface CollaborationModePayload {
+  noteId: string;
+  mode: CollaborationMode;
+  activeSessionCount: number;
+}
+
 export enum MessageType {
   COLLABORATOR_JOIN = "COLLABORATOR_JOIN",
   OPERATION = "OPERATION",
   COLLABORATOR_CURSOR = "COLLABORATOR_CURSOR",
   REVIEW_IN_PROGRESS = "REVIEW_IN_PROGRESS",
+  COLLABORATION_MODE = "COLLABORATION_MODE",
+  SOLO_SYNC_ACK = "SOLO_SYNC_ACK",
 }
 
 export const TYPE_CONFIG = {

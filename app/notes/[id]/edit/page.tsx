@@ -4,7 +4,7 @@ import { API_BASE_URL, apiFetch } from "@/src/lib/api";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState, useRef, Suspense, useCallback } from "react";
 import { Stomp, CompatClient } from "@stomp/stompjs";
-import { DocState } from "@/src/lib/docState";
+import { createOpId, DocState } from "@/src/lib/docState";
 import { OperationState, TextOperation } from "@/src/lib/textOperation";
 import { useAuth } from "@/src/context/AuthContext";
 import type Quill from "quill";
@@ -26,15 +26,18 @@ import {
   TooltipState,
   Reference,
   ReviewDecisionReference,
-  BlockFormatSuggestionItem,
+  BlockFormatSuggestionItem, 
   ReviewFormatSuggestion,
+  CollaborationMode,
+  SoloSyncAckPayload,
+  CollaborationModePayload,
 } from "../../../../src/types";
 import { ReviewTooltip } from "@/components/ReviewTooltip";
 import ExitReviewModal from "@/components/ExitReviewModal";
 import FormatSidebarModal from "@/components/FormatSidebarModal";
 import {
   deleteInsertGroupSegments,
-  deleteNewlineGroupSegments,
+  deleteNewlineGroupSegmentsPreservingBlockFormats,
   deltaToSegments,
   findDeleteGroupRangeInRuntime,
   findInsertGroupRangeInRuntime,
@@ -43,11 +46,13 @@ import {
   mergeAdjacentSegments,
   removeInsertSuggestionFromSegments,
   removeNewlineSuggestionFromSegments,
+  resolveBlockFormatSuggestionsAfterNewlineDeletion,
   resolveFormatSuggestionsAfterMutation,
   resolveNewlineSuggestionsAfterDependencyChange,
   restoreRejectedDeleteSegments,
   collectSuggestionReferencesByGroup,
   segmentLength,
+  resolveFormatSuggestionsAfterRuntimeDeletion,
 } from "@/src/lib/attribution";
 import {
   clearActiveFormatOverlay,
@@ -73,6 +78,12 @@ const INITIAL_SEND_RETRY_DELAY_MS = 3000;
 const MAX_SEND_RETRY_DELAY_MS = 10000;
 const SEND_RETRY_BACKOFF_MULTIPLIER = 2;
 const HEARTBEAT_INTERVAL_MS = 120_000;
+const SOLO_SYNC_DEBOUNCE_MS = 5000;
+const SOLO_SYNC_ACK_TIMEOUT_MS = 8000;
+
+function hasOps(delta: Delta): boolean {
+  return Array.isArray(delta.ops) && delta.ops.length > 0;
+}
 
 function EditContent() {
   const { id: noteId } = useParams();
@@ -95,7 +106,8 @@ function EditContent() {
   const [reviewLoaded, setReviewLoaded] = useState(false);
   const [showCollaboratorsModal, setShowCollaboratorsModal] = useState(false);
   const [showVisibilityModal, setShowVisibilityModal] = useState(false);
-
+  const [collaborationMode, setCollaborationMode] = useState<CollaborationMode>("SOLO");
+  
   const editorRef = useRef<HTMLDivElement>(null);
   const quillRef = useRef<Quill | null>(null);
   const initializingEditorRef = useRef(false);
@@ -108,7 +120,17 @@ function EditContent() {
   const reviewSegmentsRef = useRef<ReviewSegment[]>([]);
   const runtimeSegCtrRef = useRef(0);
   const isReviewingRef = useRef(false);
-  const isExitingReviewRef = useRef(false);
+  const collaborationModeRef = useRef<CollaborationMode>("SOLO");
+  const pendingSoloSyncAcksRef = useRef<
+    Map<
+      string,
+      {
+        resolve: (revision: number) => void;
+        reject: (error: Error) => void;
+        timeoutId: ReturnType<typeof setTimeout>;
+      }
+    >
+  >(new Map());
 
   const formatSuggestionsRef = useRef<FormatSuggestionItem[]>([]);
   const blockFormatSuggestionsRef = useRef<BlockFormatSuggestionItem[]>([]);
@@ -118,14 +140,21 @@ function EditContent() {
   const noteRef = useRef<Note | null>(null);
   const userRef = useRef(user);
   const isSendingRef = useRef(false);
-
+  
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retryDelayRef = useRef(INITIAL_SEND_RETRY_DELAY_MS);
   const processedOperationIdsRef = useRef<Set<string>>(new Set());
   const pendingRemoteOpsRef = useRef<Map<number, TextOperation>>(new Map());
   const collaborationReadyRef = useRef(false);
   const preReadyRelayBufferRef = useRef<Array<{ type: MessageType; payload: any }>>([]);
-
+  const soloSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const soloSyncInFlightPromiseRef = useRef<Promise<void> | null>(null);
+  const soloSentOperationRef = useRef<TextOperation | null>(null);
+  const soloPendingOperationRef = useRef<TextOperation | null>(null);
+  const soloRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const soloRetryDelayRef = useRef(INITIAL_SEND_RETRY_DELAY_MS);
+  
+  useEffect(() => { collaborationModeRef.current = collaborationMode; }, [collaborationMode]);
   useEffect(() => { formatSuggestionsRef.current = formatSuggestions; }, [formatSuggestions]);
   useEffect(() => { blockFormatSuggestionsRef.current = blockFormatSuggestions; }, [blockFormatSuggestions]);
   useEffect(() => { activeFormatIdRef.current = activeFormatId; }, [activeFormatId]);
@@ -216,8 +245,14 @@ function EditContent() {
 
         quillRef.current.on("text-change", (delta, _old, source) => {
           if (source !== "user") return;
+
           const range = quillRef.current?.getSelection();
           if (range) sendCursorChange(range.index ?? -1);
+
+          if (collaborationModeRef.current === "SOLO") {
+            queueSoloOperation(delta);
+            return;
+          }
 
           docStateRef.current?.queueOperation(
             delta,
@@ -287,6 +322,9 @@ function EditContent() {
               { method: "GET" },
             );
 
+            setCollaborationMode(joinData.mode ?? "SOLO");
+            collaborationModeRef.current = joinData.mode ?? "SOLO";
+
             if (cancelled) return;
 
             docStateRef.current!.lastSyncedRevision = joinData.revision;
@@ -352,6 +390,15 @@ function EditContent() {
     };
   }, [noteId, user]);
 
+  useEffect(() => {
+    return () => {
+      clearSendRetryTimer();
+      clearSoloSyncTimer();
+      clearSoloRetryTimer();
+      clearPendingSoloSyncAcks();
+    };
+  }, []);
+
   function processRelayMessage(type: MessageType, payload: any) {
     if (type === MessageType.OPERATION) {
       handleRemoteOperation(payload);
@@ -381,6 +428,321 @@ function EditContent() {
     if (type === MessageType.REVIEW_IN_PROGRESS) {
       handleReviewInProgress(payload);
     }
+
+    if (type === MessageType.COLLABORATION_MODE) {
+      handleCollaborationModeChange(payload);
+      return;
+    }
+
+    if (type === MessageType.SOLO_SYNC_ACK) {
+      handleSoloSyncAck(payload);
+      return;
+    }
+  }
+
+  function queueSoloOperation(delta: Delta) {
+    const docState = docStateRef.current;
+    const user = userRef.current;
+
+    if (!docState || !user) return;
+
+    docState.document = docState.document.compose(delta);
+
+    if (!soloSentOperationRef.current) {
+      soloPendingOperationRef.current = new TextOperation(
+        createOpId(),
+        soloPendingOperationRef.current
+          ? soloPendingOperationRef.current.delta.compose(delta)
+          : delta,
+        user.email,
+        docState.lastSyncedRevision,
+        OperationState.PENDING,
+        new Date().toISOString().slice(0, 19),
+      );
+
+      scheduleSoloSync();
+      return;
+    }
+
+    if (!soloPendingOperationRef.current) {
+      soloPendingOperationRef.current = new TextOperation(
+        createOpId(),
+        delta,
+        user.email,
+        docState.lastSyncedRevision,
+        OperationState.PENDING,
+        new Date().toISOString().slice(0, 19),
+      );
+      return;
+    }
+
+    soloPendingOperationRef.current = new TextOperation(
+      soloPendingOperationRef.current.opId,
+      soloPendingOperationRef.current.delta.compose(delta),
+      soloPendingOperationRef.current.actorEmail,
+      soloPendingOperationRef.current.revision,
+      soloPendingOperationRef.current.state,
+      soloPendingOperationRef.current.createdAt,
+    );
+  }
+
+  function handleSoloSyncAck(payload: SoloSyncAckPayload) {
+    if (payload.noteId !== noteId) return;
+
+    const pending = pendingSoloSyncAcksRef.current.get(payload.opId);
+
+    if (!pending) return;
+
+    clearTimeout(pending.timeoutId);
+    pendingSoloSyncAcksRef.current.delete(payload.opId);
+
+    if (!payload.success || typeof payload.revision !== "number") {
+      pending.reject(
+        new Error(payload.error || "Solo sync failed"),
+      );
+      return;
+    }
+
+    pending.resolve(payload.revision);
+  }
+
+  function handleCollaborationModeChange(payload: CollaborationModePayload) {
+    if (payload.noteId !== noteId) return;
+
+    const previous = collaborationModeRef.current;
+    const next = payload.mode;
+
+    if (previous === next) return;
+
+    if (next === "COLLABORATIVE") {
+      void promoteToCollaborativeMode();
+      return;
+    }
+
+    if (next === "SOLO") {
+      const docState = docStateRef.current;
+
+      if (docState?.sentOperation || docState?.pendingOperation) {
+        /*
+        * Wait briefly. The server ack should still arrive through the socket.
+        * Do not enter solo mode while collaborative ops are unresolved.
+        */
+        setTimeout(() => {
+          handleCollaborationModeChange(payload);
+        }, 500);
+
+        return;
+      }
+
+      collaborationModeRef.current = "SOLO";
+      setCollaborationMode("SOLO");
+    }
+  }
+
+  function scheduleSoloSync(delayMs = SOLO_SYNC_DEBOUNCE_MS) {
+    if (collaborationModeRef.current !== "SOLO") return;
+
+    if (soloSentOperationRef.current) return;
+
+    clearSoloSyncTimer();
+
+    soloSyncTimerRef.current = setTimeout(() => {
+      soloSyncTimerRef.current = null;
+      void flushSoloSync();
+    }, delayMs);
+  }
+
+  async function flushSoloSync(options?: {
+    force?: boolean;
+    throwOnError?: boolean;
+  }) {
+    if (isReviewingRef.current) return;
+
+    const force = options?.force === true;
+
+    if (!force && collaborationModeRef.current !== "SOLO") return;
+
+    if (soloSyncInFlightPromiseRef.current) {
+      try {
+        await soloSyncInFlightPromiseRef.current;
+      } catch (err) {
+        if (options?.throwOnError) {
+          throw err;
+        }
+      }
+
+      if (!force) return;
+    }
+
+    const quill = quillRef.current;
+    const docState = docStateRef.current;
+
+    if (!quill || !docState) return;
+
+    clearSoloSyncTimer();
+
+    const run = runSoloSync(options);
+
+    soloSyncInFlightPromiseRef.current = run;
+
+    try {
+      await run;
+    } finally {
+      soloSyncInFlightPromiseRef.current = null;
+    }
+  }
+
+  async function runSoloSync(options?: { throwOnError?: boolean }) {
+    const docState = docStateRef.current;
+
+    if (!docState) return;
+
+    if (soloSentOperationRef.current) {
+      return;
+    }
+
+    const operation = soloPendingOperationRef.current;
+
+    if (!operation || !hasOps(operation.delta)) {
+      soloPendingOperationRef.current = null;
+      return;
+    }
+
+    soloPendingOperationRef.current = null;
+
+    const operationToSend = new TextOperation(
+      operation.opId,
+      operation.delta,
+      userRef.current!.email,
+      docState.lastSyncedRevision,
+      OperationState.PENDING,
+      operation.createdAt,
+    );
+
+    soloSentOperationRef.current = operationToSend;
+
+    try {
+      const newRevision = await sendSoloSyncOverWebsocket(operationToSend);
+
+      docState.lastSyncedRevision = newRevision;
+
+      soloSentOperationRef.current = null;
+      resetSoloRetryDelay();
+
+      if (soloPendingOperationRef.current && collaborationModeRef.current === "SOLO") {
+        scheduleSoloSync(0);
+      }
+    } catch (err: any) {
+      setErrorMessageMessage(err.message || "Failed to sync solo note changes");
+
+      if (options?.throwOnError) {
+        throw err;
+      }
+
+      scheduleSoloSyncRetry();
+    }
+  }
+
+  function clearPendingSoloSyncAcks() {
+    for (const pending of pendingSoloSyncAcksRef.current.values()) {
+      clearTimeout(pending.timeoutId);
+      pending.reject(new Error("Editor closed before solo sync completed"));
+    }
+
+    pendingSoloSyncAcksRef.current.clear();
+  }
+
+  async function promoteToCollaborativeMode() {
+    const quill = quillRef.current;
+    const docState = docStateRef.current;
+
+    if (!quill || !docState) return;
+
+    try {
+      quill.enable(false);
+
+      /*
+      * Important:
+      * We are still logically SOLO until this flush completes.
+      */
+      await flushSoloSync({ force: true, throwOnError: true });
+
+      const joinData = await apiFetch<JoinResponse>(
+        `notes/${noteId}/join`,
+        { method: "GET" },
+      );
+
+      const cleanDelta = new Delta(joinData.delta.ops || []);
+
+      docState.lastSyncedRevision = joinData.revision;
+      docState.setDocument(cleanDelta);
+      docState.resetPendingState();
+
+      pendingRemoteOpsRef.current.clear();
+      processedOperationIdsRef.current.clear();
+
+      setCollaborators(joinData.collaborators);
+
+      quill.setContents(cleanDelta, "api");
+
+      collaborationModeRef.current = "COLLABORATIVE";
+      setCollaborationMode("COLLABORATIVE");
+    } catch (err: any) {
+      setErrorMessageMessage(
+        err.message || "Failed to switch into collaboration mode",
+      );
+    } finally {
+      if (!isReviewingRef.current) {
+        quill.enable(true);
+      }
+    }
+  }
+
+  function clearSoloSyncTimer() {
+    if (soloSyncTimerRef.current) {
+      clearTimeout(soloSyncTimerRef.current);
+      soloSyncTimerRef.current = null;
+    }
+  }
+
+  function sendSoloSyncOverWebsocket(operation: TextOperation): Promise<number> {
+    const client = stompClientRef.current;
+
+    if (!client?.connected) {
+      return Promise.reject(
+        new Error("Cannot solo-sync while websocket is disconnected"),
+      );
+    }
+
+    return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        pendingSoloSyncAcksRef.current.delete(operation.opId);
+        reject(new Error("Solo sync acknowledgement timed out"));
+      }, SOLO_SYNC_ACK_TIMEOUT_MS);
+
+      pendingSoloSyncAcksRef.current.set(operation.opId, {
+        resolve,
+        reject,
+        timeoutId,
+      });
+
+      try {
+        client.send(
+          `/app/note/${noteId}/solo-sync`,
+          {},
+          JSON.stringify(operation),
+        );
+      } catch (err) {
+        clearTimeout(timeoutId);
+        pendingSoloSyncAcksRef.current.delete(operation.opId);
+
+        reject(
+          err instanceof Error
+            ? err
+            : new Error("Failed to send solo sync"),
+        );
+      }
+    });
   }
 
   function handleRelayMessage(type: MessageType, payload: any) {
@@ -556,12 +918,6 @@ function EditContent() {
     setFormatSuggestions(resolved);
   }
 
-  useEffect(() => {
-    return () => {
-      clearSendRetryTimer();
-    };
-  }, []);
-
   function setBlockFormatSuggestionsSync(
     next:
       | BlockFormatSuggestionItem[]
@@ -721,17 +1077,13 @@ function EditContent() {
           reviewHistory,
         });
       } else {
-        acceptBlockFormatSuggestion(
-          ctx,
-          found.item as BlockFormatSuggestionItem,
-          {
-            snapshotAndApply,
-            setBlockFormatSuggestions: setBlockFormatSuggestionsSync,
-            setActiveFormatId: setActiveFormatIdSync,
-            acceptedReferences,
-            reviewHistory,
-          },
-        );
+        acceptBlockFormatSuggestion(ctx, found.item as BlockFormatSuggestionItem, {
+          snapshotAndApply,
+          setBlockFormatSuggestions: setBlockFormatSuggestionsSync,
+          setActiveFormatId: setActiveFormatIdSync,
+          acceptedReferences,
+          reviewHistory,
+        });
       }
 
       closeReviewTooltip(ctx, setActiveFormatIdSync, setActiveSuggestionSync);
@@ -993,12 +1345,44 @@ function EditContent() {
           ),
         );
 
-        reviewSegmentsRef.current = deleteNewlineGroupSegments(
+        const deletion = deleteNewlineGroupSegmentsPreservingBlockFormats(
           reviewSegmentsRef.current,
           groupId,
         );
 
+        reviewSegmentsRef.current = deletion.segments;
+
         refreshEditorFromRuntime(ctx);
+
+        /*
+        * Inline format suggestions only need normal shifting after the newline
+        * was removed. They do not live on newline holders.
+        */
+        let nextInlineSuggestions = formatSuggestionsRef.current;
+
+        nextInlineSuggestions = resolveFormatSuggestionsAfterRuntimeDeletion(
+          nextInlineSuggestions,
+          deletion.deletedNewlineRanges,
+        );
+
+        setFormatSuggestionsSync(
+          refreshPreviewTextsAgainstRuntime(ctx, nextInlineSuggestions),
+        );
+
+        /*
+        * Block format suggestions are different:
+        * if their reference was on the removed newline, transfer the reference to
+        * the next newline instead of deleting the suggestion.
+        */
+        setBlockFormatSuggestionsSync((prev) =>
+          refreshBlockPreviewTextsAgainstRuntime(
+            ctx,
+            resolveBlockFormatSuggestionsAfterNewlineDeletion(
+              prev,
+              deletion.deletedNewlineRanges,
+            ),
+          ),
+        );
       } else if (type === "delete") {
         recordRejectedReferences(
           collectSuggestionReferencesByGroup(
@@ -1062,6 +1446,7 @@ function EditContent() {
 
   function sendCursorChange(position: number) {
     if (isReviewingRef.current) return;
+    if (collaborationModeRef.current !== "COLLABORATIVE") return;
 
     const client = stompClientRef.current;
 
@@ -1206,6 +1591,30 @@ function EditContent() {
       return;
     }
 
+    const pendingSoloAck = pendingSoloSyncAcksRef.current.get(opId);
+
+    if (pendingSoloAck && actorEmail === userRef.current?.email) {
+      clearTimeout(pendingSoloAck.timeoutId);
+      pendingSoloSyncAcksRef.current.delete(opId);
+
+      clearSoloRetryTimer();
+      resetSoloRetryDelay();
+
+      soloSentOperationRef.current = null;
+
+      docState.lastSyncedRevision = revision;
+
+      pendingSoloAck.resolve(revision);
+
+      markOperationProcessed(opId);
+
+      if (soloPendingOperationRef.current && collaborationModeRef.current === "SOLO") {
+        scheduleSoloSync(0);
+      }
+
+      return;
+    }
+
     const isAckForThisTab =
       actorEmail === userRef.current?.email &&
       docState.sentOperation?.opId === opId;
@@ -1263,6 +1672,10 @@ function EditContent() {
 
   async function saveNote() {
     try {
+      if (collaborationModeRef.current === "SOLO") {
+        await flushSoloSync();
+      }
+
       await apiFetch(`notes/${noteId}/save`, { method: "POST" });
     } catch (err: any) {
       setErrorMessageMessage(err.message || "Failed to save note");
@@ -1289,9 +1702,7 @@ function EditContent() {
     if (!cursor) return;
 
     Object.keys(collaboratorsRef.current).forEach((email) => {
-      if (email !== userRef.current?.email) {
-        cursor.removeCursor(email);
-      }
+      cursor.removeCursor(email);
     });
 
     quill.root
@@ -1300,13 +1711,17 @@ function EditContent() {
   }
 
   async function handleReviewNote() {
+    if (collaborationModeRef.current === "SOLO") {
+      await flushSoloSync();
+    }
+
     await saveNote();
 
     const quill = quillRef.current;
     if (!quill) return;
 
-    clearCollaboratorCursors();
     sendCursorChange(-1);
+    clearCollaboratorCursors();
 
     setIsReviewing(true);
     setReviewLoaded(false);
@@ -1457,17 +1872,11 @@ function EditContent() {
       return;
     }
 
-    if (isExitingReviewRef.current) {
-      return;
-    }
-
     restoreEditorAfterReviewEnd();
   }
 
   async function handleExitReview() {
     try {
-      isExitingReviewRef.current = true;
-
       if (quillRef.current) {
         quillRef.current.root.removeEventListener("click", handleClick);
         clearActiveFormatOverlay(getReviewCtx());
@@ -1477,11 +1886,8 @@ function EditContent() {
         method: "GET",
       });
 
-      await restoreEditorAfterReviewEnd();
     } catch (err: any) {
       setErrorMessageMessage(err.message || "Failed to exit review");
-    } finally {
-      isExitingReviewRef.current = false;
     }
   }
 
@@ -1610,6 +2016,58 @@ function EditContent() {
       expectedRevision: (docStateRef.current?.lastSyncedRevision ?? 0) + 1,
       bufferedRevisions: [...pendingRemoteOpsRef.current.keys()].sort((a, b) => a - b),
     });
+  }
+
+  function clearSoloRetryTimer() {
+    if (soloRetryTimerRef.current) {
+      clearTimeout(soloRetryTimerRef.current);
+      soloRetryTimerRef.current = null;
+    }
+  }
+
+  function resetSoloRetryDelay() {
+    soloRetryDelayRef.current = INITIAL_SEND_RETRY_DELAY_MS;
+  }
+
+  function increaseSoloRetryDelay() {
+    soloRetryDelayRef.current = Math.min(
+      soloRetryDelayRef.current * SEND_RETRY_BACKOFF_MULTIPLIER,
+      MAX_SEND_RETRY_DELAY_MS,
+    );
+  }
+
+  function scheduleSoloSyncRetry(delayMs = soloRetryDelayRef.current) {
+    if (soloRetryTimerRef.current) return;
+
+    soloRetryTimerRef.current = setTimeout(async () => {
+      soloRetryTimerRef.current = null;
+
+      const op = soloSentOperationRef.current;
+
+      if (!op) {
+        resetSoloRetryDelay();
+        return;
+      }
+
+      try {
+        const newRevision = await sendSoloSyncOverWebsocket(op);
+
+        const docState = docStateRef.current;
+        if (docState) {
+          docState.lastSyncedRevision = newRevision;
+        }
+
+        soloSentOperationRef.current = null;
+        resetSoloRetryDelay();
+
+        if (soloPendingOperationRef.current && collaborationModeRef.current === "SOLO") {
+          scheduleSoloSync(0);
+        }
+      } catch (err) {
+        increaseSoloRetryDelay();
+        scheduleSoloSyncRetry();
+      }
+    }, delayMs);
   }
 
   if (loadingUser) {

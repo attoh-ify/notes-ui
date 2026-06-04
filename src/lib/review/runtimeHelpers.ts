@@ -8,10 +8,12 @@ import {
 
 import {
   buildFormatOverlayClearDelta,
-  getRuntimeTextInRange,
+  getRuntimeTextInReferenceRange,
   isBlockFormatSuggestion,
+  isVirtualNewlineMarker,
   rangesFromReferences,
-  segmentLength,
+  referenceIndexToVisualIndex,
+  referenceLength,
   segmentsToBaseDelta,
   segmentsToSuggestionOverlayDelta,
 } from "../attribution";
@@ -61,7 +63,7 @@ export function refreshPreviewTextsAgainstRuntime(
         text += " ... ";
       }
 
-      text += getRuntimeTextInRange(
+      text += getRuntimeTextInReferenceRange(
         ctx.reviewSegmentsRef.current,
         range.start,
         range.length,
@@ -105,13 +107,17 @@ function getRuntimeLineTextForNewlineRef(
   segments: ReviewSegment[],
   newlineIndex: number,
 ): string {
-  let cursor = 0;
+  let refCursor = 0;
   let line = "";
 
   for (const seg of segments) {
-    const len = segmentLength(seg);
-    const start = cursor;
-    const end = cursor + len;
+    if (isVirtualNewlineMarker(seg)) {
+      continue;
+    }
+
+    const len = referenceLength(seg);
+    const start = refCursor;
+    const end = refCursor + len;
 
     if (end <= newlineIndex) {
       if (!seg.embed && seg.text === "\n") {
@@ -119,10 +125,10 @@ function getRuntimeLineTextForNewlineRef(
       } else if (seg.embed) {
         line += "[image]";
       } else {
-        line += seg.text;
+        line += seg.text ?? "";
       }
 
-      cursor = end;
+      refCursor = end;
       continue;
     }
 
@@ -131,12 +137,13 @@ function getRuntimeLineTextForNewlineRef(
         line += "[image]";
       } else {
         const offset = newlineIndex - start;
-        line += seg.text.slice(0, offset);
+        line += (seg.text ?? "").slice(0, offset);
       }
+
       break;
     }
 
-    cursor = end;
+    refCursor = end;
   }
 
   return line.trim() || "[empty line]";
@@ -224,15 +231,24 @@ export function applyBlockFormatDomOverlay(
 
   clearBlockFormatDomOverlay(ctx);
 
+  const highlighted = new Set<HTMLElement>();
+
   for (const ref of item.references ?? []) {
-    const result = quill.getLine(ref.reviewStart);
+    const visualIndex = referenceIndexToVisualIndex(
+      ctx.reviewSegmentsRef.current,
+      ref.reviewStart,
+    );
+
+    const result = quill.getLine(visualIndex);
 
     if (!result) continue;
 
     const [line] = result as any;
     const domNode = line?.domNode as HTMLElement | undefined;
 
-    if (!domNode) continue;
+    if (!domNode || highlighted.has(domNode)) continue;
+
+    highlighted.add(domNode);
 
     domNode.classList.add("format-block-active");
     domNode.setAttribute("data-active-format-block-group-id", item.groupId);

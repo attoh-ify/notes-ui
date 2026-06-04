@@ -416,44 +416,6 @@ export function cloneSegments(items: ReviewSegment[]): ReviewSegment[] {
   return items.map(cloneSegment);
 }
 
-export function getRuntimeTextInRange(
-  segments: ReviewSegment[],
-  start: number,
-  length: number,
-): string {
-  const end = start + length;
-  let cursor = 0;
-  let out = "";
-
-  for (const seg of segments) {
-    const segLen = segmentLength(seg);
-    const segStart = cursor;
-    const segEnd = cursor + segLen;
-
-    if (segEnd <= start) {
-      cursor = segEnd;
-      continue;
-    }
-
-    if (segStart >= end) break;
-
-    if (seg.embed) {
-      out += "[image]";
-      cursor = segEnd;
-      continue;
-    }
-
-    out += seg.text.slice(
-      Math.max(start, segStart) - segStart,
-      Math.min(end, segEnd) - segStart,
-    );
-
-    cursor = segEnd;
-  }
-
-  return out;
-}
-
 export function findInsertGroupRangeInRuntime(
   segments: ReviewSegment[],
   groupId: string,
@@ -526,13 +488,113 @@ export function removeNewlineSuggestionFromSegments(
   );
 }
 
-export function deleteNewlineGroupSegments(
+export function deleteNewlineGroupSegmentsPreservingBlockFormats(
   segments: ReviewSegment[],
   groupId: string,
-): ReviewSegment[] {
-  return mergeAdjacentSegments(
-    segments.filter((seg) => seg.newlineSuggestion?.groupId !== groupId),
-  );
+): {
+  segments: ReviewSegment[];
+  deletedNewlineRanges: Array<{
+    index: number;
+    length: number;
+    blockBaseAttributes: Record<string, any>;
+    blockSuggestionAttributes: Record<string, any>;
+  }>;
+} {
+  const deletedNewlineRanges: Array<{
+    index: number;
+    length: number;
+    blockBaseAttributes: Record<string, any>;
+    blockSuggestionAttributes: Record<string, any>;
+  }> = [];
+
+  let cursor = 0;
+
+  const shouldRemove = segments.map((seg) => {
+    const remove = seg.newlineSuggestion?.groupId === groupId;
+    return remove;
+  });
+
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+    const len = segmentLength(seg);
+
+    if (
+      shouldRemove[i] &&
+      isRealNewlineSegment(seg) &&
+      !isVirtualNewlineMarker(seg)
+    ) {
+      deletedNewlineRanges.push({
+        index: cursor,
+        length: len,
+        blockBaseAttributes: pickBlockAttributes(seg.baseAttributes),
+        blockSuggestionAttributes: pickBlockAttributes(seg.suggestionAttributes),
+      });
+    }
+
+    cursor += len;
+  }
+
+  const next = segments
+    .map((seg, index) => {
+      if (!shouldRemove[index]) {
+        return cloneSegment(seg);
+      }
+
+      /*
+       * Remove both:
+       * - virtual standalone marker
+       * - actual rejected pending newline
+       */
+      return null;
+    })
+    .filter(Boolean) as ReviewSegment[];
+
+  /*
+   * Transfer block attrs from each removed real newline to the next surviving
+   * real newline. This mirrors Quill's behavior: if one line-ending newline
+   * disappears, the next newline becomes the line's block-format holder.
+   */
+  for (const deleted of deletedNewlineRanges) {
+    const targetIndex = findNextRealNewlineSegmentIndex(next, deleted.index);
+
+    if (targetIndex === -1) {
+      /*
+       * Safety fallback. Quill documents should normally have a terminal newline,
+       * but if runtime segments temporarily do not, add one so block attrs still
+       * have a newline holder.
+       */
+      next.push({
+        id: `seg_fallback_newline_${Date.now()}_${Math.random()
+          .toString(16)
+          .slice(2)}`,
+        text: "\n",
+        baseAttributes: { ...deleted.blockBaseAttributes },
+        suggestionAttributes: { ...deleted.blockSuggestionAttributes },
+        references: [],
+      });
+
+      continue;
+    }
+
+    const target = next[targetIndex];
+
+    next[targetIndex] = {
+      ...target,
+      baseAttributes: mergeBlockAttrsIntoTarget(
+        target.baseAttributes,
+        deleted.blockBaseAttributes,
+      ),
+      suggestionAttributes: mergeBlockAttrsIntoTarget(
+        target.suggestionAttributes,
+        deleted.blockSuggestionAttributes,
+      ),
+    };
+  }
+
+  return {
+    segments: mergeAdjacentSegments(next),
+    deletedNewlineRanges,
+  };
 }
 
 export function resolveNewlineSuggestionsAfterDependencyChange(
@@ -884,6 +946,69 @@ export function resolveFormatSuggestionsAfterMutation<
   }
 
   return next;
+}
+
+export function resolveFormatSuggestionsAfterRuntimeDeletion<
+  T extends ReviewFormatSuggestion,
+>(
+  items: T[],
+  deletedRanges: Array<{ index: number; length: number }>,
+): T[] {
+  if (deletedRanges.length === 0) return items;
+
+  return items
+    .map((item) => {
+      let references = cloneSuggestionReferences(item.references ?? []);
+
+      for (const deleted of deletedRanges) {
+        references = removeRangeFromReferences(
+          references,
+          deleted.index,
+          deleted.length,
+        );
+      }
+
+      return {
+        ...item,
+        references,
+      };
+    })
+    .filter((item) => (item.references ?? []).length > 0);
+}
+
+export function resolveBlockFormatSuggestionsAfterNewlineDeletion<
+  T extends BlockFormatSuggestionItem,
+>(
+  items: T[],
+  deletedNewlineRanges: Array<{
+    index: number;
+    length: number;
+    blockBaseAttributes: Record<string, any>;
+    blockSuggestionAttributes: Record<string, any>;
+  }>,
+): T[] {
+  if (deletedNewlineRanges.length === 0) {
+    return items;
+  }
+
+  return items
+    .map((item) => {
+      let references = cloneSuggestionReferences(item.references ?? []);
+
+      for (const deleted of deletedNewlineRanges) {
+        references = transferOrShiftBlockReferencesAfterDeletedNewline(
+          references,
+          deleted.index,
+          deleted.length,
+        );
+      }
+
+      return {
+        ...item,
+        references,
+      };
+    })
+    .filter((item) => (item.references ?? []).length > 0);
 }
 
 function removeRangeFromReferences(
@@ -1316,4 +1441,205 @@ export function isBlockFormatSuggestion(
     "behavior" in item ||
     "conflictGroup" in item
   );
+}
+
+const BLOCK_ATTRIBUTE_KEYS = new Set([
+  "header",
+  "list",
+  "indent",
+  "align",
+  "blockquote",
+  "code-block",
+  "direction",
+]);
+
+function isBlockAttributeKey(key: string): boolean {
+  return BLOCK_ATTRIBUTE_KEYS.has(key);
+}
+
+function pickBlockAttributes(
+  attrs: Record<string, any> | undefined,
+): Record<string, any> {
+  const out: Record<string, any> = {};
+
+  for (const [key, value] of Object.entries(attrs ?? {})) {
+    if (isBlockAttributeKey(key)) {
+      out[key] = cloneJsonValue(value);
+    }
+  }
+
+  return out;
+}
+
+function hasAttrs(attrs: Record<string, any>): boolean {
+  return Object.keys(attrs).length > 0;
+}
+
+function mergeBlockAttrsIntoTarget(
+  target: Record<string, any> | undefined,
+  source: Record<string, any>,
+): Record<string, any> {
+  return {
+    ...(target ?? {}),
+    ...source,
+  };
+}
+
+function isRealNewlineSegment(seg: ReviewSegment): boolean {
+  return !seg.embed && seg.text === "\n";
+}
+
+export function isVirtualNewlineMarker(seg: ReviewSegment): boolean {
+  return seg.newlineSuggestion?.marker === true;
+}
+
+function findNextRealNewlineSegmentIndex(
+  segments: ReviewSegment[],
+  runtimeIndex: number,
+): number {
+  let cursor = 0;
+
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+    const len = segmentLength(seg);
+    const start = cursor;
+    const end = cursor + len;
+
+    if (end <= runtimeIndex) {
+      cursor = end;
+      continue;
+    }
+
+    if (isRealNewlineSegment(seg) && !isVirtualNewlineMarker(seg)) {
+      return i;
+    }
+
+    cursor = end;
+  }
+
+  return -1;
+}
+
+function transferOrShiftBlockReferencesAfterDeletedNewline(
+  refs: Reference[],
+  deleteStart: number,
+  deleteLength: number,
+): Reference[] {
+  const deleteEnd = deleteStart + deleteLength;
+  const out: Reference[] = [];
+
+  for (const ref of refs) {
+    const refStart = ref.reviewStart;
+    const refEnd = ref.reviewStart + ref.length;
+
+    /*
+     * Block refs are usually length 1 and target a newline.
+     * If the ref targeted the deleted newline, transfer it to the same runtime
+     * position. After deleting that newline, the next character/newline shifts
+     * into this same index.
+     */
+    const overlapsDeletedNewline =
+      refStart < deleteEnd && refEnd > deleteStart;
+
+    if (overlapsDeletedNewline) {
+      out.push({
+        ...ref,
+        reviewStart: deleteStart,
+      });
+      continue;
+    }
+
+    /*
+     * Anything after the deleted newline shifts left.
+     */
+    if (refStart >= deleteEnd) {
+      out.push({
+        ...ref,
+        reviewStart: refStart - deleteLength,
+      });
+      continue;
+    }
+
+    out.push({ ...ref });
+  }
+
+  return dedupeSuggestionReferences(out);
+}
+
+export function referenceLength(seg: ReviewSegment): number {
+  return isVirtualNewlineMarker(seg) ? 0 : segmentLength(seg);
+}
+
+export function getRuntimeTextInReferenceRange(
+  segments: ReviewSegment[],
+  start: number,
+  length: number,
+): string {
+  const end = start + length;
+  let refCursor = 0;
+  let out = "";
+
+  for (const seg of segments) {
+    if (isVirtualNewlineMarker(seg)) {
+      continue;
+    }
+
+    const segLen = segmentLength(seg);
+    const segStart = refCursor;
+    const segEnd = refCursor + segLen;
+
+    if (segEnd <= start) {
+      refCursor = segEnd;
+      continue;
+    }
+
+    if (segStart >= end) break;
+
+    if (seg.embed) {
+      out += "[image]";
+      refCursor = segEnd;
+      continue;
+    }
+
+    const from = Math.max(start, segStart) - segStart;
+    const to = Math.min(end, segEnd) - segStart;
+
+    out += (seg.text ?? "").slice(from, to);
+
+    refCursor = segEnd;
+  }
+
+  return out;
+}
+
+export function referenceIndexToVisualIndex(
+  segments: ReviewSegment[],
+  referenceIndex: number,
+): number {
+  let referenceCursor = 0;
+  let visualCursor = 0;
+
+  for (const seg of segments) {
+    const visualLength = segmentLength(seg);
+
+    /*
+     * Virtual standalone newline markers exist in Quill visual space,
+     * but they do not exist in backend reference space.
+     */
+    if (isVirtualNewlineMarker(seg)) {
+      visualCursor += visualLength;
+      continue;
+    }
+
+    const refLength = referenceLength(seg);
+
+    if (referenceIndex < referenceCursor + refLength) {
+      return visualCursor + (referenceIndex - referenceCursor);
+    }
+
+    referenceCursor += refLength;
+    visualCursor += visualLength;
+  }
+
+  return visualCursor;
 }
