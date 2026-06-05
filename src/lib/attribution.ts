@@ -54,6 +54,8 @@ export function stripSuggestionAttributes(delta: Delta): Delta {
       if (!op.attributes) return op;
 
       const {
+        "review-base": _rb,
+        "review-block-base": _rbb,
         "suggestion-format": _f,
         "suggestion-block-format": _bf,
         "suggestion-delete": _d,
@@ -169,6 +171,14 @@ export function deltaToSegments(
         normalizeSuggestionMeta<any>(allAttrs["suggestion-delete-multiline"]) ??
         null;
 
+      const reviewBaseMeta = normalizeSuggestionMeta<any>(
+        allAttrs["review-base"],
+      );
+
+      const reviewBlockBaseMeta = normalizeSuggestionMeta<any>(
+        allAttrs["review-block-base"],
+      );
+
       let baseAttributes: Record<string, any>;
       let suggestionAttributes: Record<string, any>;
 
@@ -181,6 +191,12 @@ export function deltaToSegments(
       } else if (deleteMeta) {
         baseAttributes = { ...(deleteMeta.baseAttributes ?? {}) };
         suggestionAttributes = { ...(deleteMeta.suggestionAttributes ?? {}) };
+      } else if (reviewBaseMeta) {
+        baseAttributes = { ...(reviewBaseMeta.baseAttributes ?? {}) };
+        suggestionAttributes = { ...(reviewBaseMeta.suggestionAttributes ?? {}) };
+      } else if (reviewBlockBaseMeta) {
+        baseAttributes = { ...(reviewBlockBaseMeta.baseAttributes ?? {}) };
+        suggestionAttributes = { ...(reviewBlockBaseMeta.suggestionAttributes ?? {}) };
       } else {
         baseAttributes = stripRuntimeSuggestionAttrs(allAttrs);
         suggestionAttributes = {};
@@ -299,6 +315,8 @@ export function segmentsToBaseDelta(segments: ReviewSegment[]): Delta {
       ...(seg.suggestionAttributes ?? {}),
     };
 
+    delete attrs["review-base"];
+    delete attrs["review-block-base"];
     delete attrs["suggestion-insert"];
     delete attrs["suggestion-newline"];
     delete attrs["suggestion-delete"];
@@ -397,6 +415,32 @@ export function segmentsToSuggestionOverlayDelta(
         attrs["suggestion-delete-multiline"] = deletePayload;
       } else {
         attrs["suggestion-delete"] = deletePayload;
+      }
+    }
+
+    const isPlainBaseReviewRun =
+      !seg.insertSuggestion &&
+      !seg.newlineSuggestion &&
+      !seg.deleteSuggestion;
+
+    if (isPlainBaseReviewRun) {
+      const baseAttributes = seg.baseAttributes ?? {};
+      const suggestionAttributes = seg.suggestionAttributes ?? {};
+
+      if (
+        Object.keys(baseAttributes).length > 0 ||
+        Object.keys(suggestionAttributes).length > 0
+      ) {
+        const payload = {
+          baseAttributes,
+          suggestionAttributes,
+        };
+
+        if (!seg.embed && seg.text === "\n") {
+          attrs["review-block-base"] = payload;
+        } else {
+          attrs["review-base"] = payload;
+        }
       }
     }
 
@@ -867,16 +911,19 @@ export function restoreFormatSuggestionToBase(
   item: ReviewFormatSuggestion,
 ): ReviewSegment[] {
   const key = item.attributeKey;
-
-  let cursor = 0;
+  let refCursor = 0;
 
   const ranges = rangesFromReferences(item.references ?? []);
 
   const updated = segments.map((seg) => {
-    const segLen = segmentLength(seg);
-    const segStart = cursor;
-    const segEnd = cursor + segLen;
-    cursor = segEnd;
+    if (isVirtualNewlineMarker(seg)) {
+      return seg;
+    }
+
+    const segLen = referenceLength(seg);
+    const segStart = refCursor;
+    const segEnd = refCursor + segLen;
+    refCursor = segEnd;
 
     const overlaps = ranges.some(
       (range) => range.start < segEnd && range.start + range.length > segStart,
@@ -1388,6 +1435,8 @@ function stripRuntimeSuggestionAttrs(
   attrs: Record<string, any>,
 ): Record<string, any> {
   const {
+    "review-base": _rb,
+    "review-block-base": _rbb,
     "suggestion-format": _f,
     "suggestion-block-format": _bf,
     "suggestion-delete": _d,

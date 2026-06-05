@@ -24,6 +24,41 @@ type FormatPayload = {
   references?: Reference[];
 };
 
+type ReviewBasePayload = {
+  baseAttributes?: Record<string, any>;
+  suggestionAttributes?: Record<string, any>;
+};
+
+function setReviewBaseAttrs(
+  node: HTMLElement,
+  data: ReviewBasePayload,
+) {
+  node.setAttribute(
+    "data-base-attributes",
+    JSON.stringify(data.baseAttributes ?? {}),
+  );
+
+  node.setAttribute(
+    "data-suggestion-attributes",
+    JSON.stringify(data.suggestionAttributes ?? {}),
+  );
+}
+
+function readReviewBaseAttrs(node: HTMLElement): ReviewBasePayload {
+  return {
+    baseAttributes: getJsonObject<Record<string, any>>(
+      node,
+      "data-base-attributes",
+      {},
+    ),
+    suggestionAttributes: getJsonObject<Record<string, any>>(
+      node,
+      "data-suggestion-attributes",
+      {},
+    ),
+  };
+}
+
 const getJsonObject = <T,>(
   node: HTMLElement,
   attrName: string,
@@ -278,6 +313,27 @@ export function registerFormats(QuillModule: typeof Quill) {
     }
   }
 
+  class ReviewBase extends Inline {
+    static blotName = "review-base";
+    static tagName = "span";
+
+    static create(data: ReviewBasePayload) {
+      const node = super.create() as HTMLElement;
+      setReviewBaseAttrs(node, data);
+
+      /*
+      * Metadata only. Do not make it clickable.
+      */
+      node.classList.add("review-base-metadata");
+
+      return node;
+    }
+
+    static formats(node: HTMLElement) {
+      return readReviewBaseAttrs(node);
+    }
+  }
+
   class AuditFormatActive extends Inline {
     static blotName = "audit-format-active";
     static tagName = "span";
@@ -304,12 +360,22 @@ export function registerFormats(QuillModule: typeof Quill) {
     },
   );
 
+  const ReviewBlockBaseAttributor = new Parchment.Attributor(
+    "review-block-base",
+    "data-review-block-base",
+    {
+      scope: Parchment.Scope.BLOCK,
+    },
+  );
+
   QuillModule.register(SuggestionInsert, true);
   QuillModule.register(SuggestionNewline, true);
   QuillModule.register(SuggestionDelete, true);
   QuillModule.register(SuggestionDeleteSingleLine, true);
   QuillModule.register(SuggestionDeleteMultiLine, true);
   QuillModule.register(SuggestionFormat, true);
+  QuillModule.register(ReviewBase, true);
   QuillModule.register(AuditFormatActive, true);
   QuillModule.register(SuggestionBlockFormat, true);
+  QuillModule.register(ReviewBlockBaseAttributor, true);
 }
