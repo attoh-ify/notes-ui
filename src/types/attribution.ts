@@ -70,6 +70,7 @@ export interface BlockFormatSuggestionItem {
   previewText: string;
   dependsOnInsertGroupIds: string[];
   dependsOnDeleteGroupIds: string[];
+  dependsOnNewlineGroupIds: string[];
 }
 
 export type ReviewFormatSuggestion =

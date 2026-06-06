@@ -22,13 +22,16 @@ import {
   ReviewFormatSuggestion,
   ReviewProjection,
   TooltipState,
+  ReviewSegment,
 } from "@/src/types";
 
 import { registerFormats } from "@/src/lib/quillformats";
 import {
+  deltaToSegments,
   getSuggestionSelector,
   isBlockFormatSuggestion,
   rangesFromReferences,
+  referenceIndexToVisualIndex,
 } from "@/src/lib/attribution";
 
 import AuditSidebarModal from "@/components/AuditSidebarModal";
@@ -67,6 +70,8 @@ function AuditNoteContent() {
 
   const formatSuggestionsRef = useRef<FormatSuggestionItem[]>([]);
   const blockFormatSuggestionsRef = useRef<BlockFormatSuggestionItem[]>([]);
+  const reviewSegmentsRef = useRef<ReviewSegment[]>([]);
+  const runtimeSegCtrRef = useRef(0);
 
   const activeFormatIdRef = useRef<string | null>(null);
   const activeSuggestionRef = useRef<TooltipState | null>(null);
@@ -176,6 +181,14 @@ function AuditNoteContent() {
         quill.setContents(baseDelta, "api");
         quill.updateContents(visualDelta, "api");
 
+        const runtimeReviewDelta = baseDelta.compose(visualDelta);
+
+        runtimeSegCtrRef.current = 0;
+        reviewSegmentsRef.current = deltaToSegments(
+          runtimeReviewDelta,
+          nextRuntimeSegmentId,
+        );
+
         const inlineFormatItems = projection.formatSuggestions ?? [];
         const blockFormatItems = projection.blockFormatSuggestions ?? [];
 
@@ -187,6 +200,7 @@ function AuditNoteContent() {
 
         const inlineExists =
           !!quill.root.querySelector('[data-suggestion-type="insert"]') ||
+          !!quill.root.querySelector('[data-suggestion-type="newline"]') ||
           !!quill.root.querySelector('[data-suggestion-type="delete"]');
 
         setHasInlineSuggestions(inlineExists);
@@ -205,6 +219,11 @@ function AuditNoteContent() {
       cancelled = true;
     };
   }, [noteId, noteVersion?.id, isLoading, quillReady]);
+
+  function nextRuntimeSegmentId(): string {
+    runtimeSegCtrRef.current += 1;
+    return `audit_seg_${runtimeSegCtrRef.current}`;
+  }
 
   function getAllFormatSuggestions(): ReviewFormatSuggestion[] {
     return [
@@ -245,6 +264,8 @@ function AuditNoteContent() {
       });
 
     suspendedInlineGroupIdsRef.current = [];
+    reviewSegmentsRef.current = [];
+    runtimeSegCtrRef.current = 0;
   }
 
   function clearAuditFormatOverlay() {
@@ -355,10 +376,24 @@ function AuditNoteContent() {
     for (const range of ranges) {
       if (range.length <= 0) continue;
 
-      quill.formatText(
+      const visualStart = referenceIndexToVisualIndex(
+        reviewSegmentsRef.current,
         range.start,
-        range.length,
-         "format-inline-active",
+      );
+
+      const visualEnd = referenceIndexToVisualIndex(
+        reviewSegmentsRef.current,
+        range.start + range.length,
+      );
+
+      const visualLength = Math.max(0, visualEnd - visualStart);
+
+      if (visualLength <= 0) continue;
+
+      quill.formatText(
+        visualStart,
+        visualLength,
+        "format-inline-active",
         true,
         "api",
       );
@@ -377,7 +412,12 @@ function AuditNoteContent() {
     const inlineIds = new Set<string>();
 
     for (const ref of item.references ?? []) {
-      const lineResult = quill.getLine(ref.reviewStart) as any;
+      const visualIndex = referenceIndexToVisualIndex(
+        reviewSegmentsRef.current,
+        ref.reviewStart,
+      );
+
+      const lineResult = quill.getLine(visualIndex) as any;
 
       if (!lineResult) continue;
 
@@ -479,14 +519,18 @@ function AuditNoteContent() {
       return;
     }
 
-    if (rawType !== "insert" && rawType !== "delete") {
+    if (
+      rawType !== "insert" &&
+      rawType !== "newline" &&
+      rawType !== "delete"
+    ) {
       deactivateAuditSelection();
       return;
     }
-
+    
     clearActiveFormatOverlay();
-
-    const type = rawType as "insert" | "delete";
+    
+    const type = rawType as "insert" | "newline" | "delete";
     const groupId = node.getAttribute("data-group-id") ?? "";
     const actorEmail = node.getAttribute("data-actor-email") ?? "";
     const createdAt = node.getAttribute("data-created-at") ?? "";
@@ -560,7 +604,10 @@ function AuditNoteContent() {
       const rawType = node?.getAttribute("data-suggestion-type") ?? null;
 
       const nextType =
-        rawType === "insert" || rawType === "delete" || rawType === "format"
+        rawType === "insert" ||
+        rawType === "newline" ||
+        rawType === "delete" ||
+        rawType === "format"
           ? rawType
           : null;
 

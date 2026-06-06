@@ -53,6 +53,7 @@ import {
   collectSuggestionReferencesByGroup,
   segmentLength,
   resolveFormatSuggestionsAfterRuntimeDeletion,
+  resolveBlockFormatSuggestionsAfterNewlineDecision,
 } from "@/src/lib/attribution";
 import {
   clearActiveFormatOverlay,
@@ -1150,6 +1151,13 @@ function EditContent() {
         );
 
         refreshEditorFromRuntime(ctx);
+
+        setBlockFormatSuggestionsSync((prev) =>
+          refreshBlockPreviewTextsAgainstRuntime(
+            ctx,
+            resolveBlockFormatSuggestionsAfterNewlineDecision(prev, groupId),
+          ),
+        );
       } else if (type === "delete") {
         let cursor = 0;
         const nextSegments: ReviewSegment[] = [];
@@ -1337,11 +1345,16 @@ function EditContent() {
           ),
         );
       } else if (type === "newline") {
-        recordRejectedReferences(
-          collectSuggestionReferencesByGroup(
-            reviewSegmentsRef.current,
-            groupId,
-            "newline",
+        setBlockFormatSuggestionsSync((prev) =>
+          refreshBlockPreviewTextsAgainstRuntime(
+            ctx,
+            resolveBlockFormatSuggestionsAfterNewlineDecision(
+              resolveBlockFormatSuggestionsAfterNewlineDeletion(
+                prev,
+                deletion.deletedNewlineRanges,
+              ),
+              groupId,
+            ),
           ),
         );
 
@@ -1898,6 +1911,11 @@ function EditContent() {
       );
       return;
     }
+
+    console.log({
+      acceptedReferences: acceptedReferences.current.flat(),
+      rejectedReferences: rejectedReferences.current.flat(),
+    })
 
     try {
       await apiFetch(`notes/${noteId}/review`, {

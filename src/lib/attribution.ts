@@ -43,6 +43,7 @@ export function cloneBlockFormatSuggestions(
     previewText: item.previewText,
     dependsOnInsertGroupIds: [...(item.dependsOnInsertGroupIds ?? [])],
     dependsOnDeleteGroupIds: [...(item.dependsOnDeleteGroupIds ?? [])],
+    dependsOnNewlineGroupIds: [...(item.dependsOnNewlineGroupIds ?? [])],
   }));
 }
 
@@ -984,11 +985,19 @@ export function resolveFormatSuggestionsAfterMutation<
         ? item.dependsOnDeleteGroupIds.filter((id) => id !== mutationGroupId)
         : [...item.dependsOnDeleteGroupIds];
 
+    const dependsOnNewlineGroupIds =
+      "dependsOnNewlineGroupIds" in item
+        ? [...(item.dependsOnNewlineGroupIds ?? [])]
+        : undefined;
+
     next.push({
       ...item,
       references: updatedReferences,
       dependsOnInsertGroupIds,
       dependsOnDeleteGroupIds,
+      ...(dependsOnNewlineGroupIds
+        ? { dependsOnNewlineGroupIds }
+        : {}),
     });
   }
 
@@ -1691,4 +1700,18 @@ export function referenceIndexToVisualIndex(
   }
 
   return visualCursor;
+}
+
+export function resolveBlockFormatSuggestionsAfterNewlineDecision<
+  T extends BlockFormatSuggestionItem,
+>(
+  items: T[],
+  newlineGroupId: string,
+): T[] {
+  return items.map((item) => ({
+    ...item,
+    dependsOnNewlineGroupIds: (item.dependsOnNewlineGroupIds ?? []).filter(
+      (id) => id !== newlineGroupId,
+    ),
+  }));
 }

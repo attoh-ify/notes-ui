@@ -184,6 +184,15 @@ export function isDeleteGroupStillPending(
   );
 }
 
+export function isNewlineGroupStillPending(
+  ctx: ReviewRuntimeContext,
+  groupId: string,
+): boolean {
+  return ctx.reviewSegmentsRef.current.some(
+    (seg) => seg.newlineSuggestion?.groupId === groupId,
+  );
+}
+
 export function canActOnFormatSuggestion(
   ctx: ReviewRuntimeContext,
   item: ReviewFormatSuggestion,
@@ -196,7 +205,13 @@ export function canActOnFormatSuggestion(
     (groupId) => !isDeleteGroupStillPending(ctx, groupId),
   );
 
-  return insertDepsResolved && deleteDepsResolved;
+  const newlineDepsResolved =
+    !isBlockFormatSuggestion(item) ||
+    (item.dependsOnNewlineGroupIds ?? []).every(
+      (groupId) => !isNewlineGroupStillPending(ctx, groupId),
+    );
+
+  return insertDepsResolved && deleteDepsResolved && newlineDepsResolved;
 }
 
 export function findRuntimeFormatSuggestion(
