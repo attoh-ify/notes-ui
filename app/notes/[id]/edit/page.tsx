@@ -60,6 +60,7 @@ function EditContent() {
   const stompClientRef = useRef<CompatClient | null>(null);
   const isOwner = useRef<boolean>(false);
   const isReviewingRef = useRef(false);
+  const remoteCursorRangesRef = useRef<Map<string, { index: number; length: number }>>(new Map());
   const collaborationModeRef = useRef<CollaborationMode>("SOLO");
   const pendingSoloSyncAcksRef = useRef<
     Map<
@@ -100,83 +101,6 @@ function EditContent() {
     docStateRef.current = new DocState(user.email);
   }
 
-  useEffect(() => {
-    const shouldShowEditor = !isReviewing || note?.accessRole === "OWNER";
-
-    if (
-      !isLoading &&
-      editorRef.current &&
-      !quillRef.current &&
-      !initializingEditorRef.current &&
-      shouldShowEditor
-    ) {
-      const init = async () => {
-        initializingEditorRef.current = true;
-        const { default: Q } = await import("quill");
-        const { default: QCursors } = await import("quill-cursors");
-        Q.register("modules/cursors", QCursors);
-        registerFormats(Q);
-
-        const toolbarOptions = [
-          [{ font: [] }],
-          [{ header: [1, 2, 3, 4, 5, 6, false] }],
-          ["bold", "italic", "underline", "strike"],
-          [{ color: [] }, { background: [] }],
-          [
-            { align: "" },
-            { align: "center" },
-            { align: "right" },
-            { align: "justify" },
-          ],
-          [{ list: "ordered" }, { list: "bullet" }],
-          [{ indent: "-1" }, { indent: "+1" }],
-          ["blockquote", "code-block"],
-          ["link", "image"],
-          ["clean"],
-        ];
-
-        quillRef.current = new Q(editorRef.current!, {
-          theme: "snow",
-          readOnly: isReviewing && note?.accessRole !== "OWNER",
-          modules: { toolbar: toolbarOptions, cursors: true },
-          placeholder: "Start typing...",
-        });
-
-        if (docStateRef.current?.document) {
-          quillRef.current.setContents(docStateRef.current.document, "api");
-        }
-
-        quillRef.current.on("text-change", (delta, _old, source) => {
-          if (source !== "user") return;
-
-          const range = quillRef.current?.getSelection();
-          if (range) sendCursorChange(range.index ?? -1);
-
-          if (collaborationModeRef.current === "SOLO") {
-            queueSoloOperation(delta);
-            return;
-          }
-
-          docStateRef.current?.queueOperation(
-            delta,
-            async (op: TextOperation) => {
-              await sendOrRetry(op);
-            },
-          );
-        });
-
-        quillRef.current.on("selection-change", async (range, _old, source) => {
-          if (source !== "user" || !range) return;
-          sendCursorChange(range.index ?? -1);
-        });
-      };
-
-      init().finally(() => {
-        initializingEditorRef.current = false;
-      });
-    }
-  }, [isLoading, isReviewing, note?.accessRole]);
-  
   useEffect(() => {
     if (!noteId || !user) return;
 
@@ -274,6 +198,85 @@ function EditContent() {
   }, [noteId, user]);
 
   useEffect(() => {
+    const shouldShowEditor = !isReviewing || note?.accessRole === "OWNER";
+
+    if (
+      !isLoading &&
+      editorRef.current &&
+      !quillRef.current &&
+      !initializingEditorRef.current &&
+      shouldShowEditor
+    ) {
+      const init = async () => {
+        initializingEditorRef.current = true;
+        const { default: Q } = await import("quill");
+        const { default: QCursors } = await import("quill-cursors");
+        Q.register("modules/cursors", QCursors);
+        registerFormats(Q);
+
+        const toolbarOptions = [
+          [{ font: [] }],
+          [{ header: [1, 2, 3, 4, 5, 6, false] }],
+          ["bold", "italic", "underline", "strike"],
+          [{ color: [] }, { background: [] }],
+          [
+            { align: "" },
+            { align: "center" },
+            { align: "right" },
+            { align: "justify" },
+          ],
+          [{ list: "ordered" }, { list: "bullet" }],
+          [{ indent: "-1" }, { indent: "+1" }],
+          ["blockquote", "code-block"],
+          ["link", "image"],
+          ["clean"],
+        ];
+
+        quillRef.current = new Q(editorRef.current!, {
+          theme: "snow",
+          readOnly: isReviewing && note?.accessRole !== "OWNER",
+          modules: { toolbar: toolbarOptions, cursors: true },
+          placeholder: "Start typing...",
+        });
+
+        if (docStateRef.current?.document) {
+          quillRef.current.setContents(docStateRef.current.document, "api");
+        }
+
+        quillRef.current.on("text-change", (delta, _old, source) => {
+          if (source !== "user") return;
+
+          const range = quillRef.current?.getSelection();
+          if (range) sendCursorChange(range.index ?? -1, range.length ?? 0);
+
+          if (collaborationModeRef.current === "SOLO") {
+            queueSoloOperation(delta);
+            return;
+          }
+
+          docStateRef.current?.queueOperation(
+            delta,
+            async (op: TextOperation) => {
+              transformRemoteCursorAgainstDelta(delta, user!.email);
+              renderRemoteCursor();
+              await sendOrRetry(op);
+            },
+          );
+        });
+
+        quillRef.current.on("selection-change", async (range, _old, source) => {
+          if (source !== "user" || !range) return;
+          sendCursorChange(range.index ?? -1, range.length ?? 0);
+        });
+      };
+
+      init().finally(() => {
+        initializingEditorRef.current = false;
+      });
+    }
+  }, [isLoading, isReviewing, note?.accessRole]);
+
+  useEffect(() => {
     if (!noteId || !user) return;
 
     const intervalId = window.setInterval(() => {
@@ -310,6 +313,7 @@ function EditContent() {
 
     if (type === MessageType.COLLABORATOR_JOIN) {
       setCollaborators(payload.collaborators);
+      console.log("Your email is not allowed")
 
       const currentEmail = userRef.current?.email;
       if (!currentEmail) return;
@@ -683,7 +687,7 @@ function EditContent() {
     if (isToolbar) toolbar.style.display = canEdit ? "block" : "none";
   }, [isReviewing, isLoading, note?.accessRole]);
 
-  function sendCursorChange(position: number) {
+  function sendCursorChange(position: number, length = 0) {
     if (isReviewingRef.current) return;
     if (collaborationModeRef.current !== "COLLABORATIVE") return;
 
@@ -696,25 +700,111 @@ function EditContent() {
     client.send(
       `/app/note/${noteId}/cursor`,
       {},
-      JSON.stringify({ position }),
+      JSON.stringify({ position, length }),
     );
   }
 
   function handleCursorChange(payload: CursorPayload) {
     if (isReviewingRef.current || payload.actorEmail === userRef.current?.email) return;
-    const cursor = quillRef.current!.getModule("cursors") as CursorModule;
+
+    const cursor = getCursorModule();
+    if (!cursor) return;
+
     cursor.createCursor(
       payload.actorEmail,
       payload.actorEmail,
       collaboratorsRef.current[payload.actorEmail],
     );
+
     if (payload.position === -1) {
+      remoteCursorRangesRef.current.delete(payload.actorEmail);
       cursor.removeCursor(payload.actorEmail);
     } else {
-      cursor.moveCursor(payload.actorEmail, {
+      const range = {
         index: payload.position,
-        length: 0,
-      });
+        length: payload.length ?? 0,
+      };
+
+      remoteCursorRangesRef.current.set(payload.actorEmail, range);
+      cursor.moveCursor(payload.actorEmail, range);
+    }
+  }
+
+  function transformRemoteCursorAgainstDelta(delta: Delta, operationActorEmail: string) {
+    for (const [email, range] of remoteCursorRangesRef.current.entries()) {
+      if (email === operationActorEmail) continue;
+
+      const next = transformRangeAgainstDelta(range, delta);
+
+      if (next.index < 0) {
+        remoteCursorRangesRef.current.delete(email);
+        continue;
+      }
+
+      remoteCursorRangesRef.current.set(email, next);
+    }
+  }
+
+  function transformRangeAgainstDelta(range: { index: number; length: number }, delta: Delta): { index: number; length: number } {
+    const start = transformPositionAgainstDelta(range.index, delta, false);
+    const end = transformPositionAgainstDelta(range.index + range.length, delta, true);
+
+    return {
+      index: Math.max(0, start),
+      length: Math.max(0, end - start),
+    }
+  }
+
+  function transformPositionAgainstDelta(position: number, delta: Delta, isRangeEnd: boolean): number {
+    let oldCursor = 0;
+    let newPosition = position;
+
+    for (const op of delta.ops ?? []) {
+      if (op.retain) {
+        const retainLength = typeof op.retain === "number" ? op.retain : 1;
+        oldCursor += retainLength;
+        continue;
+      }
+
+      if (op.insert) {
+        const insertLength = typeof op.insert === "string" ? op.insert.length : 1;
+
+        if (oldCursor < position) {
+          newPosition += insertLength;
+        }
+
+        continue;
+      }
+
+      if (op.delete) {
+        const deleteStart = oldCursor;
+        const deleteEnd = oldCursor + op.delete;
+
+        if (position > deleteEnd) {
+          newPosition -= op.delete;
+        } else if (position > deleteStart) {
+          newPosition -= position - deleteStart;
+        }
+        
+        oldCursor += op.delete;
+      }
+    }
+    // newPosition seems to be adjusted only by the length of the insert/delte, not retain, why?
+    // why have both oldCursor and new position, cant one variable track the new position?
+
+    return Math.max(0, newPosition);
+  }
+
+  function renderRemoteCursor() {
+    const quill = quillRef.current;
+    if (!quill) return;
+
+    const cursor = getCursorModule();
+    if (!cursor) return;
+
+    for (const [email, range] of remoteCursorRangesRef.current.entries()) {
+      cursor.createCursor(email, email, collaboratorsRef.current[email]);
+      cursor.moveCursor(email, range);
     }
   }
 
@@ -883,6 +973,9 @@ function EditContent() {
 
     quillRef.current?.updateContents(d, "api");
 
+    transformRemoteCursorAgainstDelta(d, actorEmail);
+    renderRemoteCursor();
+
     markOperationProcessed(opId);
   }
   
@@ -942,7 +1035,7 @@ function EditContent() {
     const quill = quillRef.current;
     if (!quill) return;
 
-    const cursor = quill.getModule("cursors") as CursorModule | undefined;
+    const cursor = getCursorModule();
     if (!cursor) return;
 
     Object.keys(collaboratorsRef.current).forEach((email) => {
@@ -964,7 +1057,7 @@ function EditContent() {
     const quill = quillRef.current;
     if (!quill) return;
 
-    sendCursorChange(-1);
+    sendCursorChange(-1, 0);
     clearCollaboratorCursors();
 
     await apiFetch(`notes/${noteId}/review`, { method: "GET" });
@@ -1223,6 +1316,17 @@ function EditContent() {
 
   function canCurrentUserEditDuringReview(): boolean {
     return !isReviewingRef.current || noteRef.current?.accessRole === "OWNER";
+  }
+
+  function getCursorModule(): CursorModule | null {
+    const quill = quillRef.current;
+    if (!quill) return null;
+
+    try {
+      return quill.getModule("cursors") as CursorModule;
+    } catch {
+      return null;
+    }
   }
 
   if (loadingUser) {

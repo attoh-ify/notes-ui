@@ -54,6 +54,7 @@ export interface ReviewInProgressResponse {
 export interface CursorPayload {
   actorEmail: string;
   position: number;
+  length: number;
 }
 
 export interface SoloSyncAckPayload {
