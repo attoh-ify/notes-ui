@@ -12,23 +12,22 @@
   --text-muted: #64748b;
   --border: #e2e8f0;
   --radius: 10px;
-  --shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1),
-    0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
 
-  --suggestion-insert-bg: #dbeafe;
-  --suggestion-insert-hover: #bfdbfe;
-  --suggestion-insert-active: #60a5fa;
+  --audit-insert-bg: #dbeafe;
+  --audit-insert-hover: #bfdbfe;
+  --audit-insert-active: #60a5fa;
 
-  --suggestion-delete-bg: #fee2e2;
-  --suggestion-delete-hover: #fecaca;
-  --suggestion-delete-active: #f87171;
-  --suggestion-delete-text: #b91c1c;
-  --suggestion-delete-line: #dc2626;
+  --audit-delete-bg: #fee2e2;
+  --audit-delete-hover: #fecaca;
+  --audit-delete-active: #f87171;
+  --audit-delete-text: #b91c1c;
+  --audit-delete-line: #dc2626;
 
-  --suggestion-format-bg: #facc15;
-  --suggestion-block-bg: #ffedd5;
-  --suggestion-block-hover: #fed7aa;
-  --suggestion-block-bar: #f97316;
+  --audit-format-bg: #facc15;
+  --change-block-bg: #ffedd5;
+  --change-block-hover: #fed7aa;
+  --change-block-bar: #f97316;
 }
 
 @theme inline {
@@ -58,10 +57,21 @@ body {
 body {
   min-height: 100vh;
   background:
-    radial-gradient(circle at top left, rgba(16, 185, 129, 0.09), transparent 32rem),
+    radial-gradient(
+      circle at top left,
+      rgba(16, 185, 129, 0.09),
+      transparent 32rem
+    ),
     var(--bg-main);
   color: var(--text-main);
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family:
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
   margin: 0;
 }
 
@@ -269,7 +279,9 @@ textarea {
 
 .editor-surface-content {
   min-height: 520px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    monospace;
   font-size: 1rem;
   line-height: 1.7;
   padding: clamp(1rem, 3vw, 2rem);
@@ -334,7 +346,7 @@ textarea {
   }
 
   .editor-surface,
-  .suggestion-sidebar {
+  .audit-sidebar {
     width: 100% !important;
     max-height: none !important;
   }
@@ -477,195 +489,127 @@ textarea {
   line-height: inherit;
 }
 
-/* Insert suggestion */
-.suggestion-insert {
-  --suggestion-line: #2563eb;
+/* Insert change */
+.audit-insert {
+  --change-line: #2563eb;
   background: rgba(59, 130, 246, 0.09);
   box-shadow: inset 0 -0.16em 0 rgba(37, 99, 235, 0.45);
   border-radius: 0.2em;
   padding: 0 1px;
   cursor: pointer;
-  transition: background-color 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    background-color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
-.suggestion-insert.hover {
+.audit-insert.hover {
   background: rgba(59, 130, 246, 0.14);
   box-shadow: inset 0 -0.18em 0 rgba(37, 99, 235, 0.62);
 }
 
-.suggestion-insert.active {
+.audit-insert.active {
   background: rgba(59, 130, 246, 0.2);
   box-shadow: inset 0 -0.24em 0 rgba(37, 99, 235, 0.76);
 }
 
-/* Newline suggestion */
-.suggestion-newline {
-  cursor: pointer;
-  border-radius: 0.25em;
-  background: rgba(14, 165, 233, 0.08);
-  box-shadow: inset 0 -0.16em 0 rgba(14, 165, 233, 0.42);
-  transition:
-    background-color 0.15s ease,
-    box-shadow 0.15s ease;
-}
-
-.suggestion-newline.hover {
-  background: rgba(14, 165, 233, 0.14);
-  box-shadow: inset 0 -0.18em 0 rgba(14, 165, 233, 0.6);
-}
-
-.suggestion-newline.active {
-  background: rgba(14, 165, 233, 0.2);
-  box-shadow: inset 0 -0.24em 0 rgba(14, 165, 233, 0.76);
-}
-
-/* Only standalone newlines need visible review affordance */
-.suggestion-newline-standalone::after {
-  content: "↵";
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  margin: 0 0.25rem;
-  padding: 0.05rem 0.35rem;
-  border-radius: 999px;
-  background: rgba(14, 165, 233, 0.16);
-  color: #0369a1;
-  font-size: 0.72rem;
-  font-weight: 800;
-  line-height: 1.2;
-  vertical-align: middle;
-}
-
-.suggestion-newline {
-  cursor: pointer;
-  border-radius: 0.25em;
-  background: rgba(14, 165, 233, 0.08);
-  box-shadow: inset 0 -0.16em 0 rgba(14, 165, 233, 0.42);
-  transition:
-    background-color 0.15s ease,
-    box-shadow 0.15s ease;
-}
-
-.suggestion-newline-marker-inline {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  margin: 0 0.2rem;
-  padding: 0.05rem 0.35rem;
-  border: 1px solid rgba(14, 165, 233, 0.45);
-  border-radius: 999px;
-  background: rgba(14, 165, 233, 0.16);
-  color: #0369a1;
-  font-size: 0.72rem;
-  font-weight: 900;
-  line-height: 1.2;
-  box-shadow: none;
-}
-
-.suggestion-newline.hover,
-.suggestion-newline-marker-inline.hover {
-  background: rgba(14, 165, 233, 0.14);
-  box-shadow: inset 0 -0.18em 0 rgba(14, 165, 233, 0.6);
-}
-
-.suggestion-newline.active,
-.suggestion-newline-marker-inline.active {
-  background: rgba(14, 165, 233, 0.2);
-  box-shadow: inset 0 -0.24em 0 rgba(14, 165, 233, 0.76);
-}
-
-/* Delete suggestion */
-.suggestion-delete {
+/* Delete change */
+.audit-delete {
   background: rgba(239, 68, 68, 0.08);
   box-shadow: inset 0 -0.16em 0 rgba(220, 38, 38, 0.42);
   border-radius: 0.2em;
   padding: 0 1px;
   cursor: pointer;
-  color: var(--suggestion-delete-text);
+  color: var(--audit-delete-text);
   text-decoration-line: line-through;
   text-decoration-color: rgba(185, 28, 28, 0.75);
   text-decoration-thickness: 1.5px;
-  transition: background-color 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    background-color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
-.suggestion-delete.hover {
+.audit-delete.hover {
   background: rgba(239, 68, 68, 0.13);
   box-shadow: inset 0 -0.18em 0 rgba(220, 38, 38, 0.58);
 }
 
-.suggestion-delete.active {
+.audit-delete.active {
   background: rgba(239, 68, 68, 0.18);
   box-shadow: inset 0 -0.24em 0 rgba(220, 38, 38, 0.72);
 }
 
 /* Single-line delete marker */
-.suggestion-delete-singleline {
+.audit-delete-singleline {
   display: inline-block;
   padding: 0 4px;
   margin: 0 1px;
   border-radius: 0.35em;
   background: rgba(239, 68, 68, 0.08);
   box-shadow: inset 0 -0.16em 0 rgba(220, 38, 38, 0.42);
-  color: var(--suggestion-delete-text);
+  color: var(--audit-delete-text);
   font-weight: 700;
   cursor: pointer;
-  transition: background-color 0.15s ease, box-shadow 0.15s ease;
-  text-decoration: line-through;
-  text-decoration-color: rgba(185, 28, 28, 0.75);
-  text-decoration-thickness: 1.5px;
+  transition:
+    background-color 0.15s ease,
+    box-shadow 0.15s ease;
+  text-decoration: none;
 }
 
-.suggestion-delete-singleline.hover {
+.audit-delete-singleline.hover {
   background: rgba(239, 68, 68, 0.13);
   box-shadow: inset 0 -0.18em 0 rgba(220, 38, 38, 0.58);
 }
 
-.suggestion-delete-singleline.active {
+.audit-delete-singleline.active {
   background: rgba(239, 68, 68, 0.18);
   box-shadow: inset 0 -0.24em 0 rgba(220, 38, 38, 0.72);
 }
 
 /* Multi-line delete */
-.suggestion-delete-multiline {
+.audit-delete-multiline {
   background: rgba(239, 68, 68, 0.08);
   box-shadow: inset 0 -0.16em 0 rgba(220, 38, 38, 0.42);
   border-radius: 0.2em;
   padding: 0 1px;
   cursor: pointer;
-  color: var(--suggestion-delete-text);
+  color: var(--audit-delete-text);
   text-decoration-line: line-through;
   text-decoration-color: rgba(185, 28, 28, 0.75);
   text-decoration-thickness: 1.5px;
-  transition: background-color 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    background-color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
-.suggestion-delete-multiline.hover {
+.audit-delete-multiline.hover {
   background: rgba(239, 68, 68, 0.13);
   box-shadow: inset 0 -0.18em 0 rgba(220, 38, 38, 0.58);
 }
 
-.suggestion-delete-multiline.active {
+.audit-delete-multiline.active {
   background: rgba(239, 68, 68, 0.18);
   box-shadow: inset 0 -0.24em 0 rgba(220, 38, 38, 0.72);
 }
 
 /* Inline format marker.
    Invisible by default. Visible only when activated from sidebar. */
-.suggestion-format {
+.audit-format {
   background-color: transparent !important;
   border-radius: 0;
   padding: 0;
   cursor: default;
-  transition: background-color 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    background-color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
-.suggestion-format.hover {
+.audit-format.hover {
   background-color: transparent !important;
 }
 
 /* Shared active inline format overlay for review + audit.
    Uses inset shadow instead of text-decoration so real underline formatting stays visible. */
-.suggestion-format.active,
+.audit-format.active,
 .format-inline-active {
   background: rgba(249, 115, 22, 0.12) !important;
   border-radius: 0.2em !important;
@@ -674,9 +618,9 @@ textarea {
   box-shadow: inset 0 -0.18em 0 rgba(249, 115, 22, 0.58) !important;
 }
 
-.suggestion-format.active.hover,
+.audit-format.active.hover,
 .format-inline-active.hover,
-.suggestion-format.active:hover,
+.audit-format.active:hover,
 .format-inline-active:hover {
   background: rgba(249, 115, 22, 0.18) !important;
   box-shadow: inset 0 -0.24em 0 rgba(249, 115, 22, 0.72) !important;
@@ -701,54 +645,54 @@ textarea {
 
 /* Shared active block format overlay for review + audit */
 .ql-editor .format-block-active {
-  background-color: var(--suggestion-block-bg) !important;
-  box-shadow: inset 4px 0 0 var(--suggestion-block-bar);
+  background-color: var(--change-block-bg) !important;
+  box-shadow: inset 4px 0 0 var(--change-block-bar);
   border-radius: 0 !important;
   transition: background-color 0.15s ease;
 }
 
 .ql-editor .format-block-active:hover {
-  background-color: var(--suggestion-block-hover) !important;
+  background-color: var(--change-block-hover) !important;
 }
 
-/* Quill block attributor styling, if you still apply suggestion-block-format through a Delta */
-.ql-editor [data-suggestion-block-format] {
-  background-color: var(--suggestion-block-bg) !important;
-  box-shadow: inset 4px 0 0 var(--suggestion-block-bar);
+/* Quill block attributor styling, if you still apply audit-block-format through a Delta */
+.ql-editor [data-audit-block-format] {
+  background-color: var(--change-block-bg) !important;
+  box-shadow: inset 4px 0 0 var(--change-block-bar);
   border-radius: 0 !important;
   cursor: pointer;
   transition: background-color 0.15s ease;
 }
 
-.ql-editor [data-suggestion-block-format]:hover {
-  background-color: var(--suggestion-block-hover) !important;
+.ql-editor [data-audit-block-format]:hover {
+  background-color: var(--change-block-hover) !important;
 }
 
-/* Image suggestions */
-.ql-editor .suggestion-insert img,
-.ql-editor img.suggestion-insert,
-.ql-editor [data-suggestion-type="insert"] img,
-.ql-editor img[data-suggestion-type="insert"] {
+/* Image changes */
+.ql-editor .audit-insert img,
+.ql-editor img.audit-insert,
+.ql-editor [data-change-type="insert"] img,
+.ql-editor img[data-change-type="insert"] {
   outline: 3px solid #60a5fa;
   outline-offset: 4px;
   border-radius: 4px;
   cursor: pointer;
 }
 
-.ql-editor .suggestion-insert.active img,
-.ql-editor img.suggestion-insert.active,
-.ql-editor [data-suggestion-type="insert"].active img,
-.ql-editor img[data-suggestion-type="insert"].active {
+.ql-editor .audit-insert.active img,
+.ql-editor img.audit-insert.active,
+.ql-editor [data-change-type="insert"].active img,
+.ql-editor img[data-change-type="insert"].active {
   outline: 4px solid #2563eb;
   outline-offset: 5px;
 }
 
-.ql-editor .suggestion-delete img,
-.ql-editor .suggestion-delete-multiline img,
-.ql-editor img.suggestion-delete,
-.ql-editor img.suggestion-delete-multiline,
-.ql-editor [data-suggestion-type="delete"] img,
-.ql-editor img[data-suggestion-type="delete"] {
+.ql-editor .audit-delete img,
+.ql-editor .audit-delete-multiline img,
+.ql-editor img.audit-delete,
+.ql-editor img.audit-delete-multiline,
+.ql-editor [data-change-type="delete"] img,
+.ql-editor img[data-change-type="delete"] {
   outline: 3px solid #dc2626;
   outline-offset: 4px;
   border-radius: 4px;
@@ -756,33 +700,33 @@ textarea {
   cursor: pointer;
 }
 
-.ql-editor .suggestion-delete.active img,
-.ql-editor .suggestion-delete-multiline.active img,
-.ql-editor img.suggestion-delete.active,
-.ql-editor img.suggestion-delete-multiline.active,
-.ql-editor [data-suggestion-type="delete"].active img,
-.ql-editor img[data-suggestion-type="delete"].active {
+.ql-editor .audit-delete.active img,
+.ql-editor .audit-delete-multiline.active img,
+.ql-editor img.audit-delete.active,
+.ql-editor img.audit-delete-multiline.active,
+.ql-editor [data-change-type="delete"].active img,
+.ql-editor img[data-change-type="delete"].active {
   outline: 4px solid #b91c1c;
   outline-offset: 5px;
   opacity: 0.75;
 }
 
-.ql-editor .suggestion-format.active img,
+.ql-editor .audit-format.active img,
 .ql-editor .format-inline-active img,
-.ql-editor img.suggestion-format.active,
+.ql-editor img.audit-format.active,
 .ql-editor img.format-inline-active,
-.ql-editor [data-suggestion-type="format"].active img,
-.ql-editor img[data-suggestion-type="format"].active {
-  outline: 3px solid var(--suggestion-block-bar);
+.ql-editor [data-change-type="format"].active img,
+.ql-editor img[data-change-type="format"].active {
+  outline: 3px solid var(--change-block-bar);
   outline-offset: 4px;
   border-radius: 4px;
   cursor: pointer;
 }
 
-.ql-editor .suggestion-insert:has(img),
-.ql-editor .suggestion-delete:has(img),
-.ql-editor .suggestion-delete-multiline:has(img),
-.ql-editor .suggestion-format:has(img),
+.ql-editor .audit-insert:has(img),
+.ql-editor .audit-delete:has(img),
+.ql-editor .audit-delete-multiline:has(img),
+.ql-editor .audit-format:has(img),
 .ql-editor .format-inline-active:has(img) {
   background: transparent !important;
   padding: 0 !important;
@@ -791,7 +735,7 @@ textarea {
 }
 
 /* Shared sidebar: review + audit */
-.suggestion-sidebar {
+.audit-sidebar {
   width: 320px;
   flex-shrink: 0;
   background-color: white;
@@ -806,21 +750,21 @@ textarea {
   box-shadow: 0 12px 32px rgba(15, 23, 42, 0.07);
 }
 
-.suggestion-sidebar-header {
+.audit-sidebar-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 0.75rem;
 }
 
-.suggestion-sidebar-title {
+.audit-sidebar-title {
   margin: 0;
   font-size: 0.95rem;
   font-weight: 700;
   color: var(--text-main);
 }
 
-.suggestion-sidebar-eyebrow {
+.audit-sidebar-eyebrow {
   font-size: 0.7rem;
   color: #d97706;
   font-weight: 800;
@@ -828,14 +772,14 @@ textarea {
   letter-spacing: 0.08em;
 }
 
-.suggestion-sidebar-note {
+.audit-sidebar-note {
   margin: 0;
   font-size: 0.8rem;
   color: var(--text-muted);
   line-height: 1.4;
 }
 
-.suggestion-sidebar-warning {
+.audit-sidebar-warning {
   border: 1px solid #fcd34d;
   background: #fef3c7;
   color: #92400e;
@@ -845,7 +789,7 @@ textarea {
   line-height: 1.45;
 }
 
-.suggestion-sidebar-section-title {
+.audit-sidebar-section-title {
   margin: 0 0 0.5rem 0;
   font-size: 0.8rem;
   font-weight: 700;
@@ -854,7 +798,7 @@ textarea {
   letter-spacing: 0.05em;
 }
 
-.suggestion-sidebar-empty {
+.audit-sidebar-empty {
   margin: 0;
   font-size: 0.85rem;
   color: var(--text-muted);
@@ -862,13 +806,13 @@ textarea {
   line-height: 1.5;
 }
 
-.suggestion-sidebar-footer {
+.audit-sidebar-footer {
   margin-top: auto;
   padding-top: 0.5rem;
   border-top: 1px solid var(--border);
 }
 
-.suggestion-sidebar-close {
+.audit-sidebar-close {
   width: 32px;
   height: 32px;
   border-radius: 10px;
@@ -878,14 +822,14 @@ textarea {
   font-size: 1rem;
 }
 
-/* Shared format suggestion cards */
-.format-suggestion-list {
+/* Shared format change cards */
+.format-change-list {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
 }
 
-.format-suggestion-card {
+.format-change-card {
   border: 1px solid var(--border);
   border-radius: 14px;
   padding: 0.75rem 0.8rem;
@@ -893,18 +837,18 @@ textarea {
   transition: all 0.15s ease;
 }
 
-.format-suggestion-card.active {
-  border-color: var(--suggestion-block-bar);
+.format-change-card.active {
+  border-color: var(--change-block-bar);
   background-color: #fff7ed;
   box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.12);
 }
 
-.format-suggestion-card.disabled {
+.format-change-card.disabled {
   background-color: #f8fafc;
   opacity: 0.65;
 }
 
-.format-suggestion-card-button {
+.format-change-card-button {
   width: 100%;
   background: none;
   border: none;
@@ -913,11 +857,11 @@ textarea {
   text-align: left;
 }
 
-.format-suggestion-card.disabled .format-suggestion-card-button {
+.format-change-card.disabled .format-change-card-button {
   cursor: not-allowed;
 }
 
-.format-suggestion-card-header {
+.format-change-card-header {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
@@ -925,39 +869,39 @@ textarea {
   gap: 0.35rem;
 }
 
-.format-suggestion-card-title {
+.format-change-card-title {
   font-size: 0.8rem;
   font-weight: 700;
   color: var(--text-main);
 }
 
-.format-suggestion-card.active .format-suggestion-card-title {
+.format-change-card.active .format-change-card-title {
   color: #9a3412;
 }
 
-.format-suggestion-kind {
+.format-change-kind {
   font-size: 0.68rem;
   border-radius: 999px;
   padding: 1px 6px;
   flex-shrink: 0;
 }
 
-.format-suggestion-kind.inline {
+.format-change-kind.inline {
   color: #7c3aed;
   background: #ede9fe;
 }
 
-.format-suggestion-kind.block {
+.format-change-kind.block {
   color: #ea580c;
   background: #ffedd5;
 }
 
-.format-suggestion-card-meta {
+.format-change-card-meta {
   font-size: 0.75rem;
   color: var(--text-muted);
 }
 
-.format-suggestion-card-preview {
+.format-change-card-preview {
   font-size: 0.73rem;
   color: #555;
   margin-top: 0.25rem;
@@ -968,13 +912,13 @@ textarea {
   max-width: 220px;
 }
 
-.format-suggestion-time {
+.format-change-time {
   font-size: 0.7rem;
   color: var(--text-muted);
   margin-top: 0.25rem;
 }
 
-.format-suggestion-disabled-message {
+.format-change-disabled-message {
   margin-top: 0.35rem;
   font-size: 0.7rem;
   color: #92400e;
@@ -1192,7 +1136,7 @@ textarea:focus {
     border-radius: 18px;
   }
 
-  .suggestion-sidebar {
+  .audit-sidebar {
     width: 100%;
     max-height: 55vh;
   }
@@ -1251,7 +1195,7 @@ textarea:focus {
 }
 
 @media (max-width: 900px) {
-  .editor-workspace .suggestion-sidebar {
+  .editor-workspace .audit-sidebar {
     width: 100% !important;
     max-height: none !important;
   }

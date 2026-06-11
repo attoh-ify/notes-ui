@@ -3,17 +3,13 @@ import type { Reference } from "@/src/types";
 
 let formatsRegistered = false;
 
-type SuggestionPayload = {
+type ChangePayload = {
   groupId: string;
   actorEmail: string;
   createdAt: string;
   references?: Reference[];
   baseAttributes?: Record<string, any>;
-  suggestionAttributes?: Record<string, any>;
-  // suggestion-newline only
-  dependsOnReviewRunIds?: string[];
-  type?: "DEPENDENT" | "STANDALONE";
-  marker?: boolean;
+  changeAttributes?: Record<string, any>;
 };
 
 type FormatPayload = {
@@ -26,21 +22,18 @@ type FormatPayload = {
 
 type ReviewBasePayload = {
   baseAttributes?: Record<string, any>;
-  suggestionAttributes?: Record<string, any>;
+  changeAttributes?: Record<string, any>;
 };
 
-function setReviewBaseAttrs(
-  node: HTMLElement,
-  data: ReviewBasePayload,
-) {
+function setReviewBaseAttrs(node: HTMLElement, data: ReviewBasePayload) {
   node.setAttribute(
     "data-base-attributes",
     JSON.stringify(data.baseAttributes ?? {}),
   );
 
   node.setAttribute(
-    "data-suggestion-attributes",
-    JSON.stringify(data.suggestionAttributes ?? {}),
+    "data-change-attributes",
+    JSON.stringify(data.changeAttributes ?? {}),
   );
 }
 
@@ -51,9 +44,9 @@ function readReviewBaseAttrs(node: HTMLElement): ReviewBasePayload {
       "data-base-attributes",
       {},
     ),
-    suggestionAttributes: getJsonObject<Record<string, any>>(
+    changeAttributes: getJsonObject<Record<string, any>>(
       node,
-      "data-suggestion-attributes",
+      "data-change-attributes",
       {},
     ),
   };
@@ -83,9 +76,7 @@ function cloneReference(ref: Reference): Reference {
   };
 }
 
-function dedupeSuggestionReferences(
-  references: Reference[] = [],
-): Reference[] {
+function dedupeChangeReferences(references: Reference[] = []): Reference[] {
   const seen = new Set<string>();
   const out: Reference[] = [];
 
@@ -107,19 +98,19 @@ function dedupeSuggestionReferences(
   return out;
 }
 
-function setCommonSuggestionAttrs(
+function setCommonChangeAttrs(
   node: HTMLElement,
-  data: SuggestionPayload,
-  type: "insert" | "newline" | "delete",
+  data: ChangePayload,
+  type: "insert" | "delete",
 ) {
   node.setAttribute("data-group-id", data.groupId ?? "");
-  node.setAttribute("data-suggestion-type", type);
+  node.setAttribute("data-change-type", type);
   node.setAttribute("data-actor-email", data.actorEmail ?? "");
   node.setAttribute("data-created-at", data.createdAt ?? "");
 
   node.setAttribute(
     "data-references",
-    JSON.stringify(dedupeSuggestionReferences(data.references ?? [])),
+    JSON.stringify(dedupeChangeReferences(data.references ?? [])),
   );
 
   node.setAttribute(
@@ -128,22 +119,12 @@ function setCommonSuggestionAttrs(
   );
 
   node.setAttribute(
-    "data-suggestion-attributes",
-    JSON.stringify(data.suggestionAttributes ?? {}),
+    "data-change-attributes",
+    JSON.stringify(data.changeAttributes ?? {}),
   );
-
-  if (type === "newline") {
-    node.setAttribute(
-      "data-depends-on-review-run-ids",
-      JSON.stringify(data.dependsOnReviewRunIds ?? []),
-    );
-
-    node.setAttribute("data-newline-type", data.type ?? "STANDALONE");
-    node.setAttribute("data-newline-marker", data.marker === true ? "true" : "false");
-  }
 }
 
-function readCommonSuggestionAttrs(node: HTMLElement) {
+function readCommonChangeAttrs(node: HTMLElement) {
   return {
     groupId: node.getAttribute("data-group-id") ?? "",
     actorEmail: node.getAttribute("data-actor-email") ?? "",
@@ -154,134 +135,100 @@ function readCommonSuggestionAttrs(node: HTMLElement) {
       "data-base-attributes",
       {},
     ),
-    suggestionAttributes: getJsonObject<Record<string, any>>(
+    changeAttributes: getJsonObject<Record<string, any>>(
       node,
-      "data-suggestion-attributes",
+      "data-change-attributes",
       {},
     ),
-    dependsOnReviewRunIds: getJsonObject<string[]>(
-      node,
-      "data-depends-on-review-run-ids",
-      [],
-    ),
-    type:
-      (node.getAttribute("data-newline-type") as
-        | "DEPENDENT"
-        | "STANDALONE"
-        | null) ?? "STANDALONE",
-    marker: node.getAttribute("data-newline-marker") === "true",
   };
 }
 
 export function registerFormats(QuillModule: typeof Quill) {
   if (formatsRegistered) return;
   formatsRegistered = true;
-  
+
   const Inline = QuillModule.import("blots/inline") as any;
   const Parchment = QuillModule.import("parchment") as any;
-  
-  class SuggestionInsert extends Inline {
-    static blotName = "suggestion-insert";
+
+  class AuditInsert extends Inline {
+    static blotName = "audit-insert";
     static tagName = "span";
 
-    static create(data: SuggestionPayload) {
+    static create(data: ChangePayload) {
       const node = super.create() as HTMLElement;
-      setCommonSuggestionAttrs(node, data, "insert");
-      node.classList.add("suggestion-insert");
+      setCommonChangeAttrs(node, data, "insert");
+      node.classList.add("audit-insert");
       return node;
     }
 
     static formats(node: HTMLElement) {
-      return readCommonSuggestionAttrs(node);
+      return readCommonChangeAttrs(node);
     }
   }
 
-  class SuggestionNewline extends Inline {
-    static blotName = "suggestion-newline";
+  class AuditDelete extends Inline {
+    static blotName = "audit-delete";
     static tagName = "span";
 
-    static create(data: SuggestionPayload) {
+    static create(data: ChangePayload) {
       const node = super.create() as HTMLElement;
-      setCommonSuggestionAttrs(node, data, "newline");
-      node.classList.add("suggestion-newline");
-
-      if (data.marker === true) {
-        node.classList.add("suggestion-newline-marker-inline");
-      } else if ((data.type ?? "STANDALONE") === "STANDALONE") {
-        node.classList.add("suggestion-newline-standalone");
-      }
-
+      setCommonChangeAttrs(node, data, "delete");
+      node.classList.add("audit-delete");
       return node;
     }
 
     static formats(node: HTMLElement) {
-      return readCommonSuggestionAttrs(node);
+      return readCommonChangeAttrs(node);
     }
   }
 
-  class SuggestionDelete extends Inline {
-    static blotName = "suggestion-delete";
+  class AuditDeleteSingleLine extends Inline {
+    static blotName = "audit-delete-singleline";
     static tagName = "span";
 
-    static create(data: SuggestionPayload) {
+    static create(data: ChangePayload) {
       const node = super.create() as HTMLElement;
-      setCommonSuggestionAttrs(node, data, "delete");
-      node.classList.add("suggestion-delete");
+      setCommonChangeAttrs(node, data, "delete");
+      node.classList.add("audit-delete-singleline");
       return node;
     }
 
     static formats(node: HTMLElement) {
-      return readCommonSuggestionAttrs(node);
+      return readCommonChangeAttrs(node);
     }
   }
 
-  class SuggestionDeleteSingleLine extends Inline {
-    static blotName = "suggestion-delete-singleline";
+  class AuditDeleteMultiLine extends Inline {
+    static blotName = "audit-delete-multiline";
     static tagName = "span";
 
-    static create(data: SuggestionPayload) {
+    static create(data: ChangePayload) {
       const node = super.create() as HTMLElement;
-      setCommonSuggestionAttrs(node, data, "delete");
-      node.classList.add("suggestion-delete-singleline");
+      setCommonChangeAttrs(node, data, "delete");
+      node.classList.add("audit-delete-multiline");
       return node;
     }
 
     static formats(node: HTMLElement) {
-      return readCommonSuggestionAttrs(node);
+      return readCommonChangeAttrs(node);
     }
   }
 
-  class SuggestionDeleteMultiLine extends Inline {
-    static blotName = "suggestion-delete-multiline";
-    static tagName = "span";
-
-    static create(data: SuggestionPayload) {
-      const node = super.create() as HTMLElement;
-      setCommonSuggestionAttrs(node, data, "delete");
-      node.classList.add("suggestion-delete-multiline");
-      return node;
-    }
-
-    static formats(node: HTMLElement) {
-      return readCommonSuggestionAttrs(node);
-    }
-  }
-
-  class SuggestionFormat extends Inline {
-    static blotName = "suggestion-format";
+  class AuditFormat extends Inline {
+    static blotName = "audit-format";
     static tagName = "span";
 
     static create(data: FormatPayload) {
       const node = super.create() as HTMLElement;
 
       node.setAttribute("data-group-id", data.groupId ?? "");
-      node.setAttribute("data-suggestion-type", "format");
+      node.setAttribute("data-change-type", "format");
       node.setAttribute("data-actor-email", data.actorEmail ?? "");
       node.setAttribute("data-created-at", data.createdAt ?? "");
 
       node.setAttribute(
         "data-references",
-        JSON.stringify(dedupeSuggestionReferences(data.references ?? [])),
+        JSON.stringify(dedupeChangeReferences(data.references ?? [])),
       );
 
       node.setAttribute(
@@ -289,7 +236,7 @@ export function registerFormats(QuillModule: typeof Quill) {
         JSON.stringify(data.attributes ?? {}),
       );
 
-      node.classList.add("suggestion-format");
+      node.classList.add("audit-format");
 
       return node;
     }
@@ -299,11 +246,7 @@ export function registerFormats(QuillModule: typeof Quill) {
         groupId: node.getAttribute("data-group-id") ?? "",
         actorEmail: node.getAttribute("data-actor-email") ?? "",
         createdAt: node.getAttribute("data-created-at") ?? "",
-        references: getJsonObject<Reference[]>(
-          node,
-          "data-references",
-          [],
-        ),
+        references: getJsonObject<Reference[]>(node, "data-references", []),
         attributes: getJsonObject<Record<string, any>>(
           node,
           "data-format-attributes",
@@ -322,8 +265,8 @@ export function registerFormats(QuillModule: typeof Quill) {
       setReviewBaseAttrs(node, data);
 
       /*
-      * Metadata only. Do not make it clickable.
-      */
+       * Metadata only. Do not make it clickable.
+       */
       node.classList.add("review-base-metadata");
 
       return node;
@@ -335,26 +278,26 @@ export function registerFormats(QuillModule: typeof Quill) {
   }
 
   class AuditFormatActive extends Inline {
-    static blotName = "audit-format-active";
+    static blotName = "format-inline-active";
     static tagName = "span";
-    static className = "audit-format-active";
+    static className = "format-inline-activee";
 
     static create(value: boolean) {
       const node = super.create();
       if (value) {
-        node.classList.add("audit-format-active");
+        node.classList.add("format-inline-active");
       }
       return node;
     }
 
     static formats(node: HTMLElement) {
-      return node.classList.contains("audit-format-active");
+      return node.classList.contains("format-inline-active");
     }
   }
 
-  const SuggestionBlockFormat = new Parchment.Attributor(
-    "suggestion-block-format",
-    "data-suggestion-block-format",
+  const AuditBlockFormat = new Parchment.Attributor(
+    "audit-block-format",
+    "data-audit-block-format",
     {
       scope: Parchment.Scope.BLOCK,
     },
@@ -368,14 +311,13 @@ export function registerFormats(QuillModule: typeof Quill) {
     },
   );
 
-  QuillModule.register(SuggestionInsert, true);
-  QuillModule.register(SuggestionNewline, true);
-  QuillModule.register(SuggestionDelete, true);
-  QuillModule.register(SuggestionDeleteSingleLine, true);
-  QuillModule.register(SuggestionDeleteMultiLine, true);
-  QuillModule.register(SuggestionFormat, true);
+  QuillModule.register(AuditInsert, true);
+  QuillModule.register(AuditDelete, true);
+  QuillModule.register(AuditDeleteSingleLine, true);
+  QuillModule.register(AuditDeleteMultiLine, true);
+  QuillModule.register(AuditFormat, true);
   QuillModule.register(ReviewBase, true);
   QuillModule.register(AuditFormatActive, true);
-  QuillModule.register(SuggestionBlockFormat, true);
+  QuillModule.register(AuditBlockFormat, true);
   QuillModule.register(ReviewBlockBaseAttributor, true);
 }

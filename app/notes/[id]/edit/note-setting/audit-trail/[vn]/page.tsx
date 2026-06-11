@@ -2,41 +2,41 @@
 
 import { apiFetch } from "@/src/lib/api";
 import { useParams, useRouter } from "next/navigation";
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  Suspense,
-} from "react";
+import { useCallback, useEffect, useRef, useState, Suspense } from "react";
 import { useAuth } from "@/src/context/AuthContext";
 import type Quill from "quill";
 import "quill/dist/quill.snow.css";
 import Delta from "quill-delta";
 
 import {
-  BlockFormatSuggestionItem,
-  FormatSuggestionItem,
+  BlockFormatChangeItem,
+  FormatChangeItem,
   Note,
   NoteVersion,
-  ReviewFormatSuggestion,
-  ReviewProjection,
+  FormatChange,
+  AuditProjection,
   TooltipState,
-  ReviewSegment,
+  Segment,
 } from "@/src/types";
 
 import { registerFormats } from "@/src/lib/quillformats";
 import {
   deltaToSegments,
-  getSuggestionSelector,
-  isBlockFormatSuggestion,
+  getChangeSelector,
+  isBlockFormatChange,
   rangesFromReferences,
   referenceIndexToVisualIndex,
 } from "@/src/lib/attribution";
 
 import AuditSidebarModal from "@/components/AuditSidebarModal";
-import { ReviewTooltip } from "@/components/ReviewTooltip";
-import { Badge, Button, EmptyState, ErrorBanner, LoadingState } from "@/components/ui";
+import { Tooltip } from "@/components/Tooltip";
+import {
+  Badge,
+  Button,
+  EmptyState,
+  ErrorBanner,
+  LoadingState,
+} from "@/components/ui";
 
 function AuditNoteContent() {
   const { id: noteId, vn: versionNumberParam } = useParams();
@@ -48,19 +48,13 @@ function AuditNoteContent() {
   const [note, setNote] = useState<Note | null>(null);
   const [noteVersion, setNoteVersion] = useState<NoteVersion | null>(null);
 
-  const [formatSuggestions, setFormatSuggestions] = useState<
-    FormatSuggestionItem[]
-  >([]);
-
-  const [blockFormatSuggestions, setBlockFormatSuggestions] = useState<
-    BlockFormatSuggestionItem[]
-  >([]);
+  const [formatChanges, setFormatChanges] = useState<FormatChangeItem[]>([]);
+  const [blockFormatChanges, setBlockFormatChanges] = useState<BlockFormatChangeItem[]>([]);
 
   const [activeFormatId, setActiveFormatId] = useState<string | null>(null);
-  const [activeSuggestion, setActiveSuggestion] =
-    useState<TooltipState | null>(null);
+  const [activeChange, setActiveChange] = useState<TooltipState | null>(null);
 
-  const [hasInlineSuggestions, setHasInlineSuggestions] = useState(false);
+  const [hasInlineChanges, sethasInlineChanges] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [quillReady, setQuillReady] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -68,30 +62,19 @@ function AuditNoteContent() {
   const editorRef = useRef<HTMLDivElement>(null);
   const quillRef = useRef<Quill | null>(null);
 
-  const formatSuggestionsRef = useRef<FormatSuggestionItem[]>([]);
-  const blockFormatSuggestionsRef = useRef<BlockFormatSuggestionItem[]>([]);
-  const reviewSegmentsRef = useRef<ReviewSegment[]>([]);
+  const formatChangesRef = useRef<FormatChangeItem[]>([]);
+  const blockFormatChangesRef = useRef<BlockFormatChangeItem[]>([]);
+  const segmentsRef = useRef<Segment[]>([]);
   const runtimeSegCtrRef = useRef(0);
 
   const activeFormatIdRef = useRef<string | null>(null);
-  const activeSuggestionRef = useRef<TooltipState | null>(null);
+  const activeChangeRef = useRef<TooltipState | null>(null);
   const suspendedInlineGroupIdsRef = useRef<string[]>([]);
 
-  useEffect(() => {
-    formatSuggestionsRef.current = formatSuggestions;
-  }, [formatSuggestions]);
-
-  useEffect(() => {
-    blockFormatSuggestionsRef.current = blockFormatSuggestions;
-  }, [blockFormatSuggestions]);
-
-  useEffect(() => {
-    activeFormatIdRef.current = activeFormatId;
-  }, [activeFormatId]);
-
-  useEffect(() => {
-    activeSuggestionRef.current = activeSuggestion;
-  }, [activeSuggestion]);
+  useEffect(() => { formatChangesRef.current = formatChanges; }, [formatChanges]);
+  useEffect(() => { blockFormatChangesRef.current = blockFormatChanges; }, [blockFormatChanges]);
+  useEffect(() => { activeFormatIdRef.current = activeFormatId; }, [activeFormatId]);
+  useEffect(() => { activeChangeRef.current = activeChange; }, [activeChange]);
 
   useEffect(() => {
     if (Number.isNaN(versionNumber)) {
@@ -132,7 +115,6 @@ function AuditNoteContent() {
     if (!isLoading && editorRef.current && !quillRef.current) {
       const initQuill = async () => {
         const { default: QuillModule } = await import("quill");
-
         registerFormats(QuillModule);
 
         quillRef.current = new QuillModule(editorRef.current!, {
@@ -163,12 +145,12 @@ function AuditNoteContent() {
         clearAllAuditState();
 
         activeFormatIdRef.current = null;
-        activeSuggestionRef.current = null;
+        activeChangeRef.current = null;
 
-        setActiveSuggestion(null);
+        setActiveChange(null);
         setActiveFormatId(null);
 
-        const projection = await apiFetch<ReviewProjection>(
+        const projection = await apiFetch<AuditProjection>(
           `notes/${noteId}/versions/${noteVersion.id}/audit`,
           { method: "GET" },
         );
@@ -184,26 +166,25 @@ function AuditNoteContent() {
         const runtimeReviewDelta = baseDelta.compose(visualDelta);
 
         runtimeSegCtrRef.current = 0;
-        reviewSegmentsRef.current = deltaToSegments(
+        segmentsRef.current = deltaToSegments(
           runtimeReviewDelta,
           nextRuntimeSegmentId,
         );
 
-        const inlineFormatItems = projection.formatSuggestions ?? [];
-        const blockFormatItems = projection.blockFormatSuggestions ?? [];
+        const inlineFormatItems = projection.formatChanges ?? [];
+        const blockFormatItems = projection.blockFormatChanges ?? [];
 
-        formatSuggestionsRef.current = inlineFormatItems;
-        blockFormatSuggestionsRef.current = blockFormatItems;
+        formatChangesRef.current = inlineFormatItems;
+        blockFormatChangesRef.current = blockFormatItems;
 
-        setFormatSuggestions(inlineFormatItems);
-        setBlockFormatSuggestions(blockFormatItems);
+        setFormatChanges(inlineFormatItems);
+        setBlockFormatChanges(blockFormatItems);
 
         const inlineExists =
-          !!quill.root.querySelector('[data-suggestion-type="insert"]') ||
-          !!quill.root.querySelector('[data-suggestion-type="newline"]') ||
-          !!quill.root.querySelector('[data-suggestion-type="delete"]');
+          !!quill.root.querySelector('[data-change-type="insert"]') ||
+          !!quill.root.querySelector('[data-change-type="delete"]');
 
-        setHasInlineSuggestions(inlineExists);
+        sethasInlineChanges(inlineExists);
       } catch (err: any) {
         if (!cancelled) {
           setErrorMessage(err.message || "Failed to load audit trail");
@@ -225,21 +206,14 @@ function AuditNoteContent() {
     return `audit_seg_${runtimeSegCtrRef.current}`;
   }
 
-  function getAllFormatSuggestions(): ReviewFormatSuggestion[] {
-    return [
-      ...formatSuggestionsRef.current,
-      ...blockFormatSuggestionsRef.current,
-    ];
+  function getAllFormatChanges(): FormatChange[] {
+    return [...formatChangesRef.current, ...blockFormatChangesRef.current];
   }
 
-  function findFormatSuggestionByGroupId(
-    groupId: string,
-  ): ReviewFormatSuggestion | null {
+  function findFormatChangeByGroupId(groupId: string): FormatChange | null {
     return (
-      formatSuggestionsRef.current.find((fmt) => fmt.groupId === groupId) ??
-      blockFormatSuggestionsRef.current.find(
-        (fmt) => fmt.groupId === groupId,
-      ) ??
+      formatChangesRef.current.find((fmt) => fmt.groupId === groupId) ??
+      blockFormatChangesRef.current.find((fmt) => fmt.groupId === groupId) ??
       null
     );
   }
@@ -264,7 +238,7 @@ function AuditNoteContent() {
       });
 
     suspendedInlineGroupIdsRef.current = [];
-    reviewSegmentsRef.current = [];
+    segmentsRef.current = [];
     runtimeSegCtrRef.current = 0;
   }
 
@@ -285,17 +259,13 @@ function AuditNoteContent() {
     const quill = quillRef.current;
     if (!quill) return;
 
-    quill.root
-      .querySelectorAll(".format-block-active")
-      .forEach((el) => {
-        el.classList.remove("format-block-active");
-        el.removeAttribute("data-active-format-block-group-id");
-      });
+    quill.root.querySelectorAll(".format-block-active").forEach((el) => {
+      el.classList.remove("format-block-active");
+      el.removeAttribute("data-active-format-block-group-id");
+    });
   }
 
-  function getInlineGroupIdsInFormatRange(
-    item: ReviewFormatSuggestion,
-  ): string[] {
+  function getInlineGroupIdsInFormatRange(item: FormatChange): string[] {
     const quill = quillRef.current;
     if (!quill) return [];
 
@@ -315,11 +285,8 @@ function AuditNoteContent() {
 
         const host = element?.closest(
           [
-            '[data-suggestion-type="insert"][data-group-id]',
-            '[data-suggestion-type="delete"][data-group-id]',
-            '[data-suggestion-type="delete-singleline"][data-group-id]',
-            '[data-suggestion-type="delete-multiline"][data-group-id]',
-            '[data-suggestion-type="delete-newline"][data-group-id]',
+            '[data-change-type="insert"][data-group-id]',
+            '[data-change-type="delete"][data-group-id]',
           ].join(", "),
         ) as HTMLElement | null;
 
@@ -331,10 +298,7 @@ function AuditNoteContent() {
     return [...ids];
   }
 
-  function setInlineGroupsSuspended(
-    groupIds: string[],
-    suspended: boolean,
-  ) {
+  function setInlineGroupsSuspended(groupIds: string[], suspended: boolean) {
     const quill = quillRef.current;
     if (!quill) return;
 
@@ -342,11 +306,8 @@ function AuditNoteContent() {
       quill.root
         .querySelectorAll(
           [
-            `[data-group-id="${groupId}"][data-suggestion-type="insert"]`,
-            `[data-group-id="${groupId}"][data-suggestion-type="delete"]`,
-            `[data-group-id="${groupId}"][data-suggestion-type="delete-singleline"]`,
-            `[data-group-id="${groupId}"][data-suggestion-type="delete-multiline"]`,
-            `[data-group-id="${groupId}"][data-suggestion-type="delete-newline"]`,
+            `[data-group-id="${groupId}"][data-change-type="insert"]`,
+            `[data-group-id="${groupId}"][data-change-type="delete"]`,
           ].join(", "),
         )
         .forEach((el) => {
@@ -356,7 +317,7 @@ function AuditNoteContent() {
     }
   }
 
-  function suspendInlineGroupsForFormat(item: ReviewFormatSuggestion) {
+  function suspendInlineGroupsForFormat(item: FormatChange) {
     const groupIds = getInlineGroupIdsInFormatRange(item);
     suspendedInlineGroupIdsRef.current = groupIds;
     setInlineGroupsSuspended(groupIds, true);
@@ -367,7 +328,7 @@ function AuditNoteContent() {
     suspendedInlineGroupIdsRef.current = [];
   }
 
-  function applyAuditInlineFormatOverlay(item: FormatSuggestionItem) {
+  function applyAuditInlineFormatOverlay(item: FormatChangeItem) {
     const quill = quillRef.current;
     if (!quill) return;
 
@@ -377,12 +338,12 @@ function AuditNoteContent() {
       if (range.length <= 0) continue;
 
       const visualStart = referenceIndexToVisualIndex(
-        reviewSegmentsRef.current,
+        segmentsRef.current,
         range.start,
       );
 
       const visualEnd = referenceIndexToVisualIndex(
-        reviewSegmentsRef.current,
+        segmentsRef.current,
         range.start + range.length,
       );
 
@@ -402,7 +363,7 @@ function AuditNoteContent() {
     suspendInlineGroupsForFormat(item);
   }
 
-  function applyAuditBlockFormatOverlay(item: BlockFormatSuggestionItem) {
+  function applyAuditBlockFormatOverlay(item: BlockFormatChangeItem) {
     const quill = quillRef.current;
     if (!quill) return;
 
@@ -413,7 +374,7 @@ function AuditNoteContent() {
 
     for (const ref of item.references ?? []) {
       const visualIndex = referenceIndexToVisualIndex(
-        reviewSegmentsRef.current,
+        segmentsRef.current,
         ref.reviewStart,
       );
 
@@ -443,8 +404,8 @@ function AuditNoteContent() {
     setInlineGroupsSuspended([...inlineIds], true);
   }
 
-  function applyAuditFormatOverlay(item: ReviewFormatSuggestion) {
-    if (isBlockFormatSuggestion(item)) {
+  function applyAuditFormatOverlay(item: FormatChange) {
+    if (isBlockFormatChange(item)) {
       applyAuditBlockFormatOverlay(item);
       return;
     }
@@ -462,11 +423,11 @@ function AuditNoteContent() {
 
   function deactivateAuditSelection() {
     clearActiveFormatOverlay();
-    activeSuggestionRef.current = null;
-    setActiveSuggestion(null);
+    activeChangeRef.current = null;
+    setActiveChange(null);
   }
 
-  const activateFormatSuggestion = useCallback((groupId: string) => {
+  const activateFormatChange = useCallback((groupId: string) => {
     const previousId = activeFormatIdRef.current;
 
     clearAuditFormatOverlay();
@@ -474,14 +435,14 @@ function AuditNoteContent() {
 
     if (previousId === groupId) {
       activeFormatIdRef.current = null;
-      activeSuggestionRef.current = null;
+      activeChangeRef.current = null;
 
       setActiveFormatId(null);
-      setActiveSuggestion(null);
+      setActiveChange(null);
       return;
     }
 
-    const item = findFormatSuggestionByGroupId(groupId);
+    const item = findFormatChangeByGroupId(groupId);
     if (!item) return;
 
     applyAuditFormatOverlay(item);
@@ -495,17 +456,17 @@ function AuditNoteContent() {
     };
 
     activeFormatIdRef.current = groupId;
-    activeSuggestionRef.current = next;
+    activeChangeRef.current = next;
 
     setActiveFormatId(groupId);
-    setActiveSuggestion(next);
+    setActiveChange(next);
   }, []);
 
-  const handleInlineSuggestionClick = useCallback((e: Event) => {
+  const handleInlineChangeClick = useCallback((e: Event) => {
     const target = (e as MouseEvent).target as HTMLElement;
 
     const node = target.closest(
-      "[data-suggestion-type][data-group-id]",
+      "[data-change-type][data-group-id]",
     ) as HTMLElement | null;
 
     if (!node) {
@@ -513,24 +474,20 @@ function AuditNoteContent() {
       return;
     }
 
-    const rawType = node.getAttribute("data-suggestion-type");
+    const rawType = node.getAttribute("data-change-type");
 
     if (rawType === "format") {
       return;
     }
 
-    if (
-      rawType !== "insert" &&
-      rawType !== "newline" &&
-      rawType !== "delete"
-    ) {
+    if (rawType !== "insert" && rawType !== "delete") {
       deactivateAuditSelection();
       return;
     }
-    
+
     clearActiveFormatOverlay();
-    
-    const type = rawType as "insert" | "newline" | "delete";
+
+    const type = rawType as "insert" | "delete";
     const groupId = node.getAttribute("data-group-id") ?? "";
     const actorEmail = node.getAttribute("data-actor-email") ?? "";
     const createdAt = node.getAttribute("data-created-at") ?? "";
@@ -544,8 +501,8 @@ function AuditNoteContent() {
     }
 
     const next: TooltipState | null =
-      activeSuggestionRef.current?.groupId === groupId &&
-      activeSuggestionRef.current?.type === type
+      activeChangeRef.current?.groupId === groupId &&
+      activeChangeRef.current?.type === type
         ? null
         : {
             groupId,
@@ -555,21 +512,21 @@ function AuditNoteContent() {
             references,
           };
 
-    activeSuggestionRef.current = next;
-    setActiveSuggestion(next);
+    activeChangeRef.current = next;
+    setActiveChange(next);
   }, []);
 
   useEffect(() => {
     const quill = quillRef.current;
     if (!quill || !quillReady) return;
 
-    quill.root.removeEventListener("click", handleInlineSuggestionClick);
-    quill.root.addEventListener("click", handleInlineSuggestionClick);
+    quill.root.removeEventListener("click", handleInlineChangeClick);
+    quill.root.addEventListener("click", handleInlineChangeClick);
 
     return () => {
-      quill.root.removeEventListener("click", handleInlineSuggestionClick);
+      quill.root.removeEventListener("click", handleInlineChangeClick);
     };
-  }, [quillReady, handleInlineSuggestionClick]);
+  }, [quillReady, handleInlineChangeClick]);
 
   useEffect(() => {
     const quill = quillRef.current;
@@ -585,7 +542,7 @@ function AuditNoteContent() {
     ) => {
       if (!groupId || !type) return;
 
-      const selector = getSuggestionSelector(groupId, type);
+      const selector = getChangeSelector(groupId, type);
 
       quill.root.querySelectorAll(selector).forEach((el) => {
         if (isActive) el.classList.add("hover");
@@ -597,17 +554,14 @@ function AuditNoteContent() {
       const target = e.target as HTMLElement;
 
       const node = target.closest(
-        "[data-suggestion-type][data-group-id]",
+        "[data-change-type][data-group-id]",
       ) as HTMLElement | null;
 
       const nextGroupId = node?.getAttribute("data-group-id") ?? null;
-      const rawType = node?.getAttribute("data-suggestion-type") ?? null;
+      const rawType = node?.getAttribute("data-change-type") ?? null;
 
       const nextType =
-        rawType === "insert" ||
-        rawType === "newline" ||
-        rawType === "delete" ||
-        rawType === "format"
+        rawType === "insert" || rawType === "delete" || rawType === "format"
           ? rawType
           : null;
 
@@ -616,7 +570,7 @@ function AuditNoteContent() {
       if (
         hoveredGroupId &&
         hoveredType &&
-        hoveredGroupId !== activeSuggestionRef.current?.groupId
+        hoveredGroupId !== activeChangeRef.current?.groupId
       ) {
         setGroupHoverState(hoveredGroupId, false, hoveredType);
       }
@@ -627,7 +581,7 @@ function AuditNoteContent() {
       if (
         hoveredGroupId &&
         hoveredType &&
-        hoveredGroupId !== activeSuggestionRef.current?.groupId
+        hoveredGroupId !== activeChangeRef.current?.groupId
       ) {
         setGroupHoverState(hoveredGroupId, true, hoveredType);
       }
@@ -637,7 +591,7 @@ function AuditNoteContent() {
       if (
         hoveredGroupId &&
         hoveredType &&
-        hoveredGroupId !== activeSuggestionRef.current?.groupId
+        hoveredGroupId !== activeChangeRef.current?.groupId
       ) {
         setGroupHoverState(hoveredGroupId, false, hoveredType);
       }
@@ -663,20 +617,25 @@ function AuditNoteContent() {
       .querySelectorAll(".active")
       .forEach((el) => el.classList.remove("active"));
 
-    if (activeSuggestion?.groupId) {
-      const selector = getSuggestionSelector(
-        activeSuggestion.groupId,
-        activeSuggestion.type,
+    if (activeChange?.groupId) {
+      const selector = getChangeSelector(
+        activeChange.groupId,
+        activeChange.type,
       );
 
       quill.root.querySelectorAll(selector).forEach((el) => {
         el.classList.add("active");
       });
     }
-  }, [activeSuggestion]);
+  }, [activeChange]);
 
   if (loadingUser) {
-    return <LoadingState title="Checking session" message="Confirming your account before opening the audit trail." />;
+    return (
+      <LoadingState
+        title="Checking session"
+        message="Confirming your account before opening the audit trail."
+      />
+    );
   }
 
   if (!user) {
@@ -685,7 +644,12 @@ function AuditNoteContent() {
   }
 
   if (isLoading) {
-    return <LoadingState title="Loading audit trail" message="Preparing this read-only version review." />;
+    return (
+      <LoadingState
+        title="Loading audit trail"
+        message="Preparing this read-only version review."
+      />
+    );
   }
 
   if (errorMessage) {
@@ -699,7 +663,10 @@ function AuditNoteContent() {
   if (!note) {
     return (
       <main className="app-page-shell">
-        <EmptyState title="Note not found" message="This note may have been deleted or you may no longer have access to it." />
+        <EmptyState
+          title="Note not found"
+          message="This note may have been deleted or you may no longer have access to it."
+        />
       </main>
     );
   }
@@ -710,48 +677,67 @@ function AuditNoteContent() {
         <div className="min-w-0">
           <p className="app-page-eyebrow text-amber-700">Audit trail</p>
           <h1 className="app-page-title">{note.title}</h1>
-          <p className="app-page-description">Read-only view of the changes saved in this version.</p>
+          <p className="app-page-description">
+            Read-only view of the changes saved in this version.
+          </p>
           <div className="app-badge-row">
             <Badge tone="amber">Version {versionNumber}</Badge>
-            {noteVersion && <Badge tone="slate">Saved {new Date(noteVersion.createdAt).toLocaleString()}</Badge>}
+            {noteVersion && (
+              <Badge tone="slate">
+                Saved {new Date(noteVersion.createdAt).toLocaleString()}
+              </Badge>
+            )}
           </div>
         </div>
 
         <div className="app-page-actions">
-          <Button variant="secondary" onClick={() => router.push(`/notes/${noteId}`)}>View Note</Button>
+          <Button
+            variant="secondary"
+            onClick={() => router.push(`/notes/${noteId}`)}
+          >
+            View Note
+          </Button>
         </div>
       </header>
 
       <div className="app-alert">
         <span className="text-lg">🧾</span>
         <span>
-          <strong>Audit Mode:</strong> This page is read-only. Select highlighted text or formatting cards to inspect what changed.
+          <strong>Audit Mode:</strong> This page is read-only. Select
+          highlighted text or formatting cards to inspect what changed.
         </span>
       </div>
 
       <div className="editor-workspace">
         <section className="editor-surface reviewing">
-          <div ref={editorRef} className="editor-surface-content" style={{ cursor: "default" }} />
+          <div
+            ref={editorRef}
+            className="editor-surface-content"
+            style={{ cursor: "default" }}
+          />
         </section>
 
         <AuditSidebarModal
-          open={true}
-          hasInlineSuggestions={hasInlineSuggestions}
-          formatSuggestions={getAllFormatSuggestions()}
+          hasInlineChanges={hasInlineChanges}
+          formatChanges={getAllFormatChanges()}
           activeFormatId={activeFormatId}
-          onActivateFormat={activateFormatSuggestion}
+          onActivateFormat={activateFormatChange}
           onClose={() => router.push(`/notes/${noteId}`)}
         />
       </div>
 
       <footer className="app-footer-meta">
         <span>Created at: {new Date(note.createdAt).toLocaleString()}</span>
-        {noteVersion && <span>Version created: {new Date(noteVersion.createdAt).toLocaleString()}</span>}
+        {noteVersion && (
+          <span>
+            Version created: {new Date(noteVersion.createdAt).toLocaleString()}
+          </span>
+        )}
       </footer>
 
-      {activeSuggestion && (
-        <ReviewTooltip
-          tooltip={activeSuggestion}
+      {activeChange && (
+        <Tooltip
+          tooltip={activeChange}
           readOnly
           onAccept={() => {}}
           onReject={() => {}}
@@ -766,7 +752,14 @@ function AuditNoteContent() {
 
 export default function AuditNotePage() {
   return (
-    <Suspense fallback={<LoadingState title="Loading audit trail" message="Preparing audit view." />}>
+    <Suspense
+      fallback={
+        <LoadingState
+          title="Loading audit trail"
+          message="Preparing audit view."
+        />
+      }
+    >
       <AuditNoteContent />
     </Suspense>
   );

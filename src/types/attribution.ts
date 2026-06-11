@@ -8,34 +8,22 @@ export interface Reference {
   componentIndex: number;
 }
 
-export interface InsertSuggestion {
+export interface InsertChange {
   groupId: string;
   actorEmail: string;
   createdAt: string;
 }
 
-export type NewlineSuggestionType = "DEPENDENT" | "STANDALONE";
+export type DeleteChangeType = "TEXT" | "SINGLE_LINE" | "MULTI_LINE";
 
-export interface NewlineSuggestion {
+export interface DeleteChange {
   groupId: string;
   actorEmail: string;
   createdAt: string;
-  references: Reference[];
-  dependsOnReviewRunIds: string[];
-  type: NewlineSuggestionType;
-  marker?: boolean;
+  type?: DeleteChangeType;
 }
 
-export type DeleteSuggestionType = "TEXT" | "SINGLE_LINE" | "MULTI_LINE";
-
-export interface DeleteSuggestion {
-  groupId: string;
-  actorEmail: string;
-  createdAt: string;
-  type?: DeleteSuggestionType;
-}
-
-export interface FormatSuggestionItem {
+export interface FormatChangeItem {
   groupId: string;
   actorEmail: string;
   createdAt: string;
@@ -58,7 +46,7 @@ export type BlockFormatConflictGroup =
   | "INDENT"
   | "DIRECTION";
 
-export interface BlockFormatSuggestionItem {
+export interface BlockFormatChangeItem {
   groupId: string;
   actorEmail: string;
   createdAt: string;
@@ -70,77 +58,32 @@ export interface BlockFormatSuggestionItem {
   previewText: string;
   dependsOnInsertGroupIds: string[];
   dependsOnDeleteGroupIds: string[];
-  dependsOnNewlineGroupIds: string[];
 }
 
-export type ReviewFormatSuggestion =
-  | FormatSuggestionItem
-  | BlockFormatSuggestionItem;
+export type FormatChange = FormatChangeItem | BlockFormatChangeItem;
 
-export interface ReviewProjection {
+export interface AuditProjection {
   baseDelta: Delta;
   visualDelta: Delta;
-  formatSuggestions: FormatSuggestionItem[];
-  blockFormatSuggestions: BlockFormatSuggestionItem[];
+  formatChanges: FormatChangeItem[];
+  blockFormatChanges: BlockFormatChangeItem[];
 }
 
-export interface ReviewSegment {
+export interface Segment {
   id: string;
   text: string;
   embed?: any;
   baseAttributes: Record<string, any>;
-  suggestionAttributes: Record<string, any>;
+  changeAttributes: Record<string, any>;
   references: Reference[];
-  insertSuggestion?: InsertSuggestion;
-  newlineSuggestion?: NewlineSuggestion;
-  deleteSuggestion?: DeleteSuggestion;
+  insertChange?: InsertChange;
+  deleteChange?: DeleteChange;
 }
 
 export interface TooltipState {
   groupId: string;
-  type: "insert" | "newline" | "delete" | "format";
+  type: "insert" | "delete" | "format";
   actorEmail: string;
   createdAt: string;
   references: Reference[];
-}
-
-export type ReviewAction = "ACCEPT" | "REJECT";
-
-export interface SegmentUndoPatch {
-  index: number;
-  deleteCount: number;
-  before: ReviewSegment[];
-}
-
-export interface FormatSuggestionUndoPatch {
-  index: number;
-  deleteCount: number;
-  before: FormatSuggestionItem[];
-}
-
-export interface BlockFormatSuggestionUndoPatch {
-  index: number;
-  deleteCount: number;
-  before: BlockFormatSuggestionItem[];
-}
-
-export interface ReviewUndoPatch {
-  segmentsPatch: SegmentUndoPatch | null;
-  formatSuggestionsPatch: FormatSuggestionUndoPatch | null;
-  blockFormatSuggestionsPatch: BlockFormatSuggestionUndoPatch | null;
-  activeSuggestionBefore: TooltipState | null;
-  activeFormatIdBefore: string | null;
-}
-
-export interface ReviewEntry {
-  type: ReviewAction;
-  patch: ReviewUndoPatch;
-}
-
-export interface ReviewDecisionReference {
-  opId: string;
-  componentIndex: number;
-  componentStart: number;
-  length: number;
-  attributeKey?: string | null;
 }

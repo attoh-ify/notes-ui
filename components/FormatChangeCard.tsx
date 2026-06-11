@@ -1,12 +1,9 @@
 "use client";
 
-import {
-  BlockFormatSuggestionItem,
-  ReviewFormatSuggestion,
-} from "@/src/types";
+import { BlockFormatChangeItem, FormatChange } from "@/src/types";
 
-interface FormatSuggestionCardProps {
-  item: ReviewFormatSuggestion;
+interface FormatChangeCardProps {
+  item: FormatChange;
   active: boolean;
   disabled?: boolean;
   disabledMessage?: string;
@@ -14,9 +11,9 @@ interface FormatSuggestionCardProps {
   onActivate: (groupId: string) => void;
 }
 
-function isBlockFormatSuggestion(
-  item: ReviewFormatSuggestion,
-): item is BlockFormatSuggestionItem {
+function isBlockFormatChange(
+  item: FormatChange,
+): item is BlockFormatChangeItem {
   return "behavior" in item || "conflictGroup" in item;
 }
 
@@ -89,20 +86,20 @@ function relativeTime(createdAt: string): string {
   }
 }
 
-export default function FormatSuggestionCard({
+export default function FormatChangeCard({
   item,
   active,
   disabled = false,
-  disabledMessage = "Review dependent insert/delete suggestion first.",
+  disabledMessage = "Inspect the related insert/delete change first.",
   showKind = true,
   onActivate,
-}: FormatSuggestionCardProps) {
-  const isBlock = isBlockFormatSuggestion(item);
+}: FormatChangeCardProps) {
+  const isBlock = isBlockFormatChange(item);
 
   return (
     <div
       className={[
-        "format-suggestion-card",
+        "format-change-card",
         active ? "active" : "",
         disabled ? "disabled" : "",
       ]
@@ -113,47 +110,43 @@ export default function FormatSuggestionCard({
         type="button"
         disabled={disabled}
         onClick={() => onActivate(item.groupId)}
-        className="format-suggestion-card-button"
+        className="format-change-card-button"
       >
-        <div className="format-suggestion-card-header">
-          <span className="format-suggestion-card-title">
+        <div className="format-change-card-header">
+          <span className="format-change-card-title">
             {formatAttrLabel(item.attributeKey, item.attributeValue)}
           </span>
 
           {showKind ? (
             <span
               className={[
-                "format-suggestion-kind",
+                "format-change-kind",
                 isBlock ? "block" : "inline",
               ].join(" ")}
             >
               {isBlock ? "Block" : "Inline"}
             </span>
           ) : (
-            <span className="format-suggestion-time">
+            <span className="format-change-time">
               {relativeTime(item.createdAt)}
             </span>
           )}
         </div>
 
-        <div className="format-suggestion-card-meta">
-          by {item.actorEmail}
-        </div>
+        <div className="format-change-card-meta">by {item.actorEmail}</div>
 
         {item.previewText && (
-          <div className="format-suggestion-card-preview">
-            “{item.previewText}”
-          </div>
+          <div className="format-change-card-preview">“{item.previewText}”</div>
         )}
 
         {showKind && (
-          <div className="format-suggestion-time">
+          <div className="format-change-time">
             {relativeTime(item.createdAt)}
           </div>
         )}
 
         {disabled && (
-          <div className="format-suggestion-disabled-message">
+          <div className="format-change-disabled-message">
             {disabledMessage}
           </div>
         )}
