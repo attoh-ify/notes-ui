@@ -1,73 +1,60 @@
 import Delta from "quill-delta";
 import {
-  ReviewSegment,
+  Segment,
   Reference,
   TooltipState,
-  BlockFormatSuggestionItem,
-  ReviewFormatSuggestion,
+  BlockFormatChangeItem,
+  FormatChange,
 } from "../types";
 
 // ─── Runtime segment utilities ────────────────────────────────────────────────
 
-export function deltaToSegments(
-  delta: Delta,
-  nextId: () => string,
-): ReviewSegment[] {
+export function deltaToSegments(delta: Delta, nextId: () => string): Segment[] {
   return (delta.ops ?? [])
     .filter((op: any) => op.insert !== undefined && op.insert !== null)
     .map((op: any) => {
       const allAttrs: Record<string, any> = { ...(op.attributes ?? {}) };
 
-      const insertMeta = normalizeSuggestionMeta<any>(
-        allAttrs["suggestion-insert"],
-      );
-
-      const newlineMeta = normalizeSuggestionMeta<any>(
-        allAttrs["suggestion-newline"],
-      );
+      const insertMeta = normalizeChangeMeta<any>(allAttrs["audit-insert"]);
 
       const deleteMeta =
-        normalizeSuggestionMeta<any>(allAttrs["suggestion-delete"]) ??
-        normalizeSuggestionMeta<any>(allAttrs["suggestion-delete-singleline"]) ??
-        normalizeSuggestionMeta<any>(allAttrs["suggestion-delete-multiline"]) ??
+        normalizeChangeMeta<any>(allAttrs["audit-delete"]) ??
+        normalizeChangeMeta<any>(allAttrs["audit-delete-singleline"]) ??
+        normalizeChangeMeta<any>(allAttrs["audit-delete-multiline"]) ??
         null;
 
-      const reviewBaseMeta = normalizeSuggestionMeta<any>(
-        allAttrs["review-base"],
-      );
+      const reviewBaseMeta = normalizeChangeMeta<any>(allAttrs["review-base"]);
 
-      const reviewBlockBaseMeta = normalizeSuggestionMeta<any>(
+      const reviewBlockBaseMeta = normalizeChangeMeta<any>(
         allAttrs["review-block-base"],
       );
 
       let baseAttributes: Record<string, any>;
-      let suggestionAttributes: Record<string, any>;
+      let changeAttributes: Record<string, any>;
 
       if (insertMeta) {
         baseAttributes = { ...(insertMeta.baseAttributes ?? {}) };
-        suggestionAttributes = { ...(insertMeta.suggestionAttributes ?? {}) };
-      } else if (newlineMeta) {
-        baseAttributes = { ...(newlineMeta.baseAttributes ?? {}) };
-        suggestionAttributes = { ...(newlineMeta.suggestionAttributes ?? {}) };
+        changeAttributes = { ...(insertMeta.changeAttributes ?? {}) };
       } else if (deleteMeta) {
         baseAttributes = { ...(deleteMeta.baseAttributes ?? {}) };
-        suggestionAttributes = { ...(deleteMeta.suggestionAttributes ?? {}) };
+        changeAttributes = { ...(deleteMeta.changeAttributes ?? {}) };
       } else if (reviewBaseMeta) {
         baseAttributes = { ...(reviewBaseMeta.baseAttributes ?? {}) };
-        suggestionAttributes = { ...(reviewBaseMeta.suggestionAttributes ?? {}) };
+        changeAttributes = {
+          ...(reviewBaseMeta.changeAttributes ?? {}),
+        };
       } else if (reviewBlockBaseMeta) {
         baseAttributes = { ...(reviewBlockBaseMeta.baseAttributes ?? {}) };
-        suggestionAttributes = { ...(reviewBlockBaseMeta.suggestionAttributes ?? {}) };
+        changeAttributes = {
+          ...(reviewBlockBaseMeta.changeAttributes ?? {}),
+        };
       } else {
-        baseAttributes = stripRuntimeSuggestionAttrs(allAttrs);
-        suggestionAttributes = {};
+        baseAttributes = stripRuntimeChangeAttrs(allAttrs);
+        changeAttributes = {};
       }
 
-      const references: Reference[] = cloneSuggestionReferences(
-        insertMeta?.references ??
-          newlineMeta?.references ??
-          deleteMeta?.references ??
-          [],
+      const references: Reference[] = cloneReferences(
+        insertMeta?.references ?? deleteMeta?.references ?? [],
       );
 
       const isTextInsert = typeof op.insert === "string";
@@ -78,10 +65,10 @@ export function deltaToSegments(
         embed: isTextInsert ? undefined : cloneJsonValue(op.insert),
 
         baseAttributes,
-        suggestionAttributes,
+        changeAttributes,
         references,
 
-        insertSuggestion: insertMeta
+        insertChange: insertMeta
           ? {
               groupId: insertMeta.groupId,
               actorEmail: insertMeta.actorEmail,
@@ -89,30 +76,16 @@ export function deltaToSegments(
             }
           : undefined,
 
-        newlineSuggestion: newlineMeta
-          ? {
-              groupId: newlineMeta.groupId,
-              actorEmail: newlineMeta.actorEmail,
-              createdAt: newlineMeta.createdAt,
-              references: cloneSuggestionReferences(newlineMeta.references ?? references),
-              dependsOnReviewRunIds: [
-                ...(newlineMeta.dependsOnReviewRunIds ?? []),
-              ],
-              type: newlineMeta.type ?? "STANDALONE",
-              marker: newlineMeta.marker === true,
-            }
-          : undefined,
-
-        deleteSuggestion: deleteMeta
+        deleteChange: deleteMeta
           ? {
               groupId: deleteMeta.groupId,
               actorEmail: deleteMeta.actorEmail,
               createdAt: deleteMeta.createdAt,
               type:
                 deleteMeta.type ??
-                (allAttrs["suggestion-delete-singleline"]
+                (allAttrs["audit-delete-singleline"]
                   ? "SINGLE_LINE"
-                  : allAttrs["suggestion-delete-multiline"]
+                  : allAttrs["audit-delete-multiline"]
                     ? "MULTI_LINE"
                     : "TEXT"),
             }
@@ -121,7 +94,7 @@ export function deltaToSegments(
     });
 }
 
-function normalizeSuggestionMeta<T = any>(value: any): T | null {
+function normalizeChangeMeta<T = any>(value: any): T | null {
   if (!value) return null;
 
   if (typeof value === "string") {
@@ -137,30 +110,24 @@ function normalizeSuggestionMeta<T = any>(value: any): T | null {
 
 // ─── DOM / selector utilities ─────────────────────────────────────────────────
 
-export function getSuggestionSelector(
+export function getChangeSelector(
   groupId: string,
   type: TooltipState["type"] | "delete-inline" = "delete-inline",
 ): string {
   if (type === "insert") {
-    return `[data-suggestion-type="insert"][data-group-id="${groupId}"]`;
-  }
-
-  if (type === "newline") {
-    return `[data-suggestion-type="newline"][data-group-id="${groupId}"]`;
+    return `[data-change-type="insert"][data-group-id="${groupId}"]`;
   }
 
   if (type === "format") {
-    return `[data-suggestion-type="format"][data-group-id="${groupId}"]`;
+    return `[data-change-type="format"][data-group-id="${groupId}"]`;
   }
 
-  return `[data-suggestion-type="delete"][data-group-id="${groupId}"]`;
+  return `[data-change-type="delete"][data-group-id="${groupId}"]`;
 }
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
 
-function cloneSuggestionReferences(
-  refs: Reference[] = [],
-): Reference[] {
+function cloneReferences(refs: Reference[] = []): Reference[] {
   return refs.map((r) => ({
     reviewStart: r.reviewStart,
     componentStart: r.componentStart,
@@ -175,7 +142,9 @@ export type ReviewRange = {
   length: number;
 };
 
-export function rangesFromReferences(references: Reference[] = []): ReviewRange[] {
+export function rangesFromReferences(
+  references: Reference[] = [],
+): ReviewRange[] {
   const raw = references
     .filter((ref) => ref.length > 0)
     .map((ref) => ({
@@ -213,48 +182,40 @@ function cloneJsonValue<T>(value: T): T {
   return JSON.parse(JSON.stringify(value));
 }
 
-function segmentLength(seg: ReviewSegment): number {
+function segmentLength(seg: Segment): number {
   return seg.embed ? 1 : seg.text.length;
 }
 
-function stripRuntimeSuggestionAttrs(
+function stripRuntimeChangeAttrs(
   attrs: Record<string, any>,
 ): Record<string, any> {
   const {
     "review-base": _rb,
     "review-block-base": _rbb,
-    "suggestion-format": _f,
-    "suggestion-block-format": _bf,
-    "suggestion-delete": _d,
-    "suggestion-delete-singleline": _dsl,
-    "suggestion-delete-multiline": _dml,
-    "suggestion-insert": _i,
-    "suggestion-newline": _n,
+    "audit-format": _f,
+    "audit-block-format": _bf,
+    "audit-delete": _d,
+    "audit-delete-singleline": _dsl,
+    "audit-delete-multiline": _dml,
+    "audit-insert": _i,
     ...clean
   } = attrs ?? {};
 
   return clean;
 }
 
-export function isBlockFormatSuggestion(
-  item: ReviewFormatSuggestion,
-): item is BlockFormatSuggestionItem {
-  return (
-    "behavior" in item ||
-    "conflictGroup" in item
-  );
+export function isBlockFormatChange(
+  item: FormatChange,
+): item is BlockFormatChangeItem {
+  return "behavior" in item || "conflictGroup" in item;
 }
 
-function isVirtualNewlineMarker(seg: ReviewSegment): boolean {
-  return seg.newlineSuggestion?.marker === true;
-}
-
-function referenceLength(seg: ReviewSegment): number {
-  return isVirtualNewlineMarker(seg) ? 0 : segmentLength(seg);
+function referenceLength(seg: Segment): number {
+  return segmentLength(seg);
 }
 
 export function referenceIndexToVisualIndex(
-  segments: ReviewSegment[],
+  segments: Segment[],
   referenceIndex: number,
 ): number {
   let referenceCursor = 0;
@@ -262,15 +223,6 @@ export function referenceIndexToVisualIndex(
 
   for (const seg of segments) {
     const visualLength = segmentLength(seg);
-
-    /*
-     * Virtual standalone newline markers exist in Quill visual space,
-     * but they do not exist in backend reference space.
-     */
-    if (isVirtualNewlineMarker(seg)) {
-      visualCursor += visualLength;
-      continue;
-    }
 
     const refLength = referenceLength(seg);
 

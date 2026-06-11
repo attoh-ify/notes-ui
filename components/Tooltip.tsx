@@ -1,7 +1,7 @@
 import { Reference, TooltipState, TYPE_CONFIG } from "@/src/types";
 import { Button } from "@/components/ui";
 
-interface ReviewTooltipProps {
+interface TooltipProps {
   tooltip: TooltipState;
   onAccept: (
     groupId: string,
@@ -16,17 +16,17 @@ interface ReviewTooltipProps {
   readOnly?: boolean;
 }
 
-export function ReviewTooltip({
+export function Tooltip({
   tooltip,
   onAccept,
   onReject,
   onClose,
   readOnly = false,
-}: ReviewTooltipProps) {
+}: TooltipProps) {
   const config = TYPE_CONFIG[tooltip.type];
 
   return (
-    <aside className="review-tooltip-panel" aria-label="Suggestion details">
+    <aside className="review-tooltip-panel" aria-label="Change details">
       <div className="flex items-start justify-between gap-3 border-b border-slate-200 pb-3">
         <div className="flex min-w-0 items-center gap-2">
           <span
@@ -39,7 +39,7 @@ export function ReviewTooltip({
               {config.label}
             </p>
             <p className="m-0 text-xs font-semibold uppercase tracking-wide text-slate-400">
-              Suggestion details
+              Change details
             </p>
           </div>
         </div>
@@ -47,7 +47,7 @@ export function ReviewTooltip({
         <button
           onClick={onClose}
           className="rounded-xl p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-900"
-          aria-label="Close suggestion details"
+          aria-label="Close change details"
         >
           ×
         </button>
