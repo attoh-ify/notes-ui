@@ -1,44 +1,34 @@
 "use client";
 
-import { API_BASE_URL, apiFetch } from "@/src/lib/api";
+import { apiFetch } from "@/src/lib/api";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState, useRef, Suspense } from "react";
-import { Stomp, CompatClient } from "@stomp/stompjs";
-import { createOpId, DocState } from "@/src/lib/docState";
-import { OperationState, TextOperation } from "@/src/lib/textOperation";
+import type { CompatClient } from "@stomp/stompjs";
+import { DocState } from "@/src/lib/docState";
+import type { TextOperation } from "@/src/lib/textOperation";
 import { useAuth } from "@/src/context/AuthContext";
 import type Quill from "quill";
 import "quill/dist/quill.snow.css";
 import Delta from "quill-delta";
 import { registerFormats } from "../../../../src/lib/quillformats";
 import {
-  CursorModule,
-  CursorPayload,
   JoinResponse,
-  MessageType,
   Note,
   ReviewInProgressResponse,
   CollaborationMode,
-  SoloSyncAckPayload,
   CollaborationModePayload,
 } from "../../../../src/types";
 import CollaboratorsModal from "@/components/CollaboratorsSection";
 import VisibilityModal from "@/components/VisibilityModal";
 import { Badge, Button, EmptyState, ErrorBanner, LoadingState } from "@/components/ui";
+import { useSoloSyncEngine } from "@/src/hooks/editor/useSoloSyncEngine";
+import { useCollaborationEngine } from "@/src/hooks/editor/useCollaborationEngine";
+import { useCursorPresence } from "@/src/hooks/editor/useCursorPresence";
+import { useEditorSocket } from "@/src/hooks/editor/useEditorSocket";
 
-const INITIAL_SEND_RETRY_DELAY_MS = 3000;
-const MAX_SEND_RETRY_DELAY_MS = 10000;
-const SEND_RETRY_BACKOFF_MULTIPLIER = 2;
-const HEARTBEAT_INTERVAL_MS = 120_000;
-const SOLO_SYNC_DEBOUNCE_MS = 5000;
-const SOLO_SYNC_ACK_TIMEOUT_MS = 8000;
-
-function hasOps(delta: Delta): boolean {
-  return Array.isArray(delta.ops) && delta.ops.length > 0;
-}
 
 function EditContent() {
-  const { id: noteId } = useParams();
+  const { id: noteId } = useParams<{ id: string }>();
   const { user, loadingUser } = useAuth();
   const router = useRouter();
 
@@ -60,37 +50,10 @@ function EditContent() {
   const stompClientRef = useRef<CompatClient | null>(null);
   const isOwner = useRef<boolean>(false);
   const isReviewingRef = useRef(false);
-  const remoteCursorRangesRef = useRef<Map<string, { index: number; length: number }>>(new Map());
   const collaborationModeRef = useRef<CollaborationMode>("SOLO");
-  const pendingSoloSyncAcksRef = useRef<
-    Map<
-      string,
-      {
-        resolve: (revision: number) => void;
-        reject: (error: Error) => void;
-        timeoutId: ReturnType<typeof setTimeout>;
-      }
-    >
-  >(new Map());
-
   const collaboratorsRef = useRef<Record<string, string>>({});
   const noteRef = useRef<Note | null>(null);
   const userRef = useRef(user);
-  const isSendingRef = useRef(false);
-  
-  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const retryDelayRef = useRef(INITIAL_SEND_RETRY_DELAY_MS);
-  const processedOperationIdsRef = useRef<Set<string>>(new Set());
-  const pendingRemoteOpsRef = useRef<Map<number, TextOperation>>(new Map());
-  const collaborationReadyRef = useRef(false);
-  const preReadyRelayBufferRef = useRef<Array<{ type: MessageType; payload: any }>>([]);
-  const soloSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const soloSyncInFlightPromiseRef = useRef<Promise<void> | null>(null);
-  const soloSentOperationRef = useRef<TextOperation | null>(null);
-  const soloPendingOperationRef = useRef<TextOperation | null>(null);
-  const soloRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const soloRetryDelayRef = useRef(INITIAL_SEND_RETRY_DELAY_MS);
-  
   useEffect(() => { collaborationModeRef.current = collaborationMode; }, [collaborationMode]);
   useEffect(() => { collaboratorsRef.current = collaborators; }, [collaborators]);
   useEffect(() => { noteRef.current = note; }, [note]);
@@ -101,101 +64,69 @@ function EditContent() {
     docStateRef.current = new DocState(user.email);
   }
 
-  useEffect(() => {
-    if (!noteId || !user) return;
+  const cursorPresence = useCursorPresence({
+    noteId,
+    quillRef,
+    stompClientRef,
+    userRef,
+    collaboratorsRef,
+    isReviewingRef,
+    collaborationModeRef,
+  });
 
-    let client: CompatClient | null = null;
-    let cancelled = false;
+  const soloSync = useSoloSyncEngine({
+    noteId,
+    quillRef,
+    docStateRef,
+    stompClientRef,
+    userRef,
+    noteRef,
+    isReviewingRef,
+    collaborationModeRef,
+    setErrorMessage: setErrorMessageMessage,
+  });
 
-    collaborationReadyRef.current = false;
-    preReadyRelayBufferRef.current = [];
+  const collaborationEngine = useCollaborationEngine({
+    noteId,
+    quillRef,
+    docStateRef,
+    stompClientRef,
+    userRef,
+    noteRef,
+    isReviewingRef,
+    collaborationModeRef,
+    pendingSoloSyncAcksRef: soloSync.pendingSoloSyncAcksRef,
+    soloSentOperationRef: soloSync.soloSentOperationRef,
+    soloPendingOperationRef: soloSync.soloPendingOperationRef,
+    clearSoloRetryTimer: soloSync.clearSoloRetryTimer,
+    resetSoloRetryDelay: soloSync.resetSoloRetryDelay,
+    scheduleSoloSync: soloSync.scheduleSoloSync,
+    transformRemoteCursorAgainstDelta: cursorPresence.transformRemoteCursorAgainstDelta
+  });
 
-    async function start() {
-      const { default: SockJS } = await import("sockjs-client");
-
-      if (cancelled) return;
-
-      client = Stomp.over(
-        () => new SockJS(`${API_BASE_URL}/relay?noteId=${noteId}`),
-      );
-
-      client.debug = () => {};
-      stompClientRef.current = client;
-
-      client.connect(
-        {},
-        async () => {
-          try {
-            client!.subscribe(`/topic/note/${noteId}`, (message) => {
-              const { type, payload } = JSON.parse(message.body);
-              handleRelayMessage(type, payload);
-            });
-
-            const noteData = await apiFetch<Note>(`notes/${noteId}`, {
-              method: "GET",
-            });
-
-            if (cancelled) return;
-
-            setNote(noteData);
-
-            if (noteData.accessRole === "VIEWER") {
-              router.push(`/notes/${noteId}`);
-              return;
-            }
-
-            const joinData = await apiFetch<JoinResponse>(
-              `notes/${noteId}/join`,
-              { method: "GET" },
-            );
-
-            setCollaborationMode(joinData.mode ?? "SOLO");
-            collaborationModeRef.current = joinData.mode ?? "SOLO";
-
-            if (cancelled) return;
-
-            docStateRef.current!.lastSyncedRevision = joinData.revision;
-
-            pendingRemoteOpsRef.current.clear();
-            processedOperationIdsRef.current.clear();
-
-            const cleanDelta = new Delta(joinData.delta.ops || []);
-            docStateRef.current!.setDocument(cleanDelta);
-
-            setCollaborators(joinData.collaborators);
-
-            isOwner.current = noteData.accessRole === "OWNER";
-
-            setIsReviewing(joinData.isReviewing === true);
-            setIsloading(false);
-
-            collaborationReadyRef.current = true;
-            drainPreReadyRelayBuffer();
-          } catch (err: any) {
-            setErrorMessageMessage(err.message || "Failed to load note");
-            setIsloading(false);
-          }
-        },
-        (error: any) => {
-          console.error("Websocket auth failed", error);
-          router.push("/notes");
-          setErrorMessageMessage(String(error));
-        },
-      );
-    }
-
-    start();
-
-    return () => {
-      cancelled = true;
-      collaborationReadyRef.current = false;
-      preReadyRelayBufferRef.current = [];
-
-      if (client?.active) {
-        client.disconnect();
-      }
-    };
-  }, [noteId, user]);
+  useEditorSocket({
+    noteId,
+    user,
+    router,
+    stompClientRef,
+    docStateRef,
+    collaborationModeRef,
+    isOwnerRef: isOwner,
+    setNote,
+    setCollaborators,
+    remoteCursorRangesRef: cursorPresence.remoteCursorRangesRef,
+    setIsLoading: setIsloading,
+    setErrorMessage: setErrorMessageMessage,
+    setCollaborationMode,
+    setIsReviewing,
+    clearRemoteOperationState: collaborationEngine.clearRemoteOperationState,
+    onOperation: collaborationEngine.handleRemoteOperation,
+    onCursorChange: cursorPresence.handleCursorChange,
+    onSoloSyncAck: soloSync.handleSoloSyncAck,
+    onCollaborationModeChange: handleCollaborationModeChange,
+    onReviewStateChange: handleReviewInProgress,
+    clearCollaboratorCursor: cursorPresence.clearCollaboratorCursor
+  });
 
   useEffect(() => {
     const shouldShowEditor = !isReviewing || note?.accessRole === "OWNER";
@@ -247,26 +178,25 @@ function EditContent() {
           if (source !== "user") return;
 
           const range = quillRef.current?.getSelection();
-          if (range) sendCursorChange(range.index ?? -1, range.length ?? 0);
+          if (range) cursorPresence.sendCursorChange(range.index ?? -1, range.length ?? 0);
 
           if (collaborationModeRef.current === "SOLO") {
-            queueSoloOperation(delta);
+            soloSync.queueSoloOperation(delta);
             return;
           }
 
           docStateRef.current?.queueOperation(
             delta,
             async (op: TextOperation) => {
-              transformRemoteCursorAgainstDelta(delta, user!.email);
-              renderRemoteCursor();
-              await sendOrRetry(op);
+              cursorPresence.transformRemoteCursorAgainstDelta(delta, user!.email);
+              await collaborationEngine.sendOrRetry(op);
             },
           );
         });
 
         quillRef.current.on("selection-change", async (range, _old, source) => {
           if (source !== "user" || !range) return;
-          sendCursorChange(range.index ?? -1, range.length ?? 0);
+          cursorPresence.sendCursorChange(range.index ?? -1, range.length ?? 0);
         });
       };
 
@@ -275,144 +205,6 @@ function EditContent() {
       });
     }
   }, [isLoading, isReviewing, note?.accessRole]);
-
-  useEffect(() => {
-    if (!noteId || !user) return;
-
-    const intervalId = window.setInterval(() => {
-      const client = stompClientRef.current;
-
-      if (!client?.connected) return;
-
-      client.send(
-        `/app/note/${noteId}/heartbeat`,
-        {},
-        JSON.stringify({}),
-      );
-    }, HEARTBEAT_INTERVAL_MS);
-
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, [noteId, user]);
-
-  useEffect(() => {
-    return () => {
-      clearSendRetryTimer();
-      clearSoloSyncTimer();
-      clearSoloRetryTimer();
-      clearPendingSoloSyncAcks();
-    };
-  }, []);
-
-  function processRelayMessage(type: MessageType, payload: any) {
-    if (type === MessageType.OPERATION) {
-      handleRemoteOperation(payload);
-      return;
-    }
-
-    if (type === MessageType.COLLABORATOR_JOIN) {
-      setCollaborators(payload.collaborators);
-      console.log("Your email is not allowed")
-
-      const currentEmail = userRef.current?.email;
-      if (!currentEmail) return;
-
-      const isAllowed = Object.hasOwn(payload.collaborators, currentEmail);
-
-      if (!isAllowed) {
-        router.push("/notes");
-      }
-
-      return;
-    }
-
-    if (type === MessageType.COLLABORATOR_CURSOR) {
-      handleCursorChange(payload);
-      return;
-    }
-
-    if (type === MessageType.REVIEW_IN_PROGRESS) {
-      handleReviewInProgress(payload);
-      return;
-    }
-
-    if (type === MessageType.COLLABORATION_MODE) {
-      handleCollaborationModeChange(payload);
-      return;
-    }
-
-    if (type === MessageType.SOLO_SYNC_ACK) {
-      handleSoloSyncAck(payload);
-      return;
-    }
-  }
-
-  function queueSoloOperation(delta: Delta) {
-    const docState = docStateRef.current;
-    const user = userRef.current;
-
-    if (!docState || !user) return;
-
-    docState.document = docState.document.compose(delta);
-
-    if (!soloSentOperationRef.current) {
-      soloPendingOperationRef.current = new TextOperation(
-        createOpId(),
-        soloPendingOperationRef.current
-          ? soloPendingOperationRef.current.delta.compose(delta)
-          : delta,
-        user.email,
-        docState.lastSyncedRevision,
-        OperationState.PENDING,
-        new Date().toISOString().slice(0, 19),
-      );
-
-      scheduleSoloSync();
-      return;
-    }
-
-    if (!soloPendingOperationRef.current) {
-      soloPendingOperationRef.current = new TextOperation(
-        createOpId(),
-        delta,
-        user.email,
-        docState.lastSyncedRevision,
-        OperationState.PENDING,
-        new Date().toISOString().slice(0, 19),
-      );
-      return;
-    }
-
-    soloPendingOperationRef.current = new TextOperation(
-      soloPendingOperationRef.current.opId,
-      soloPendingOperationRef.current.delta.compose(delta),
-      soloPendingOperationRef.current.actorEmail,
-      soloPendingOperationRef.current.revision,
-      soloPendingOperationRef.current.state,
-      soloPendingOperationRef.current.createdAt,
-    );
-  }
-
-  function handleSoloSyncAck(payload: SoloSyncAckPayload) {
-    if (payload.noteId !== noteId) return;
-
-    const pending = pendingSoloSyncAcksRef.current.get(payload.opId);
-
-    if (!pending) return;
-
-    clearTimeout(pending.timeoutId);
-    pendingSoloSyncAcksRef.current.delete(payload.opId);
-
-    if (!payload.success || typeof payload.revision !== "number") {
-      pending.reject(
-        new Error(payload.error || "Solo sync failed"),
-      );
-      return;
-    }
-
-    pending.resolve(payload.revision);
-  }
 
   function handleCollaborationModeChange(payload: CollaborationModePayload) {
     if (payload.noteId !== noteId) return;
@@ -447,119 +239,6 @@ function EditContent() {
     }
   }
 
-  function scheduleSoloSync(delayMs = SOLO_SYNC_DEBOUNCE_MS) {
-    if (collaborationModeRef.current !== "SOLO") return;
-
-    if (soloSentOperationRef.current) return;
-
-    clearSoloSyncTimer();
-
-    soloSyncTimerRef.current = setTimeout(() => {
-      soloSyncTimerRef.current = null;
-      void flushSoloSync();
-    }, delayMs);
-  }
-
-  async function flushSoloSync(options?: {
-    force?: boolean;
-    throwOnError?: boolean;
-  }) {
-    if (!canCurrentUserEditDuringReview()) return;
-
-    const force = options?.force === true;
-
-    if (!force && collaborationModeRef.current !== "SOLO") return;
-
-    if (soloSyncInFlightPromiseRef.current) {
-      try {
-        await soloSyncInFlightPromiseRef.current;
-      } catch (err) {
-        if (options?.throwOnError) {
-          throw err;
-        }
-      }
-
-      if (!force) return;
-    }
-
-    const quill = quillRef.current;
-    const docState = docStateRef.current;
-
-    if (!quill || !docState) return;
-
-    clearSoloSyncTimer();
-
-    const run = runSoloSync(options);
-
-    soloSyncInFlightPromiseRef.current = run;
-
-    try {
-      await run;
-    } finally {
-      soloSyncInFlightPromiseRef.current = null;
-    }
-  }
-
-  async function runSoloSync(options?: { throwOnError?: boolean }) {
-    const docState = docStateRef.current;
-
-    if (!docState) return;
-
-    if (soloSentOperationRef.current) {
-      return;
-    }
-
-    const operation = soloPendingOperationRef.current;
-
-    if (!operation || !hasOps(operation.delta)) {
-      soloPendingOperationRef.current = null;
-      return;
-    }
-
-    soloPendingOperationRef.current = null;
-
-    const operationToSend = new TextOperation(
-      operation.opId,
-      operation.delta,
-      userRef.current!.email,
-      docState.lastSyncedRevision,
-      OperationState.PENDING,
-      operation.createdAt,
-    );
-
-    soloSentOperationRef.current = operationToSend;
-
-    try {
-      const newRevision = await sendSoloSyncOverWebsocket(operationToSend);
-
-      docState.lastSyncedRevision = newRevision;
-
-      soloSentOperationRef.current = null;
-      resetSoloRetryDelay();
-
-      if (soloPendingOperationRef.current && collaborationModeRef.current === "SOLO") {
-        scheduleSoloSync(0);
-      }
-    } catch (err: any) {
-      setErrorMessageMessage(err.message || "Failed to sync solo note changes");
-
-      if (options?.throwOnError) {
-        throw err;
-      }
-
-      scheduleSoloSyncRetry();
-    }
-  }
-
-  function clearPendingSoloSyncAcks() {
-    for (const pending of pendingSoloSyncAcksRef.current.values()) {
-      clearTimeout(pending.timeoutId);
-      pending.reject(new Error("Editor closed before solo sync completed"));
-    }
-
-    pendingSoloSyncAcksRef.current.clear();
-  }
-
   async function promoteToCollaborativeMode() {
     const quill = quillRef.current;
     const docState = docStateRef.current;
@@ -573,7 +252,7 @@ function EditContent() {
       * Important:
       * We are still logically SOLO until this flush completes.
       */
-      await flushSoloSync({ force: true, throwOnError: true });
+      await soloSync.flushSoloSync({ force: true, throwOnError: true });
 
       const joinData = await apiFetch<JoinResponse>(
         `notes/${noteId}/join`,
@@ -586,8 +265,7 @@ function EditContent() {
       docState.setDocument(cleanDelta);
       docState.resetPendingState();
 
-      pendingRemoteOpsRef.current.clear();
-      processedOperationIdsRef.current.clear();
+      collaborationEngine.clearRemoteOperationState();
 
       setCollaborators(joinData.collaborators);
 
@@ -606,70 +284,6 @@ function EditContent() {
     }
   }
 
-  function clearSoloSyncTimer() {
-    if (soloSyncTimerRef.current) {
-      clearTimeout(soloSyncTimerRef.current);
-      soloSyncTimerRef.current = null;
-    }
-  }
-
-  function sendSoloSyncOverWebsocket(operation: TextOperation): Promise<number> {
-    const client = stompClientRef.current;
-
-    if (!client?.connected) {
-      return Promise.reject(
-        new Error("Cannot solo-sync while websocket is disconnected"),
-      );
-    }
-
-    return new Promise((resolve, reject) => {
-      const timeoutId = setTimeout(() => {
-        pendingSoloSyncAcksRef.current.delete(operation.opId);
-        reject(new Error("Solo sync acknowledgement timed out"));
-      }, SOLO_SYNC_ACK_TIMEOUT_MS);
-
-      pendingSoloSyncAcksRef.current.set(operation.opId, {
-        resolve,
-        reject,
-        timeoutId,
-      });
-
-      try {
-        client.send(
-          `/app/note/${noteId}/solo-sync`,
-          {},
-          JSON.stringify(operation),
-        );
-      } catch (err) {
-        clearTimeout(timeoutId);
-        pendingSoloSyncAcksRef.current.delete(operation.opId);
-
-        reject(
-          err instanceof Error
-            ? err
-            : new Error("Failed to send solo sync"),
-        );
-      }
-    });
-  }
-
-  function handleRelayMessage(type: MessageType, payload: any) {
-    if (!collaborationReadyRef.current) {
-      preReadyRelayBufferRef.current.push({ type, payload });
-      return;
-    }
-
-    processRelayMessage(type, payload);
-  }
-
-  function drainPreReadyRelayBuffer() {
-    const buffered = preReadyRelayBufferRef.current;
-    preReadyRelayBufferRef.current = [];
-
-    for (const message of buffered) {
-      processRelayMessage(message.type, message.payload);
-    }
-  }
 
   useEffect(() => {
     const quill = quillRef.current;
@@ -687,325 +301,10 @@ function EditContent() {
     if (isToolbar) toolbar.style.display = canEdit ? "block" : "none";
   }, [isReviewing, isLoading, note?.accessRole]);
 
-  function sendCursorChange(position: number, length = 0) {
-    if (isReviewingRef.current) return;
-    if (collaborationModeRef.current !== "COLLABORATIVE") return;
-
-    const client = stompClientRef.current;
-
-    if (!client?.connected) {
-      return;
-    }
-
-    client.send(
-      `/app/note/${noteId}/cursor`,
-      {},
-      JSON.stringify({ position, length }),
-    );
-  }
-
-  function handleCursorChange(payload: CursorPayload) {
-    if (isReviewingRef.current || payload.actorEmail === userRef.current?.email) return;
-
-    const cursor = getCursorModule();
-    if (!cursor) return;
-
-    cursor.createCursor(
-      payload.actorEmail,
-      payload.actorEmail,
-      collaboratorsRef.current[payload.actorEmail],
-    );
-
-    if (payload.position === -1) {
-      remoteCursorRangesRef.current.delete(payload.actorEmail);
-      cursor.removeCursor(payload.actorEmail);
-    } else {
-      const range = {
-        index: payload.position,
-        length: payload.length ?? 0,
-      };
-
-      remoteCursorRangesRef.current.set(payload.actorEmail, range);
-      cursor.moveCursor(payload.actorEmail, range);
-    }
-  }
-
-  function transformRemoteCursorAgainstDelta(delta: Delta, operationActorEmail: string) {
-    for (const [email, range] of remoteCursorRangesRef.current.entries()) {
-      if (email === operationActorEmail) continue;
-
-      const next = transformRangeAgainstDelta(range, delta);
-
-      if (next.index < 0) {
-        remoteCursorRangesRef.current.delete(email);
-        continue;
-      }
-
-      remoteCursorRangesRef.current.set(email, next);
-    }
-  }
-
-  function transformRangeAgainstDelta(range: { index: number; length: number }, delta: Delta): { index: number; length: number } {
-    const start = transformPositionAgainstDelta(range.index, delta, false);
-    const end = transformPositionAgainstDelta(range.index + range.length, delta, true);
-
-    return {
-      index: Math.max(0, start),
-      length: Math.max(0, end - start),
-    }
-  }
-
-  function transformPositionAgainstDelta(position: number, delta: Delta, isRangeEnd: boolean): number {
-    let oldCursor = 0;
-    let newPosition = position;
-
-    for (const op of delta.ops ?? []) {
-      if (op.retain) {
-        const retainLength = typeof op.retain === "number" ? op.retain : 1;
-        oldCursor += retainLength;
-        continue;
-      }
-
-      if (op.insert) {
-        const insertLength = typeof op.insert === "string" ? op.insert.length : 1;
-
-        if (oldCursor < position) {
-          newPosition += insertLength;
-        }
-
-        continue;
-      }
-
-      if (op.delete) {
-        const deleteStart = oldCursor;
-        const deleteEnd = oldCursor + op.delete;
-
-        if (position > deleteEnd) {
-          newPosition -= op.delete;
-        } else if (position > deleteStart) {
-          newPosition -= position - deleteStart;
-        }
-        
-        oldCursor += op.delete;
-      }
-    }
-    // newPosition seems to be adjusted only by the length of the insert/delte, not retain, why?
-    // why have both oldCursor and new position, cant one variable track the new position?
-
-    return Math.max(0, newPosition);
-  }
-
-  function renderRemoteCursor() {
-    const quill = quillRef.current;
-    if (!quill) return;
-
-    const cursor = getCursorModule();
-    if (!cursor) return;
-
-    for (const [email, range] of remoteCursorRangesRef.current.entries()) {
-      cursor.createCursor(email, email, collaboratorsRef.current[email]);
-      cursor.moveCursor(email, range);
-    }
-  }
-
-  function handleRemoteOperation(payload: TextOperation) {
-    const { opId, revision, actorEmail } = payload;
-    const docState = docStateRef.current!;
-
-    if (!opId) {
-      console.error("Received operation without opId. Ignoring for safety.", payload);
-      return;
-    }
-
-    if (hasProcessedOperation(opId)) {
-      console.warn("Duplicate operation relay ignored", {
-        opId,
-        revision,
-        actorEmail,
-      });
-      return;
-    }
-
-    const expectedRevision = docState.lastSyncedRevision + 1;
-
-    if (revision <= docState.lastSyncedRevision) {
-      console.warn("STALE_REMOTE_OP_IGNORED", {
-        opId,
-        actorEmail,
-        receivedRevision: revision,
-        lastSyncedRevision: docState.lastSyncedRevision,
-        expectedRevision,
-      });
-
-      markOperationProcessed(opId);
-      return;
-    }
-
-    if (revision > expectedRevision) {
-      console.error("REVISION_GAP_DETECTED_BUFFERING", {
-        opId,
-        actorEmail,
-        receivedRevision: revision,
-        lastSyncedRevision: docState.lastSyncedRevision,
-        expectedRevision,
-        missingRevisions: {
-          from: expectedRevision,
-          to: revision - 1,
-        },
-      });
-
-      bufferFutureRemoteOperation(payload);
-      return;
-    }
-
-    processRemoteOperationInOrder(payload);
-    drainPendingRemoteOperations();
-  }
-
-  async function sendOperationToServer(operation: TextOperation) {
-    if (!canCurrentUserEditDuringReview()) return;
-
-    if (!stompClientRef.current?.connected) {
-      throw new Error("Cannot send operation while websocket is disconnected");
-    }
-
-    if (isSendingRef.current) {
-      throw new Error("Concurrent operation send detected");
-    }
-
-    isSendingRef.current = true;
-
-    try {
-      sendOperationOverWebsocket(operation);
-    } finally {
-      isSendingRef.current = false;
-    }
-  }
-
-  function sendOperationOverWebsocket(operation: TextOperation) {
-    const client = stompClientRef.current;
-
-    if (!client?.connected) {
-      throw new Error("Cannot send operation while websocket is disconnected");
-    }
-
-    client.send(
-      `/app/note/${noteId}/operation`,
-      {},
-      JSON.stringify(
-        new TextOperation(
-          operation.opId,
-          operation.delta,
-          userRef.current!.email,
-          operation.revision,
-          OperationState.PENDING,
-          operation.createdAt,
-        ),
-      ),
-    );
-  }
-
-  function processRemoteOperationInOrder(payload: TextOperation) {
-    const { opId, delta, actorEmail, revision, state, createdAt } = payload;
-    const docState = docStateRef.current!;
-
-    if (!opId) return;
-
-    if (hasProcessedOperation(opId)) {
-      console.warn("Duplicate operation ignored during ordered processing", {
-        opId,
-        revision,
-        actorEmail,
-      });
-      return;
-    }
-
-    const pendingSoloAck = pendingSoloSyncAcksRef.current.get(opId);
-
-    if (pendingSoloAck && actorEmail === userRef.current?.email) {
-      clearTimeout(pendingSoloAck.timeoutId);
-      pendingSoloSyncAcksRef.current.delete(opId);
-
-      clearSoloRetryTimer();
-      resetSoloRetryDelay();
-
-      soloSentOperationRef.current = null;
-
-      docState.lastSyncedRevision = revision;
-
-      pendingSoloAck.resolve(revision);
-
-      markOperationProcessed(opId);
-
-      if (soloPendingOperationRef.current && collaborationModeRef.current === "SOLO") {
-        scheduleSoloSync(0);
-      }
-
-      return;
-    }
-
-    const isAckForThisTab =
-      actorEmail === userRef.current?.email &&
-      docState.sentOperation?.opId === opId;
-
-    if (isAckForThisTab) {
-      clearSendRetryTimer();
-      resetSendRetryDelay();
-
-      docState.acknowledgeOperation(revision, (pending) => {
-        if (pending) {
-          void sendOrRetry(pending);
-        }
-      });
-
-      markOperationProcessed(opId);
-      return;
-    }
-
-    const d = docState.applyRemoteOperation({
-      opId,
-      delta: new Delta(delta.ops || []),
-      actorEmail,
-      revision,
-      state,
-      createdAt,
-    });
-
-    quillRef.current?.updateContents(d, "api");
-
-    transformRemoteCursorAgainstDelta(d, actorEmail);
-    renderRemoteCursor();
-
-    markOperationProcessed(opId);
-  }
-  
-  function drainPendingRemoteOperations() {
-    const docState = docStateRef.current;
-    if (!docState) return;
-
-    while (true) {
-      const nextRevision = docState.lastSyncedRevision + 1;
-      const nextOp = pendingRemoteOpsRef.current.get(nextRevision);
-
-      if (!nextOp) return;
-
-      pendingRemoteOpsRef.current.delete(nextRevision);
-
-      console.log("DRAINING_BUFFERED_REMOTE_OP", {
-        opId: nextOp.opId,
-        actorEmail: nextOp.actorEmail,
-        revision: nextOp.revision,
-        nextExpectedRevision: nextRevision,
-      });
-
-      processRemoteOperationInOrder(nextOp);
-    }
-  }
-
   async function saveNote() {
     try {
       if (collaborationModeRef.current === "SOLO") {
-        await flushSoloSync();
+        await soloSync.flushSoloSync();
       }
 
       await apiFetch(`notes/${noteId}/save`, { method: "POST" });
@@ -1031,25 +330,10 @@ function EditContent() {
     }
   }
 
-  function clearCollaboratorCursors() {
-    const quill = quillRef.current;
-    if (!quill) return;
-
-    const cursor = getCursorModule();
-    if (!cursor) return;
-
-    Object.keys(collaboratorsRef.current).forEach((email) => {
-      cursor.removeCursor(email);
-    });
-
-    quill.root
-      .querySelectorAll(".ql-cursors, .ql-cursor")
-      .forEach((el) => el.remove());
-  }
 
   async function handleReviewNote() {
     if (collaborationModeRef.current === "SOLO") {
-      await flushSoloSync();
+      await soloSync.flushSoloSync();
     }
 
     await saveNote();
@@ -1057,8 +341,7 @@ function EditContent() {
     const quill = quillRef.current;
     if (!quill) return;
 
-    sendCursorChange(-1, 0);
-    clearCollaboratorCursors();
+    cursorPresence.clearCollaboratorCursors();
 
     await apiFetch(`notes/${noteId}/review`, { method: "GET" });
 
@@ -1103,8 +386,7 @@ function EditContent() {
       docStateRef.current!.lastSyncedRevision = joinData.revision;
       docStateRef.current!.setDocument(cleanDelta);
 
-      pendingRemoteOpsRef.current.clear();
-      processedOperationIdsRef.current.clear();
+      collaborationEngine.clearRemoteOperationState();
 
       setCollaborators(joinData.collaborators);
       setIsReviewing(false);
@@ -1160,173 +442,7 @@ function EditContent() {
 
   async function openSettings() {
     await saveNote();
-    router.push(`/notes/${noteId}/edit/note-setting`);
-  }
-
-  function clearSendRetryTimer() {
-    if (retryTimerRef.current) {
-      clearTimeout(retryTimerRef.current);
-      retryTimerRef.current = null;
-    }
-  }
-
-  function resetSendRetryDelay() {
-    retryDelayRef.current = INITIAL_SEND_RETRY_DELAY_MS;
-  }
-
-  function increaseSendRetryDelay() {
-    retryDelayRef.current = Math.min(
-      retryDelayRef.current * SEND_RETRY_BACKOFF_MULTIPLIER,
-      MAX_SEND_RETRY_DELAY_MS,
-    );
-  }
-
-  function scheduleSendRetry(delayMs = retryDelayRef.current) {
-    if (retryTimerRef.current) return;
-
-    retryTimerRef.current = setTimeout(async () => {
-      retryTimerRef.current = null;
-
-      const op = docStateRef.current?.sentOperation;
-
-      if (!op) {
-        resetSendRetryDelay();
-        return;
-      }
-
-      try {
-        await sendOperationToServer(op);
-        resetSendRetryDelay();
-      } catch (err) {
-        console.error("Retry send failed", {
-          opId: op.opId,
-          revision: op.revision,
-          err,
-        });
-
-        increaseSendRetryDelay();
-        scheduleSendRetry();
-      }
-    }, delayMs);
-  }
-
-  async function sendOrRetry(operation: TextOperation) {
-    try {
-      await sendOperationToServer(operation);
-      resetSendRetryDelay();
-    } catch (err) {
-      console.error("Send failed; scheduling retry", {
-        opId: operation.opId,
-        revision: operation.revision,
-        err,
-      });
-
-      scheduleSendRetry();
-    }
-  }
-
-  function hasProcessedOperation(opId?: string | null): boolean {
-    if (!opId) return false;
-    return processedOperationIdsRef.current.has(opId);
-  }
-
-  function markOperationProcessed(opId?: string | null) {
-    if (!opId) return;
-    processedOperationIdsRef.current.add(opId);
-  }
-
-  function bufferFutureRemoteOperation(payload: TextOperation) {
-    const existing = pendingRemoteOpsRef.current.get(payload.revision);
-
-    if (existing && existing.opId !== payload.opId) {
-      console.error("Revision collision detected: two different ops for same revision", {
-        revision: payload.revision,
-        existingOpId: existing.opId,
-        incomingOpId: payload.opId,
-        existing,
-        incoming: payload,
-      });
-
-      return;
-    }
-
-    pendingRemoteOpsRef.current.set(payload.revision, payload);
-
-    console.warn("REMOTE_OP_BUFFERED_FOR_GAP", {
-      opId: payload.opId,
-      actorEmail: payload.actorEmail,
-      receivedRevision: payload.revision,
-      lastSyncedRevision: docStateRef.current?.lastSyncedRevision,
-      expectedRevision: (docStateRef.current?.lastSyncedRevision ?? 0) + 1,
-      bufferedRevisions: [...pendingRemoteOpsRef.current.keys()].sort((a, b) => a - b),
-    });
-  }
-
-  function clearSoloRetryTimer() {
-    if (soloRetryTimerRef.current) {
-      clearTimeout(soloRetryTimerRef.current);
-      soloRetryTimerRef.current = null;
-    }
-  }
-
-  function resetSoloRetryDelay() {
-    soloRetryDelayRef.current = INITIAL_SEND_RETRY_DELAY_MS;
-  }
-
-  function increaseSoloRetryDelay() {
-    soloRetryDelayRef.current = Math.min(
-      soloRetryDelayRef.current * SEND_RETRY_BACKOFF_MULTIPLIER,
-      MAX_SEND_RETRY_DELAY_MS,
-    );
-  }
-
-  function scheduleSoloSyncRetry(delayMs = soloRetryDelayRef.current) {
-    if (soloRetryTimerRef.current) return;
-
-    soloRetryTimerRef.current = setTimeout(async () => {
-      soloRetryTimerRef.current = null;
-
-      const op = soloSentOperationRef.current;
-
-      if (!op) {
-        resetSoloRetryDelay();
-        return;
-      }
-
-      try {
-        const newRevision = await sendSoloSyncOverWebsocket(op);
-
-        const docState = docStateRef.current;
-        if (docState) {
-          docState.lastSyncedRevision = newRevision;
-        }
-
-        soloSentOperationRef.current = null;
-        resetSoloRetryDelay();
-
-        if (soloPendingOperationRef.current && collaborationModeRef.current === "SOLO") {
-          scheduleSoloSync(0);
-        }
-      } catch (err) {
-        increaseSoloRetryDelay();
-        scheduleSoloSyncRetry();
-      }
-    }, delayMs);
-  }
-
-  function canCurrentUserEditDuringReview(): boolean {
-    return !isReviewingRef.current || noteRef.current?.accessRole === "OWNER";
-  }
-
-  function getCursorModule(): CursorModule | null {
-    const quill = quillRef.current;
-    if (!quill) return null;
-
-    try {
-      return quill.getModule("cursors") as CursorModule;
-    } catch {
-      return null;
-    }
+    router.push(`/notes/${noteId}/settings`);
   }
 
   if (loadingUser) {

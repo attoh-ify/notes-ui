@@ -94,7 +94,7 @@ function AuditNoteContent() {
         setNote(noteData);
 
         const noteVersionData = await apiFetch<NoteVersion>(
-          `notes/${noteData.id}/versions/${versionNumber}`,
+          `notes/${noteData.noteId}/versions/${versionNumber}`,
           { method: "GET" },
         );
 
@@ -151,7 +151,7 @@ function AuditNoteContent() {
         setActiveFormatId(null);
 
         const projection = await apiFetch<AuditProjection>(
-          `notes/${noteId}/versions/${noteVersion.id}/audit`,
+          `notes/${noteId}/versions/${noteVersion.noteVersionId}/audit`,
           { method: "GET" },
         );
 
@@ -192,14 +192,14 @@ function AuditNoteContent() {
       }
     }
 
-    if (noteId && noteVersion?.id && !isLoading && quillReady) {
+    if (noteId && noteVersion?.noteVersionId && !isLoading && quillReady) {
       initAudit();
     }
 
     return () => {
       cancelled = true;
     };
-  }, [noteId, noteVersion?.id, isLoading, quillReady]);
+  }, [noteId, noteVersion?.noteVersionId, isLoading, quillReady]);
 
   function nextRuntimeSegmentId(): string {
     runtimeSegCtrRef.current += 1;

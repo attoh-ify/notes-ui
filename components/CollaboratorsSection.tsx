@@ -71,12 +71,12 @@ export default function CollaboratorsModal({ open, onClose, noteId, email, acces
   async function updateRole(access: NoteAccess, role: NoteAccessRole) {
     setErrorMessage(null);
     try {
-      const updated = await apiFetch<NoteAccess>(`notes/${noteId}/access/${access.id}`, {
+      const updated = await apiFetch<NoteAccess>(`notes/${noteId}/access/${access.noteAccessId}`, {
         method: "PUT",
         body: JSON.stringify({ email: access.email, role }),
       });
 
-      setNoteAccesses((prev) => prev.map((a) => (a.id === access.id ? updated : a)));
+      setNoteAccesses((prev) => prev.map((a) => (a.noteAccessId === access.noteAccessId ? updated : a)));
     } catch (err: any) {
       setErrorMessage(err.message || "Failed to update role.");
     }
@@ -86,7 +86,7 @@ export default function CollaboratorsModal({ open, onClose, noteId, email, acces
     setErrorMessage(null);
     try {
       await apiFetch(`notes/${noteId}/access/${id}`, { method: "DELETE" });
-      setNoteAccesses((prev) => prev.filter((a) => a.id !== id));
+      setNoteAccesses((prev) => prev.filter((a) => a.noteAccessId !== id));
     } catch (err: any) {
       setErrorMessage(err.message || "Failed to remove collaborator.");
     }
@@ -108,7 +108,7 @@ export default function CollaboratorsModal({ open, onClose, noteId, email, acces
               const editable = !isYou && canManage;
 
               return (
-                <div key={access.id} className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+                <div key={access.noteAccessId} className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
                   <div className="min-w-0">
                     <p className="truncate text-sm font-black text-slate-950">
                       {access.email} {isYou && <span className="font-semibold text-slate-400">(You)</span>}
@@ -123,7 +123,7 @@ export default function CollaboratorsModal({ open, onClose, noteId, email, acces
                         <option value="EDITOR">Editor</option>
                         <option value="VIEWER">Viewer</option>
                       </Select>
-                      <Button variant="ghost" className="text-red-600 hover:bg-red-50 hover:text-red-700" onClick={() => removeAccess(access.id)}>
+                      <Button variant="ghost" className="text-red-600 hover:bg-red-50 hover:text-red-700" onClick={() => removeAccess(access.noteAccessId)}>
                         Remove
                       </Button>
                     </div>

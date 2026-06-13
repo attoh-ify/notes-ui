@@ -120,8 +120,8 @@ function NotesContent() {
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
               {filteredNotes.map((note) => (
                 <button
-                  key={note.id}
-                  onClick={() => router.push(note.accessRole === "VIEWER" ? `/notes/${note.id}` : `/notes/${note.id}/edit`)}
+                  key={note.noteId}
+                  onClick={() => router.push(note.accessRole === "VIEWER" ? `/notes/${note.noteId}` : `/notes/${note.noteId}/edit`)}
                   className="group flex min-h-48 w-full flex-col justify-between rounded-[1.5rem] border border-slate-200 bg-white p-5 text-left shadow-sm shadow-slate-900/5 transition hover:-translate-y-1 hover:border-emerald-200 hover:shadow-xl hover:shadow-emerald-900/10 focus:outline-none focus:ring-4 focus:ring-emerald-100"
                 >
                   <div>

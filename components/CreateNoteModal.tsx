@@ -56,7 +56,7 @@ export default function CreateNoteModal({ open, onClose }: CreateNoteModalProps)
         headers: { "Content-Type": "application/json" },
       });
 
-      router.push(`/notes/${data.id}/edit`);
+      router.push(`/notes/${data.noteId}/edit`);
       onClose();
     } catch (err: any) {
       setError(err.message || "Failed to create note.");

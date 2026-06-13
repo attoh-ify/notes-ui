@@ -1,7 +1,8 @@
 import Delta from "quill-delta";
 
 export interface Note {
-  id: string;
+  id: number;
+  noteId: string;
   ownerEmail: string;
   title: string;
   visibility: NoteVisibility;
@@ -12,13 +13,15 @@ export interface Note {
 }
 
 export interface NoteAccess {
-  id: string;
+  id: number;
+  noteAccessId: string;
   email: string;
   role: NoteAccessRole;
 }
 
 export interface NoteVersion {
-  id: string;
+  id: number;
+  noteVersionId: string;
   masterDelta: Delta;
   revision: number;
   comment: string;

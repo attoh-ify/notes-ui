@@ -40,14 +40,10 @@ export function deltaToSegments(delta: Delta, nextId: () => string): Segment[] {
         changeAttributes = { ...(deleteMeta.changeAttributes ?? {}) };
       } else if (reviewBaseMeta) {
         baseAttributes = { ...(reviewBaseMeta.baseAttributes ?? {}) };
-        changeAttributes = {
-          ...(reviewBaseMeta.changeAttributes ?? {}),
-        };
+        changeAttributes = { ...(reviewBaseMeta.changeAttributes ?? {}) };
       } else if (reviewBlockBaseMeta) {
         baseAttributes = { ...(reviewBlockBaseMeta.baseAttributes ?? {}) };
-        changeAttributes = {
-          ...(reviewBlockBaseMeta.changeAttributes ?? {}),
-        };
+        changeAttributes = { ...(reviewBlockBaseMeta.changeAttributes ?? {}) };
       } else {
         baseAttributes = stripRuntimeChangeAttrs(allAttrs);
         changeAttributes = {};
@@ -108,7 +104,7 @@ function normalizeChangeMeta<T = any>(value: any): T | null {
   return value as T;
 }
 
-// ─── DOM / selector utilities ─────────────────────────────────────────────────
+// ─── selector utilities ─────────────────────────────────────────────────
 
 export function getChangeSelector(
   groupId: string,

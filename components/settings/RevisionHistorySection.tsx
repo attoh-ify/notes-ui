@@ -226,11 +226,11 @@ export default function RevisionHistorySection({
           <tbody>
             {visibleVersions.map((v: NoteVersion) => {
               const hasUserComment = Boolean(v.comment?.trim());
-              const isExportMenuOpen = openExportMenuId === v.id;
+              const isExportMenuOpen = openExportMenuId === v.noteVersionId;
 
               return (
                 <tr
-                  key={v.id}
+                  key={v.noteVersionId}
                   style={{
                     borderBottom: "1px solid #E2E8F0",
                     fontSize: "0.95rem",
@@ -317,7 +317,7 @@ export default function RevisionHistorySection({
                     <button
                       onClick={() =>
                         router.push(
-                          `/notes/${noteId}/edit/note-setting/audit-trail/${v.versionNumber}`,
+                          `/notes/${noteId}/audit-trail/${v.versionNumber}`,
                         )
                       }
                       style={{
@@ -337,7 +337,7 @@ export default function RevisionHistorySection({
                       type="button"
                       onClick={() =>
                         setOpenExportMenuId((current) =>
-                          current === v.id ? null : v.id,
+                          current === v.noteVersionId ? null : v.noteVersionId,
                         )
                       }
                       style={{
