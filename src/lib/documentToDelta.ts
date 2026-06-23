@@ -64,14 +64,9 @@ async function convertDocxToDelta(file: File) {
 // ------------------ PDF → STRUCTURED HTML → DELTA ------------------
 
 async function convertPdfToDelta(file: File) {
-  // ✅ dynamic import (prevents SSR/Turbopack crashes)
-  const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf");
 
-  // ✅ stable worker setup (NO CDN, NO missing file issues)
-  pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-    "pdfjs-dist/legacy/build/pdf.worker.min.mjs",
-    import.meta.url
-  ).toString();
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.js";
 
   const arrayBuffer = await file.arrayBuffer();
 
@@ -79,36 +74,37 @@ async function convertPdfToDelta(file: File) {
 
   let html = "";
 
-  for (let i = 1; i <= pdf.numPages; i++) {
-    const page = await pdf.getPage(i);
+  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
+    const page = await pdf.getPage(pageNumber);
     const textContent = await page.getTextContent();
 
-    // 🔥 better structure than raw join
     const items = textContent.items.map((item: any) => ({
       text: item.str,
       x: item.transform[4],
       y: item.transform[5],
     }));
 
-    // group by Y-axis (lines)
     const lines = new Map<number, any[]>();
 
     for (const item of items) {
-      const y = Math.round(item.y / 5) * 5; // normalize spacing
-      if (!lines.has(y)) lines.set(y, []);
+      const y = Math.round(item.y / 5) * 5;
+
+      if (!lines.has(y)) {
+        lines.set(y, []);
+      }
+
       lines.get(y)!.push(item);
     }
 
     const sortedLines = Array.from(lines.entries())
-      .sort((a, b) => b[0] - a[0]) // top → bottom
+      .sort((a, b) => b[0] - a[0])
       .map(([_, lineItems]) =>
         lineItems
-          .sort((a, b) => a.x - b.x) // left → right
-          .map(i => i.text)
+          .sort((a, b) => a.x - b.x)
+          .map((lineItem: any) => lineItem.text)
           .join(" ")
       );
 
-    // wrap page into HTML
     html += `<p>${sortedLines.join("<br/>")}</p>`;
   }
 
