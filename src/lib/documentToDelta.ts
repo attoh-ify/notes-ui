@@ -64,7 +64,7 @@ async function convertDocxToDelta(file: File) {
 // ------------------ PDF → STRUCTURED HTML → DELTA ------------------
 
 async function convertPdfToDelta(file: File) {
-  const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf");
+  const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.js");
 
   pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.js";
 
